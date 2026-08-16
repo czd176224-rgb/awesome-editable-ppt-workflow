@@ -1,0 +1,4 @@
+interface:
+  display_name: "重建可编辑 PPT 页面"
+  short_description: "将主体视觉重建为经过验证的对象级可编辑页面"
+  default_prompt: "Use $reconstruct-editable-slide to rebuild the accepted slide body into verified editable PowerPoint objects."
