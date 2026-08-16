@@ -6,7 +6,7 @@
     "workflowContractVersion":  "awesome-word-ppt-workflow-v1",
     "promptContractVersion":  "page-prompt-v6-adaptive-confirmed-materials",
     "pageImagePolicy":  "generate-without-refs-edit-with-confirmed-refs",
-    "indexTreeSha256":  "e08e4aa67aad8a23b749d2e53904a5f2fd2dd914f8d76cfc075d32357878238f",
+    "indexTreeSha256":  "cf2eab4d8270bc60c5dbb988a215a9f5d7bcc7badc0148b95d96e4e111313ccb",
     "files":  {
                   ".agents/plugins/marketplace.json":  "d96b7365b160b07c3b4bd40124c38ebc4fcbd4bb544c7b578d6496aa59b595fe",
                   ".gitattributes":  "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
@@ -247,7 +247,7 @@
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/fixtures/v6_adaptive_project/staff-meeting-public-domain.license.json":  "e4b4000540cc06e16e1a5f3852a89b3717460eed8e56382493a930c1ce6ffdd4",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/raw_transport/sitecustomize.py":  "70b2c69f40db1666acab268ac58ca246b8dce35919cd2ac3f71816840e8b48e0",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_accepted_image_worker_reconstruction.py":  "2aeec48b92c053e5f95dda655414e1028480a471dc6c9ea378246d8af26c5f3f",
-                  "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_100_page_scale.py":  "ae0110c6465dcc05818a2e5b1ec66332227b58f36e2f08cad113c88c75180a1e",
+                  "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_100_page_scale.py":  "248c7f0439f967d08e92fe65fafbc803355142d50cba8e2319851d9f86691bfa",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_accepted_image_reconstruction.py":  "7c70b71c738ca347c19dc7efee1bd12c7212d0d7f08dd549a74075f6d612f4d0",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_attachment_render.py":  "e506e07b2657346a816030600a0ae1eda791ec6e3cb1a8a0cc14c120794c039a",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_image_request.py":  "d1edf491ae543207513d06505718aee0efe406336729b42e44ef8f04ee7d406b",
