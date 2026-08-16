@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "page-prompt-v6-adaptive-confirmed-materials",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "61a0c947de34e8b51232bc720a93be084acae6de8f1f291f22593775a3a97d93",
+  "sourceManifestSha256": "42da5eb71724062d46bcac65196e77ed3539e2465e39c5d507172485139f2c3b",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -1424,7 +1424,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 57011,
-      "sha256": "61a0c947de34e8b51232bc720a93be084acae6de8f1f291f22593775a3a97d93"
+      "sha256": "42da5eb71724062d46bcac65196e77ed3539e2465e39c5d507172485139f2c3b"
     },
     {
       "path": "README.md",
@@ -1438,8 +1438,8 @@
     },
     {
       "path": "scripts/check_public_release.py",
-      "bytes": 10240,
-      "sha256": "14665771259c82040b51829aef19916706e915f6af16ea6773277570bcca3935"
+      "bytes": 10384,
+      "sha256": "12a0d0df840da26d1d93cdb81c6fb7e419382b7306b7d1ca6d805f329e0e4f1e"
     },
     {
       "path": "scripts/check_python_syntax.py",
@@ -1493,8 +1493,8 @@
     },
     {
       "path": "tests/test_release_hardening_v2.py",
-      "bytes": 17861,
-      "sha256": "74e60dfb7a2d338c6e13c796f16ddbe3dbea259441175b776fd71b9a8386e010"
+      "bytes": 19157,
+      "sha256": "e982606f3629095f823171f5ec2d80d723499a798761f8a4afaf0e51476b8d62"
     },
     {
       "path": "tests/test_runtime_install_safety.py",

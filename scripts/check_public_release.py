@@ -127,11 +127,15 @@ def validate(root: Path) -> dict:
             declared = source_manifest.get("files")
             if not isinstance(declared, dict):
                 errors.append("public source manifest files must be an object")
-            elif not (root / ".git").exists():
+            else:
                 actual_paths = {
                     normalized(path.relative_to(root))
                     for path in root.rglob("*")
-                    if path.is_file() and normalized(path.relative_to(root)) not in GENERATED_RELEASE_FILES
+                    if (
+                        path.is_file()
+                        and not FORBIDDEN_DIRECTORY_PARTS.intersection(path.relative_to(root).parts)
+                        and normalized(path.relative_to(root)) not in GENERATED_RELEASE_FILES
+                    )
                 }
                 declared_paths = set(declared)
                 if actual_paths != declared_paths:

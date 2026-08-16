@@ -131,6 +131,34 @@ def test_package_rejects_untracked_nested_files_in_exported_snapshot(tmp_path: P
     assert "source manifest file set mismatch" in packaged.stdout + packaged.stderr
 
 
+def test_checker_rejects_manifest_unlisted_files_in_a_git_checkout(tmp_path: Path):
+    require_export_checkout()
+    output = tmp_path / "public"
+    completed = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(ROOT / "scripts/export_public_release.ps1"), "-OutputPath", str(output)],
+        cwd=ROOT, capture_output=True, text=True, timeout=90,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    for args in (
+        ["init", "-b", "release"],
+        ["config", "user.email", "release@example.invalid"],
+        ["config", "user.name", "Release Test"],
+        ["add", "-A"],
+        ["commit", "-m", "public"],
+    ):
+        subprocess.run(["git", *args], cwd=output, check=True, capture_output=True)
+    poison = output / "plugins" / "UNLISTED_RELEASE_FILE.txt"
+    poison.write_text("must not ship\n", encoding="utf-8")
+    subprocess.run(["git", "add", str(poison)], cwd=output, check=True, capture_output=True)
+    checked = subprocess.run(
+        [sys.executable, "scripts/check_public_release.py", "."],
+        cwd=output, capture_output=True, text=True, timeout=90,
+    )
+    assert checked.returncode != 0
+    assert "source manifest file set mismatch" in checked.stdout + checked.stderr
+
+
 def test_export_scan_report_package_chain_has_non_circular_authorities(tmp_path: Path):
     require_export_checkout()
     output = tmp_path / "public"
