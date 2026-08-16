@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "complex_page_review_v1.schema.json",
+  "title": "Awesome independent visual review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision",
+    "problems"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "awesome-independent-visual-review-v1"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "accept",
+        "correct"
+      ]
+    },
+    "problems": {
+      "type": "array",
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "detail"],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "technical_output",
+              "fixed_layer_violation",
+              "clear_subject_departure",
+              "misleading_fabrication",
+              "severe_identity_distortion",
+              "core_comment_absent",
+              "unusable_17_8_composition"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      }
+    }
+  }
+}

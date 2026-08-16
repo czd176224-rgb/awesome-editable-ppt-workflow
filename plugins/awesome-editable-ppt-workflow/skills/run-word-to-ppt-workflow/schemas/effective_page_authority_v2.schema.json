@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "effective_page_authority_v2.schema.json",
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "visualDirective": {
+      "type": "object", "additionalProperties": false,
+      "required": ["directive_id", "target", "action", "value"],
+      "properties": {
+        "directive_id": {"type": "string", "minLength": 1},
+        "target": {"enum": ["visual.image_rendering", "visual.image_ratio", "visual.layout"]},
+        "action": {"const": "set"}, "value": {"type": "string", "minLength": 1}
+      }
+    },
+    "materialDirective": {
+      "type": "object", "additionalProperties": false,
+      "required": ["directive_id", "target", "action", "material_id"],
+      "properties": {
+        "directive_id": {"type": "string", "minLength": 1},
+        "target": {"enum": ["material.page_image", "material.attachment", "material.search_evidence"]},
+        "action": {"const": "require"}, "material_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "enterpriseMaterialDirective": {
+      "type": "object", "additionalProperties": false,
+      "required": ["directive_id", "target", "action", "material_id", "parent_directive_id", "entity", "query", "material_role"],
+      "properties": {
+        "directive_id": {"type": "string", "minLength": 1}, "target": {"const": "material.search_evidence"},
+        "action": {"const": "require"}, "material_id": {"type": "string", "pattern": "^search-request-[0-9a-f]{16}$"},
+        "parent_directive_id": {"type": "string", "minLength": 1}, "entity": {"type": "string", "minLength": 1},
+        "query": {"type": "string", "minLength": 1}, "material_role": {"const": "enterprise_logo"}
+      }
+    },
+    "approvedDirective": {
+      "oneOf": [
+        {"$ref": "#/$defs/visualDirective"}, {"$ref": "#/$defs/materialDirective"},
+        {"$ref": "#/$defs/enterpriseMaterialDirective"}
+      ]
+    },
+    "rejection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "directive_id", "target", "detail"],
+      "properties": {
+        "code": {"enum": ["fixed_layer_override_rejected", "word_fact_override_rejected"]},
+        "directive_id": {"type": "string", "minLength": 1},
+        "target": {"enum": ["word.body_text", "word.facts", "word.tables", "fixed.body_geometry", "fixed.page_title", "fixed.logo", "fixed.footer", "fixed.page_number"]},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    },
+    "blockingReason": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "directive_id", "target", "material_id"],
+      "properties": {
+        "code": {"const": "required_material_missing"}, "directive_id": {"type": "string", "minLength": 1},
+        "target": {"enum": ["material.page_image", "material.attachment", "material.search_evidence"]},
+        "material_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "visualContract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["hard_constraints", "soft_preferences", "creative_freedom"],
+      "properties": {
+        "hard_constraints": {
+          "type": "object", "additionalProperties": false,
+          "required": ["content_fidelity", "one_page_to_one_slide", "title_color", "palette", "typography"],
+          "properties": {
+            "content_fidelity": {"const": "preserve_information_and_logic"}, "one_page_to_one_slide": {"const": true},
+            "title_color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"}, "palette": {"type": "object"}, "typography": {"type": "object"}
+          }
+        },
+        "soft_preferences": {
+          "type": "object", "additionalProperties": false,
+          "required": ["direction", "template_selection", "visual_style", "color", "icons", "typography", "image_rendering", "style_axes", "layout_preferences", "information_density", "regional_style", "background_system", "image_role", "evidence_strength", "composition_tendency", "brand_device", "additional_requirements"],
+          "properties": {
+            "direction": {"type": "integer", "minimum": 0}, "template_selection": {"type": "object"},
+            "visual_style": {"type": "string", "minLength": 1}, "color": {"type": "object"},
+            "icons": {"type": "string", "minLength": 1}, "typography": {"type": "object"},
+            "image_rendering": {"type": "object"}, "style_axes": {"type": "object"},
+            "layout_preferences": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+            "information_density": {"enum": ["low", "balanced", "high"]}, "regional_style": {"type": "object"},
+            "background_system": {"enum": ["light", "dark", "mixed", "light-with-dark-highlights"]},
+            "image_role": {"type": "object"}, "evidence_strength": {"enum": ["business", "data-case", "strict"]},
+            "composition_tendency": {"enum": ["auto", "formal-consulting", "brand-editorial", "technical-rd", "product-launch"]},
+            "brand_device": {"enum": ["none", "light", "medium", "strong"]}, "additional_requirements": {"type": "string", "maxLength": 2000}
+          }
+        },
+        "creative_freedom": {
+          "type": "object", "additionalProperties": false,
+          "required": ["layout", "composition", "visual_hierarchy", "content_visualization", "page_specific_emphasis"],
+          "properties": {
+            "layout": {"const": true}, "composition": {"const": true}, "visual_hierarchy": {"const": true},
+            "content_visualization": {"const": true}, "page_specific_emphasis": {"const": true}
+          }
+        }
+      }
+    }
+  },
+  "type": "object", "additionalProperties": false,
+  "required": ["artifact_version", "page_number", "precedence", "fixed_hard_rules", "authoritative_content", "required_directives", "effective_visual_contract", "evidence_material", "rejected_overrides", "readiness", "sealed_sha256"],
+  "properties": {
+    "artifact_version": {"const": "effective-page-authority-v2"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "precedence": {
+      "type": "array", "prefixItems": [
+        {"const": "fixed_hard_rules"}, {"const": "word_facts"}, {"const": "page_comments"},
+        {"const": "ui_global_soft_style"}, {"const": "evidence_material"}, {"const": "model_creativity"}
+      ], "items": false, "minItems": 6, "maxItems": 6
+    },
+    "fixed_hard_rules": {
+      "type": "object", "additionalProperties": false,
+      "required": ["body_width_px", "body_height_px", "logo_in_body", "fixed_layers_outside_body"],
+      "properties": {
+        "body_width_px": {"const": 1904}, "body_height_px": {"const": 896}, "logo_in_body": {"const": false},
+        "fixed_layers_outside_body": {"type": "array", "prefixItems": [{"const": "page_title"}, {"const": "logo"}, {"const": "footer"}, {"const": "page_number"}], "items": false, "minItems": 4, "maxItems": 4}
+      }
+    },
+    "authoritative_content": {
+      "type": "object", "additionalProperties": false, "required": ["body_text", "tables"],
+      "properties": {"body_text": {"type": "string"}, "tables": {"type": "array"}}
+    },
+    "required_directives": {"type": "array", "items": {"$ref": "#/$defs/approvedDirective"}},
+    "effective_visual_contract": {"$ref": "#/$defs/visualContract"},
+    "evidence_material": {
+      "type": "object", "additionalProperties": false, "required": ["page_images", "attachment_evidence", "search_evidence"],
+      "properties": {"page_images": {"type": "array"}, "attachment_evidence": {"type": "array"}, "search_evidence": {"type": "array"}}
+    },
+    "rejected_overrides": {"type": "array", "items": {"$ref": "#/$defs/rejection"}},
+    "readiness": {
+      "type": "object", "additionalProperties": false, "required": ["status", "blocking_reasons"],
+      "properties": {"status": {"enum": ["ready", "blocked"]}, "blocking_reasons": {"type": "array", "items": {"$ref": "#/$defs/blockingReason"}}}
+    },
+    "sealed_sha256": {"$ref": "#/$defs/sha256"}
+  }
+}

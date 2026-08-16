@@ -1,0 +1,4 @@
+interface:
+  display_name: "Word 转可编辑 PPT 总流程"
+  short_description: "Adaptive V6：确认逐页材料后编排 Image2、QA、重建和组装"
+  default_prompt: "Use $run-word-to-ppt-workflow to adaptively convert my paginated Word file and SVG logo into an editable PowerPoint from one confirmed materials UI."

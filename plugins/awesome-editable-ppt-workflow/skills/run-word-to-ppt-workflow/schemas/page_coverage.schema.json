@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "coverage_version", "page_number", "fixed_title", "required_items", "sha256"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "coverage_version": {"const": "page-coverage-v1"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "fixed_title": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "sha256", "anchors"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "anchors": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "required_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["coverage_id", "kind", "required", "source"],
+        "properties": {
+          "coverage_id": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["semantic_unit", "source_table", "mandatory_anchor", "mandatory_inline_image"]},
+          "required": {"const": true},
+          "source": {"type": "object"}
+        }
+      }
+    }
+  }
+}

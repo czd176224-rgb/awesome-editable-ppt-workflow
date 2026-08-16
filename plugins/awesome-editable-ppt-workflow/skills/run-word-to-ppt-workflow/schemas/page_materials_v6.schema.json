@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://word-to-editable-ppt.local/schemas/page_materials_v6.schema.json",
+  "title": "V6 confirmed page materials",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_version",
+    "page_number",
+    "fixed_page_title",
+    "word_original",
+    "effective_body",
+    "attachment_extracts",
+    "chart_facts",
+    "image_requirements",
+    "degradations",
+    "reference_images"
+  ],
+  "$defs": {
+    "referenceImage": {"$ref": "reference_image_v6.schema.json"}
+  },
+  "properties": {
+    "artifact_version": {"const": "page-materials-v6"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "fixed_page_title": {"type": "string", "minLength": 1},
+    "word_original": {"type": "string"},
+    "effective_body": {"type": "string"},
+    "attachment_extracts": {"type": "array", "items": {"type": "object"}},
+    "chart_facts": {"type": "array", "items": {"type": "object"}},
+    "image_requirements": {"type": "array", "items": {"type": "object"}},
+    "degradations": {"type": "array", "items": {"type": "object"}},
+    "reference_images": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {"$ref": "#/$defs/referenceImage"}
+    },
+    "confirmed_revision": {"type": "integer", "minimum": 1},
+    "confirmed_revision_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {
+      "if": {"required": ["confirmed_revision"]},
+      "then": {"required": ["confirmed_revision_digest"]}
+    },
+    {
+      "if": {"required": ["confirmed_revision_digest"]},
+      "then": {"required": ["confirmed_revision"]}
+    }
+  ]
+}

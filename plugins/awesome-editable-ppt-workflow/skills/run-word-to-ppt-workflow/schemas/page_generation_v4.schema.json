@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "page_generation_v4.schema.json",
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "bodyImage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "width", "height"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1}
+      }
+    },
+    "referenceImage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["asset_id", "evidence_id", "material_id", "source_role", "sha256", "role"],
+      "properties": {
+        "asset_id": {"type": "string", "minLength": 1},
+        "evidence_id": {"type": ["string", "null"]},
+        "material_id": {"type": "string", "minLength": 1},
+        "source_role": {"enum": ["page_image", "image_attachment", "search_evidence", "enterprise_logo", "repair_source"]},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "role": {"enum": ["reference_only", "required_presence", "repair_source"]}
+      }
+    },
+    "request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operation", "endpoint", "prompt_sha256", "authority_prompt_sha256", "model", "size", "quality"],
+      "properties": {
+        "operation": {"enum": ["generate", "edit"]},
+        "endpoint": {"enum": ["images/generations", "images/edits"]},
+        "prompt_sha256": {"$ref": "#/$defs/sha256"},
+        "authority_prompt_sha256": {"$ref": "#/$defs/sha256"},
+        "model": {"type": "string", "minLength": 1},
+        "size": {"type": "string", "minLength": 1},
+        "quality": {"enum": ["auto", "low", "medium", "high"]},
+        "repair": {
+          "type": "object", "additionalProperties": false,
+          "required": ["failed_qa_receipt_path", "failed_qa_receipt_sha256", "prior_generation_receipt_path", "prior_generation_receipt_sha256", "canonical_issue_sha256", "issues"],
+          "properties": {
+            "failed_qa_receipt_path": {"type": "string", "minLength": 1},
+            "failed_qa_receipt_sha256": {"$ref": "#/$defs/sha256"},
+            "prior_generation_receipt_path": {"type": "string", "minLength": 1},
+            "prior_generation_receipt_sha256": {"$ref": "#/$defs/sha256"},
+            "canonical_issue_sha256": {"$ref": "#/$defs/sha256"},
+            "issues": {
+              "type": "array", "minItems": 1,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["code", "message", "target"],
+                "properties": {
+                  "code": {"type": "string", "minLength": 1},
+                  "message": {"type": "string", "minLength": 1},
+                  "target": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "providerTrace": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_version", "workflow_contract_version", "prompt_contract_version", "page_number",
+    "material_bundle_sha256", "effective_authority_sha256", "required_directive_ids",
+    "authority_reference_inputs_sha256", "request", "body_image", "body_image_mapping",
+    "reference_images", "provider_trace", "sealed_sha256", "receipt_signature"
+  ],
+  "properties": {
+    "artifact_version": {"const": "page-generation-v1"},
+    "workflow_contract_version": {"const": "word-ppt-workflow-v4"},
+    "prompt_contract_version": {"const": "page-prompt-v8"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "material_bundle_sha256": {"$ref": "#/$defs/sha256"},
+    "effective_authority_sha256": {"$ref": "#/$defs/sha256"},
+    "required_directive_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "authority_reference_inputs_sha256": {"$ref": "#/$defs/sha256"},
+    "request": {"$ref": "#/$defs/request"},
+    "body_image": {"$ref": "#/$defs/bodyImage"},
+    "body_image_mapping": {"type": "object"},
+    "reference_images": {"type": "array", "items": {"$ref": "#/$defs/referenceImage"}},
+    "provider_trace": {"$ref": "#/$defs/providerTrace"},
+    "sealed_sha256": {"$ref": "#/$defs/sha256"},
+    "receipt_signature": {"$ref": "#/$defs/sha256"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"request": {"properties": {"operation": {"const": "generate"}}}}},
+      "then": {"properties": {"request": {"not": {"required": ["repair"]}}}}
+    }
+  ]
+}

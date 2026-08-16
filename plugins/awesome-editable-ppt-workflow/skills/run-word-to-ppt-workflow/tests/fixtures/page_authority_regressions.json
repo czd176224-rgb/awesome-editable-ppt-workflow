@@ -1,0 +1,53 @@
+{
+  "split_cases": [
+    {
+      "id": "single_long_marker_page",
+      "page_number": 2,
+      "pagination_mode": "ordered_markers",
+      "source": "聚焦港澳、内地、国际三地市场，以承建地产为主业，培育实业、金融投资业务，自然增长、联营合作增长、并购增长三种增长模式并举，实现利润10%增长，成为建筑和地产行业最具影响力和竞争力的国际化公司。",
+      "expected_title": "聚焦三地市场与三种增长模式",
+      "expected_body": "聚焦港澳、内地、国际三地市场，以承建地产为主业，培育实业、金融投资业务，自然增长、联营合作增长、并购增长三种增长模式并举，实现利润10%增长，成为建筑和地产行业最具影响力和竞争力的国际化公司。"
+    },
+    {
+      "id": "generic_ordered_marker_heading",
+      "page_number": 1,
+      "pagination_mode": "ordered_markers",
+      "source": "第一页标题\n第一页正文必须完整保留。",
+      "expected_title": "第一页标题",
+      "expected_body": "第一页正文必须完整保留。"
+    },
+    {
+      "id": "short_explicit_heading",
+      "page_number": 1,
+      "pagination_mode": "ordered_markers",
+      "source": "年度经营计划\n公司将聚焦核心市场并提升经营质量。",
+      "expected_title": "年度经营计划",
+      "expected_body": "公司将聚焦核心市场并提升经营质量。"
+    },
+    {
+      "id": "physical_continuation",
+      "page_number": 7,
+      "pagination_mode": "physical_rendered_pages",
+      "source": "；其余仍有接近900万元尚未落实，正在持续推进。\n下一步将完成相关工作。",
+      "expected_title": "其余仍有接近900万元尚未落实",
+      "expected_body": "；其余仍有接近900万元尚未落实，正在持续推进。\n下一步将完成相关工作。"
+    },
+    {
+      "id": "comment_title_override",
+      "page_number": 1,
+      "pagination_mode": "ordered_markers",
+      "source": "开头是跨页续文。\n本页展示后续工作。",
+      "page_comments": [{"text": "[title:项目后续工作安排]"}],
+      "expected_title": "项目后续工作安排",
+      "expected_body": "开头是跨页续文。\n本页展示后续工作。"
+    },
+    {
+      "id": "single_line_image_caption",
+      "page_number": 1,
+      "pagination_mode": "ordered_markers",
+      "source": "图1：大湾区重点项目分布。",
+      "expected_title": "大湾区重点项目分布",
+      "expected_body": "图1：大湾区重点项目分布。"
+    }
+  ]
+}

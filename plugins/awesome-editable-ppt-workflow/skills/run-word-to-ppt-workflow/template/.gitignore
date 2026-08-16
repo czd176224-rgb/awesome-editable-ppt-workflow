@@ -1,0 +1,10 @@
+00_source/*.docx
+01_page_contracts/*.json
+04_assets/original/*
+04_assets/cleaned/*
+06_images/generated/*
+07_editable/*.pptx
+08_qa/renders/*
+08_final/*
+!*.example.json
+!.gitkeep
