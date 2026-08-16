@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "page_qa_v4.schema.json",
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "issueEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "detail"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "detail": {"type": "string"},
+        "artifact_sha256": {"$ref": "#/$defs/sha256"},
+        "asset_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "issue": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "severity", "message", "evidence"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "severity": {"enum": ["warning", "repair", "blocking"]},
+        "message": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/$defs/issueEvidence"}
+      }
+    },
+    "observations": {
+      "type": "object", "additionalProperties": false,
+      "required": ["decodable", "width", "height", "aspect_error", "aspect_within_tolerance", "visible_fraction", "luminance_stddev", "luminance_entropy", "gross_content_present"],
+      "properties": {
+        "decodable": {"type": "boolean"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "aspect_error": {"type": "number", "minimum": 0},
+        "aspect_within_tolerance": {"type": "boolean"},
+        "visible_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+        "luminance_stddev": {"type": "number", "minimum": 0},
+        "luminance_entropy": {"type": "number", "minimum": 0},
+        "gross_content_present": {"type": "boolean"}
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_version", "workflow_contract_version", "qa_policy_version", "page_number",
+    "material_bundle_sha256", "generation_receipt_sha256", "qa_work_item_sha256",
+    "qa_work_item", "observation", "status", "issues", "observations", "repairs_used"
+  ],
+  "properties": {
+    "artifact_version": {"const": "page-qa-v1"},
+    "workflow_contract_version": {"const": "word-ppt-workflow-v4"},
+    "qa_policy_version": {"const": "risk-qa-v5"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "material_bundle_sha256": {"$ref": "#/$defs/sha256"},
+    "generation_receipt_sha256": {"$ref": "#/$defs/sha256"},
+    "qa_work_item_sha256": {"$ref": "#/$defs/sha256"},
+    "qa_work_item": {"$ref": "#/$defs/artifact"},
+    "observation": {"$ref": "#/$defs/artifact"},
+    "status": {"enum": ["pass", "repair", "blocked"]},
+    "issues": {"type": "array", "items": {"$ref": "#/$defs/issue"}},
+    "observations": {"$ref": "#/$defs/observations"},
+    "repairs_used": {"type": "integer", "minimum": 0}
+  }
+}

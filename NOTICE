@@ -1,0 +1,24 @@
+Editable PPT Workflow 2.2.11
+Copyright (c) 2026 Editable PPT Workflow contributors
+
+This product is distributed under the MIT License in LICENSE.
+
+Direct Python runtime dependencies (not vendored; installed from PyPI):
+
+- Flask — BSD-3-Clause
+- jsonschema — MIT
+- Pillow — HPND
+- python-docx — MIT
+- python-pptx — MIT
+- pypdf — BSD-3-Clause
+- pypdfium2 / PDFium binary — Apache-2.0 and BSD-3-Clause components
+- pywin32 — PSF-2.0
+- openai — Apache-2.0
+- PyYAML — MIT
+- NumPy — BSD-3-Clause
+- Requests — Apache-2.0
+
+Transitive dependencies retain their own notices and license terms in their
+installed distributions. Microsoft PowerPoint and LibreOffice are external
+render/open backends and are not bundled. OfficeCLI is optional, separately
+supplied, and is not bundled or downloaded by this plugin.

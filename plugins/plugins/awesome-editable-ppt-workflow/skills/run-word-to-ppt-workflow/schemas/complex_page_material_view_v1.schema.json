@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "complex_page_material_view_v1.schema.json",
+  "title": "CompletePageMaterialViewV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "page_number",
+    "fixed_page_title",
+    "complete_word_content",
+    "original_comments",
+    "visual_contract",
+    "body_frame",
+    "materials",
+    "deduplicated_derivatives",
+    "source_receipts"
+  ],
+  "properties": {
+    "schema_version": {"const": "awesome-complete-page-material-view-v1"},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "page_number": {"type": "integer", "minimum": 1},
+    "fixed_page_title": {"type": "string", "minLength": 1},
+    "complete_word_content": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "original_comments": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "visual_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_color", "secondary_color", "background_color", "cjk_font",
+        "latin_font", "title_size_pt", "body_size_pt", "caption_size_pt",
+        "regional_characteristics", "visual_description"
+      ],
+      "properties": {
+        "primary_color": {"type": "string"},
+        "secondary_color": {"type": "string"},
+        "background_color": {"type": "string"},
+        "cjk_font": {"type": "string"},
+        "latin_font": {"type": "string"},
+        "title_size_pt": {"type": "number"},
+        "body_size_pt": {"type": "number"},
+        "caption_size_pt": {"type": "number"},
+        "regional_characteristics": {"type": "string"},
+        "visual_description": {"type": "string"}
+      }
+    },
+    "body_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["geometry_version", "body_bounds_cm", "body_pixels", "fixed_layers"],
+      "properties": {
+        "geometry_version": {"const": "fixed-canvas-cm-v2"},
+        "body_bounds_cm": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "w", "h"],
+          "properties": {
+            "x": {"type": "number"}, "y": {"type": "number"},
+            "w": {"type": "number"}, "h": {"type": "number"}
+          }
+        },
+        "body_pixels": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height"],
+          "properties": {"width": {"const": 1904}, "height": {"const": 896}}
+        },
+        "fixed_layers": {"const": ["title", "logo", "footer", "page_number"]}
+      }
+    },
+    "materials": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/material"}
+    },
+    "deduplicated_derivatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["material_id", "duplicate_of", "sha256"],
+        "properties": {
+          "material_id": {"type": "string", "minLength": 1},
+          "duplicate_of": {"type": "string", "minLength": 1},
+          "sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "source_receipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page_materials", "paginated_word_source", "source_asset_manifest"],
+      "properties": {
+        "page_materials": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema_version", "page_number", "path", "digest"],
+          "properties": {
+            "schema_version": {"const": "awesome-page-materials-v1"},
+            "page_number": {"type": "integer", "minimum": 1},
+            "path": {"$ref": "#/$defs/projectPath"},
+            "digest": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "paginated_word_source": {"$ref": "#/$defs/fileReceipt"},
+        "source_asset_manifest": {"$ref": "#/$defs/fileReceipt"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "projectPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "fileReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "byte_size"],
+      "properties": {
+        "path": {"$ref": "#/$defs/projectPath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "byte_size": {"type": "integer", "minimum": 0}
+      }
+    },
+    "common": {
+      "type": "object",
+      "required": [
+        "material_id", "kind", "source_order", "authority_path", "sha256",
+        "media_type", "viewable_image"
+      ],
+      "properties": {
+        "material_id": {"type": "string", "minLength": 1},
+        "kind": {"enum": [
+          "word_block", "word_comment", "word_image", "attachment_original",
+          "attachment_render_page", "attachment_contact_sheet"
+        ]},
+        "source_order": {"type": "integer", "minimum": 1},
+        "authority_path": {"$ref": "#/$defs/projectPath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "media_type": {"type": "string", "minLength": 1},
+        "viewable_image": {"type": "boolean"}
+      }
+    },
+    "material": {
+      "oneOf": [
+        {
+          "allOf": [
+            {"$ref": "#/$defs/common"},
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["material_id", "kind", "source_order", "authority_path", "sha256", "media_type", "viewable_image", "original"],
+              "properties": {
+                "material_id": {"type": "string"}, "kind": {"const": "word_block"},
+                "source_order": {"type": "integer"}, "authority_path": {"type": "string"},
+                "sha256": {"type": "string"}, "media_type": {"const": "application/vnd.awesome.word-block+json"},
+                "viewable_image": {"const": false}, "original": {"type": "object"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/common"},
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["material_id", "kind", "source_order", "authority_path", "sha256", "media_type", "viewable_image", "original"],
+              "properties": {
+                "material_id": {"type": "string"}, "kind": {"const": "word_comment"},
+                "source_order": {"type": "integer"}, "authority_path": {"type": "string"},
+                "sha256": {"type": "string"}, "media_type": {"const": "application/vnd.awesome.word-comment+json"},
+                "viewable_image": {"const": false}, "original": {"type": "object"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/common"},
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["material_id", "kind", "source_order", "authority_path", "sha256", "media_type", "viewable_image", "asset_id", "original_filename", "byte_size", "original"],
+              "properties": {
+                "material_id": {"type": "string"}, "kind": {"const": "word_image"},
+                "source_order": {"type": "integer"}, "authority_path": {"type": "string"},
+                "sha256": {"type": "string"}, "media_type": {"type": "string", "pattern": "^image/"},
+                "viewable_image": {"const": true}, "asset_id": {"type": "string"},
+                "original_filename": {"type": "string"}, "byte_size": {"type": "integer", "minimum": 0},
+                "original": {"type": "object"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/common"},
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["material_id", "kind", "source_order", "authority_path", "sha256", "media_type", "viewable_image", "asset_id", "original_filename", "byte_size", "original"],
+              "properties": {
+                "material_id": {"type": "string"}, "kind": {"const": "attachment_original"},
+                "source_order": {"type": "integer"}, "authority_path": {"type": "string"},
+                "sha256": {"type": "string"}, "media_type": {"type": "string"},
+                "viewable_image": {"const": false}, "asset_id": {"type": "string"},
+                "original_filename": {"type": "string"}, "byte_size": {"type": "integer", "minimum": 0},
+                "original": {"type": "object"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/common"},
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["material_id", "kind", "source_order", "authority_path", "sha256", "media_type", "viewable_image", "attachment_material_id", "page_number", "width", "height", "byte_size", "renderer_identity", "original"],
+              "properties": {
+                "material_id": {"type": "string"}, "kind": {"const": "attachment_render_page"},
+                "source_order": {"type": "integer"}, "authority_path": {"type": "string"},
+                "sha256": {"type": "string"}, "media_type": {"const": "image/png"},
+                "viewable_image": {"const": true}, "attachment_material_id": {"type": "string"},
+                "page_number": {"type": "integer", "minimum": 1}, "width": {"type": "integer", "minimum": 1},
+                "height": {"type": "integer", "minimum": 1}, "byte_size": {"type": "integer", "minimum": 1},
+                "renderer_identity": {"type": "string"}, "original": {"type": "object"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/common"},
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["material_id", "kind", "source_order", "authority_path", "sha256", "media_type", "viewable_image", "attachment_material_id", "page_number", "width", "height", "byte_size", "renderer_identity", "original"],
+              "properties": {
+                "material_id": {"type": "string"}, "kind": {"const": "attachment_contact_sheet"},
+                "source_order": {"type": "integer"}, "authority_path": {"type": "string"},
+                "sha256": {"type": "string"}, "media_type": {"const": "image/png"},
+                "viewable_image": {"const": true}, "attachment_material_id": {"type": "string"},
+                "page_number": {"const": 0}, "width": {"type": "integer", "minimum": 1},
+                "height": {"type": "integer", "minimum": 1}, "byte_size": {"type": "integer", "minimum": 1},
+                "renderer_identity": {"type": "string"}, "original": {"type": "object"}
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

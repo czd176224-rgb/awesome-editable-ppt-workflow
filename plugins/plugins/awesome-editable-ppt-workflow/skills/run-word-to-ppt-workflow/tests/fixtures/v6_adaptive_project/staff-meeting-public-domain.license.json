@@ -1,0 +1,14 @@
+{
+  "artifact_version": "licensed-test-fixture-v1",
+  "file": "staff-meeting-public-domain.jpg",
+  "sha256": "548411727b5291c26774d572be58dbc71c07d819ee290a77311e27f70e769888",
+  "title": "Staff meeting (2)",
+  "description": "Staff from the Cancer Information Service hold a meeting in their conference room.",
+  "author": "Bill Branson, National Cancer Institute",
+  "date": "2004-06",
+  "source_page": "https://commons.wikimedia.org/wiki/File:Staff_meeting_(2).jpg",
+  "source_file": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Staff_meeting_(2).jpg?width=960",
+  "license": "Public domain, work of the National Institutes of Health / United States federal government",
+  "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+  "attribution": "Bill Branson / National Cancer Institute"
+}
