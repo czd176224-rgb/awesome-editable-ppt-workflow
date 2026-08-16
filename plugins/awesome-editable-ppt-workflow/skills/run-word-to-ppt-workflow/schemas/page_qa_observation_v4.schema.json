@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "page_qa_observation_v4.schema.json",
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "check": {
+      "type": "object", "additionalProperties": false,
+      "required": ["result", "detail"],
+      "properties": {
+        "result": {"enum": ["pass", "fail", "uncertain"]},
+        "detail": {"type": "string", "minLength": 1, "maxLength": 800}
+      }
+    },
+    "presence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["asset_id", "present", "detail"],
+      "properties": {
+        "asset_id": {"type": "string", "minLength": 1}, "present": {"type": "boolean"},
+        "detail": {"type": "string", "minLength": 1, "maxLength": 800}
+      }
+    },
+    "directive": {
+      "type": "object", "additionalProperties": false,
+      "required": ["directive_id", "satisfied", "detail"],
+      "properties": {
+        "directive_id": {"type": "string", "minLength": 1}, "satisfied": {"type": "boolean"},
+        "detail": {"type": "string", "minLength": 1, "maxLength": 800}
+      }
+    }
+  },
+  "type": "object", "additionalProperties": false,
+  "required": [
+    "artifact_version", "workflow_contract_version", "qa_policy_version", "page_number",
+    "qa_work_item_sha256", "generation_receipt_sha256", "provider", "status",
+    "invocation", "checks", "required_image_presence", "required_directive_results"
+  ],
+  "properties": {
+    "artifact_version": {"const": "qa-observation-v1"},
+    "workflow_contract_version": {"const": "word-ppt-workflow-v4"},
+    "qa_policy_version": {"const": "risk-qa-v5"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "qa_work_item_sha256": {"$ref": "#/$defs/sha256"},
+    "generation_receipt_sha256": {"$ref": "#/$defs/sha256"},
+    "provider": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "name", "model", "run_id"],
+      "properties": {
+        "kind": {"const": "agentic_visual_review"}, "name": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1}, "run_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "invocation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["signed_bundle", "request", "raw_response"],
+      "properties": {
+        "signed_bundle": {"$ref": "#/$defs/artifact"}, "request": {"$ref": "#/$defs/artifact"},
+        "raw_response": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "status": {"const": "complete"},
+    "checks": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "fixed_layers_absent": {"$ref": "#/$defs/check"},
+        "readable_no_overflow": {"$ref": "#/$defs/check"},
+        "key_facts_preserved": {"$ref": "#/$defs/check"},
+        "table_anchors_preserved": {"$ref": "#/$defs/check"},
+        "style_matches": {"$ref": "#/$defs/check"},
+        "unsupported_facts_absent": {"$ref": "#/$defs/check"}
+      }
+    },
+    "required_image_presence": {"type": "array", "items": {"$ref": "#/$defs/presence"}},
+    "required_directive_results": {"type": "array", "items": {"$ref": "#/$defs/directive"}},
+    "unavailable_reason": false
+  },
+  "allOf": [{"properties": {"checks": {"required": [
+    "fixed_layers_absent", "readable_no_overflow", "key_facts_preserved",
+    "table_anchors_preserved", "style_matches", "unsupported_facts_absent"
+  ]}}}]
+}

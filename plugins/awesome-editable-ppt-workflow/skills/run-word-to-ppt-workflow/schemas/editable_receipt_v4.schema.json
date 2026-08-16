@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "editable_receipt_v4.schema.json",
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "coverage": {"type": "object", "additionalProperties": false, "required": ["source_id", "object_name"], "properties": {"source_id": {"type": "string", "minLength": 1}, "object_name": {"type": "string", "minLength": 1}}},
+    "tableCoverage": {"type": "object", "additionalProperties": false, "required": ["table_id", "object_name", "cell_count"], "properties": {"table_id": {"type": "string", "minLength": 1}, "object_name": {"type": "string", "minLength": 1}, "cell_count": {"type": "integer", "minimum": 0}}},
+    "raster": {"type": "object", "additionalProperties": false, "required": ["object_id", "sha256", "source_type", "source_id"], "properties": {"object_id": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}, "source_type": {"enum": ["page-image", "attachment", "search-evidence", "image2-separated-component", "decorative-texture"]}, "source_id": {"type": "string", "minLength": 1}}}
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_version", "workflow_contract_version", "reconstruction_version", "page_number",
+    "work_item_sha256", "generation_sha256", "qa_sha256", "material_bundle_sha256",
+    "page_contract_sha256", "style_execution_sha256", "editable_page", "object_manifest",
+    "object_counts", "text_coverage", "table_coverage", "raster_components",
+    "flattened_body_image", "accepted_body_image_sha256", "accepted_body_embedded",
+    "fixed_layers_added", "fixed_layer_names", "slide_fingerprint", "signed_bundle", "gateway_invocation"
+  ],
+  "properties": {
+    "artifact_version": {"const": "editable-receipt-v1"},
+    "workflow_contract_version": {"const": "word-ppt-workflow-v4"},
+    "reconstruction_version": {"const": "editable-image-v3"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "work_item_sha256": {"$ref": "#/$defs/sha256"},
+    "generation_sha256": {"$ref": "#/$defs/sha256"},
+    "qa_sha256": {"$ref": "#/$defs/sha256"},
+    "material_bundle_sha256": {"$ref": "#/$defs/sha256"},
+    "page_contract_sha256": {"$ref": "#/$defs/sha256"},
+    "style_execution_sha256": {"$ref": "#/$defs/sha256"},
+    "editable_page": {"$ref": "#/$defs/artifact"},
+    "object_manifest": {"$ref": "#/$defs/artifact"},
+    "object_counts": {"type": "object", "additionalProperties": false, "required": ["text", "table", "image", "shape"], "properties": {"text": {"type": "integer", "minimum": 0}, "table": {"type": "integer", "minimum": 0}, "image": {"type": "integer", "minimum": 0}, "shape": {"type": "integer", "minimum": 0}}},
+    "text_coverage": {"type": "array", "items": {"$ref": "#/$defs/coverage"}},
+    "table_coverage": {"type": "array", "items": {"$ref": "#/$defs/tableCoverage"}},
+    "raster_components": {"type": "array", "items": {"$ref": "#/$defs/raster"}},
+    "flattened_body_image": {"const": false},
+    "accepted_body_image_sha256": {"$ref": "#/$defs/sha256"},
+    "accepted_body_embedded": {"const": false},
+    "fixed_layers_added": {"const": true},
+    "fixed_layer_names": {"type": "array", "prefixItems": [{"const": "fixed-frame-title"}, {"const": "fixed-frame-logo"}, {"const": "fixed-frame-footer"}, {"const": "fixed-frame-page-number"}], "items": false},
+    "slide_fingerprint": {"$ref": "#/$defs/sha256"},
+    "signed_bundle": {"$ref": "#/$defs/artifact"},
+    "gateway_invocation": {"$ref": "#/$defs/artifact"}
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "artifact_version": "v6-adaptive-e2e-fixture-v1",
+  "pages": [
+    {"page_number": 1, "operation": "generate", "quality": "medium", "kind": "text_concept"},
+    {"page_number": 2, "operation": "edit", "quality": "medium", "kind": "meeting_photo"},
+    {"page_number": 3, "operation": "edit", "quality": "high", "kind": "company_logo_screenshot"},
+    {"page_number": 4, "operation": "generate", "quality": "high", "kind": "chart_facts"}
+  ],
+  "body_pixels": {"width": 1904, "height": 896},
+  "slide_cm": {"width": 25.4, "height": 14.288},
+  "candidate_limit": 2
+}
