@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://word-to-editable-ppt.local/schemas/page_contract.schema.json",
+  "title": "Portable page contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "workflow_contract_version", "page_number", "page_title", "title_origin", "body_text", "body_hash", "source_text", "source_hash", "source_blocks", "page_comments", "requirement_precedence", "asset_bindings", "source_tables", "semantic_units", "explicit_relations", "relationship_contract_sha256", "must_keep", "key_facts", "key_data", "forbidden_cross_page_content", "page_purpose", "detected_dates", "detected_numbers", "detected_amounts", "human_review_status", "human_review_notes"],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "workflow_contract_version": {"const": "word-ppt-workflow-v4"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "page_title": {"type": "string", "minLength": 1},
+    "title_origin": {"enum": ["explicit_word_heading", "comment_override", "derived_from_body"]},
+    "body_text": {"type": "string"},
+    "body_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_text": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_blocks": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/block"}},
+    "page_comments": {"type": "array", "items": {"$ref": "#/$defs/page_comment"}},
+    "requirement_precedence": {
+      "const": ["fixed_hard_rules", "ui_global_soft_preferences", "model_creative_freedom", "word_page_comments"]
+    },
+    "asset_bindings": {"type": "array", "items": {"$ref": "#/$defs/asset_binding"}},
+    "source_tables": {"type": "array", "items": {"type": "string"}},
+    "semantic_units": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/semantic_unit"}},
+    "explicit_relations": {"type": "array", "items": {"$ref": "#/$defs/explicit_relation"}},
+    "relationship_contract_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "must_keep": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "key_facts": {"type": "array", "items": {"$ref": "#/$defs/evidenced_fact"}},
+    "key_data": {"type": "array", "items": {"$ref": "#/$defs/evidenced_data"}},
+    "forbidden_cross_page_content": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "page_purpose": {"type": "string", "minLength": 1},
+    "detected_dates": {"type": "array", "items": {"$ref": "#/$defs/detection"}},
+    "detected_numbers": {"type": "array", "items": {"$ref": "#/$defs/detection"}},
+    "detected_amounts": {"type": "array", "items": {"$ref": "#/$defs/detection"}},
+    "human_review_status": {"enum": ["pending", "approved", "needs_revision"]},
+    "human_review_notes": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {
+    "asset_binding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["asset_id", "sha256", "media_type", "relative_path", "original_filename", "source_block_indexes", "provenance", "asset_role", "processing", "use_policy", "blocking", "advisories"],
+      "properties": {
+        "asset_id": {"type": "string", "pattern": "^word_asset_[0-9]{3,}$"},
+        "sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "media_type": {"type": "string", "minLength": 1},
+        "relative_path": {"type": "string", "pattern": "^00_source/word_assets/original/"},
+        "original_filename": {"type": "string", "minLength": 1},
+        "asset_role": {"enum": ["mandatory_inline_image", "data_source", "document_source", "unsupported"]},
+        "processing": {"enum": ["direct_image", "extract_content", "unavailable"]},
+        "use_policy": {"enum": ["required", "contextual"]},
+        "blocking": {"const": false},
+        "advisories": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "generation_input": {
+          "type": "object", "additionalProperties": false,
+          "required": ["relative_path", "sha256", "media_type", "derivation"],
+          "properties": {
+            "relative_path": {"type": "string", "pattern": "^00_source/word_assets/(original|derived)/"},
+            "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "media_type": {"enum": ["image/png", "image/jpeg", "image/webp", "text/plain"]},
+            "derivation": {"enum": ["original_supported", "deterministic_png", "text_extraction"]},
+            "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+          }
+        },
+        "source_block_indexes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 0}},
+        "provenance": {
+          "type": "object", "additionalProperties": false,
+          "required": ["source_type", "source_page", "source_file", "source_sha256", "source_block_indexes"],
+          "properties": {
+            "source_type": {"enum": ["word_inline_image", "word_page_attachment"]},
+            "source_page": {"type": "integer", "minimum": 1},
+            "source_file": {"type": "string", "minLength": 1},
+            "source_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+            "source_block_indexes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 0}}
+          }
+        }
+      }
+    },
+    "page_comment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["comment_id", "text", "author", "timestamp"],
+      "properties": {
+        "comment_id": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1},
+        "author": {"type": "string"},
+        "timestamp": {"type": ["string", "null"]}
+      }
+    },
+    "block": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "text"],
+          "properties": {
+            "type": {"const": "paragraph"}, "text": {"type": "string"},
+            "source_block_index": {"type": "integer", "minimum": 0},
+            "relationship_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+            "comment_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "markdown"],
+          "properties": {
+            "type": {"const": "table"}, "markdown": {"type": "string"},
+            "source_block_index": {"type": "integer", "minimum": 0},
+            "relationship_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+            "comment_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+          }
+        }
+      ]
+    },
+    "trace": {
+      "type": "object", "additionalProperties": true,
+      "required": ["source_type", "source_page", "source_locator", "text_span", "excerpt"],
+      "properties": {
+        "source_type": {"enum": ["word_page", "official_update"]},
+        "source_page": {"type": "integer", "minimum": 1},
+        "source_locator": {"type": "string", "minLength": 1},
+        "text_span": {"type": "string", "minLength": 1},
+        "excerpt": {"type": "string", "minLength": 1},
+        "source_url": {"type": "string", "format": "uri"}
+      }
+    },
+    "semantic_unit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["unit_id", "kind", "text", "source_block_index", "source_sha256", "source_trace"],
+      "properties": {
+        "unit_id": {"type": "string", "pattern": "^unit_[0-9]{3,}$"},
+        "kind": {"enum": ["sentence", "table_row"]},
+        "text": {"type": "string", "minLength": 1},
+        "source_block_index": {"type": "integer", "minimum": 1},
+        "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "source_trace": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/trace"}}
+      }
+    },
+    "explicit_relation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["relation_id", "type", "scope", "source_unit_ids", "cue", "source_sha256", "source_trace"],
+      "properties": {
+        "relation_id": {"type": "string", "pattern": "^relation_[0-9]{3,}$"},
+        "type": {"enum": ["parallel", "sequence", "cause", "condition", "contrast", "support"]},
+        "scope": {"enum": ["intra_unit", "cross_unit"]},
+        "source_unit_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^unit_[0-9]{3,}$"}},
+        "cue": {"type": "string", "minLength": 1},
+        "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "source_trace": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/trace"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"scope": {"const": "cross_unit"}}}, "then": {"properties": {"source_unit_ids": {"minItems": 2}}}},
+        {"if": {"properties": {"scope": {"const": "intra_unit"}}}, "then": {"properties": {"source_unit_ids": {"minItems": 1, "maxItems": 1}}}}
+      ]
+    },
+    "evidenced_fact": {"type": "object", "required": ["fact", "source_trace"], "properties": {"fact": {"type": "string", "minLength": 1}, "source_trace": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/trace"}}}},
+    "evidenced_data": {"type": "object", "required": ["label", "value", "source_trace"], "properties": {"label": {"type": "string"}, "value": {"type": "string"}, "source_trace": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/trace"}}}},
+    "detection": {"type": "object", "required": ["value", "source_trace"], "properties": {"value": {"type": "string"}, "source_trace": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/trace"}}}}
+  }
+}

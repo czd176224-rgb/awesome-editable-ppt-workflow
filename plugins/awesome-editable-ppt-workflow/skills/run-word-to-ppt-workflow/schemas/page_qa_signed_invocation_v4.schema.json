@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "page_qa_signed_invocation_v4.schema.json",
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+      "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}}
+    }
+  },
+  "type": "object", "additionalProperties": false,
+  "required": ["artifact_version", "request", "raw_response", "attestation", "signature"],
+  "properties": {
+    "artifact_version": {"const": "qa-signed-invocation-v1"},
+    "request": {"$ref": "#/$defs/artifact"}, "raw_response": {"$ref": "#/$defs/artifact"},
+    "signature": {"$ref": "#/$defs/sha256"},
+    "attestation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider", "model", "endpoint", "dry_run", "nonce", "timestamp", "qa_work_item_sha256", "request_sha256", "body_image_sha256", "reference_image_sha256s", "raw_response_sha256", "service_request_id"],
+      "properties": {
+        "provider": {"const": "codex-chatgpt"}, "model": {"type": "string", "minLength": 1},
+        "endpoint": {"const": "codex-app-server"}, "dry_run": {"const": false},
+        "nonce": {"type": "string", "pattern": "^[0-9a-f]{48}$"},
+        "timestamp": {"type": "string", "format": "date-time"},
+        "qa_work_item_sha256": {"$ref": "#/$defs/sha256"}, "request_sha256": {"$ref": "#/$defs/sha256"},
+        "body_image_sha256": {"$ref": "#/$defs/sha256"},
+        "reference_image_sha256s": {"type": "array", "items": {"$ref": "#/$defs/sha256"}},
+        "raw_response_sha256": {"$ref": "#/$defs/sha256"},
+        "service_request_id": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

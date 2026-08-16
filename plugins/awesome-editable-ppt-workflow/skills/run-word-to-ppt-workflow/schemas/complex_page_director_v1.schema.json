@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "complex_page_director_v1.schema.json",
+  "title": "ComplexPageDirectorV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "page_number",
+    "quality",
+    "machine_record",
+    "creative_direction",
+    "prompt_sections"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "const": "awesome-page-director-v1"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "quality": {"type": "string", "enum": ["medium", "high"]},
+    "machine_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "facts_and_sources",
+        "must_preserve_entities",
+        "core_content_and_comment_direction",
+        "material_use",
+        "selected_references",
+        "fixed_layer_exclusions"
+      ],
+      "properties": {
+        "facts_and_sources": {"$ref": "#/$defs/nonEmptyStrings"},
+        "must_preserve_entities": {"$ref": "#/$defs/nonEmptyStrings"},
+        "core_content_and_comment_direction": {"$ref": "#/$defs/nonEmptyStrings"},
+        "material_use": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["material_id", "status", "reason"],
+            "properties": {
+              "material_id": {"type": "string", "minLength": 1},
+              "status": {
+                "type": "string",
+                "enum": ["used_in_image", "background_understanding", "not_used"]
+              },
+              "reason": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "selected_references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "material_id",
+              "identity",
+              "use",
+              "preserve",
+              "allowed_changes",
+              "composition_relationship"
+            ],
+            "properties": {
+              "material_id": {"type": "string", "minLength": 1},
+              "identity": {"type": "string", "minLength": 1},
+              "use": {"type": "string", "minLength": 1},
+              "preserve": {"type": "string", "minLength": 1},
+              "allowed_changes": {"type": "string", "minLength": 1},
+              "composition_relationship": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "fixed_layer_exclusions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["title", "logo", "footer", "page_number"]
+          },
+          "minItems": 4,
+          "maxItems": 4
+        }
+      }
+    },
+    "creative_direction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "core_objective",
+        "visual_concept",
+        "scene_subject_hierarchy_reading_path",
+        "composition_viewpoint_whitespace_medium_texture"
+      ],
+      "properties": {
+        "core_objective": {"type": "string", "minLength": 1},
+        "visual_concept": {"type": "string", "minLength": 1},
+        "scene_subject_hierarchy_reading_path": {"type": "string", "minLength": 1},
+        "composition_viewpoint_whitespace_medium_texture": {"type": "string", "minLength": 1}
+      }
+    },
+    "prompt_sections": {"$ref": "#/$defs/promptSections"}
+  },
+  "$defs": {
+    "nonEmptyStrings": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "promptSections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scene_or_background",
+        "subject_and_core_expression",
+        "key_details",
+        "composition_viewpoint_hierarchy_and_medium",
+        "reference_roles_and_combination",
+        "preservation_and_fixed_exclusions"
+      ],
+      "properties": {
+        "scene_or_background": {"type": "string", "minLength": 1},
+        "subject_and_core_expression": {"type": "string", "minLength": 1},
+        "key_details": {"type": "string", "minLength": 1},
+        "composition_viewpoint_hierarchy_and_medium": {"type": "string", "minLength": 1},
+        "reference_roles_and_combination": {"type": "string", "minLength": 1},
+        "preservation_and_fixed_exclusions": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

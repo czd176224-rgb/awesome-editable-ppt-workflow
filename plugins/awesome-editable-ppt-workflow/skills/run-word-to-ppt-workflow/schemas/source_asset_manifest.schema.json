@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://word-to-editable-ppt.local/schemas/source_asset_manifest.schema.json",
+  "title": "Word source asset manifest",
+  "type": "object",
+  "required": ["schema_version", "assets"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "workflow_contract_version": {"const": "fixed-canvas-cm-v2"},
+    "source_file": {"type": "string", "minLength": 1},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["asset_id", "relationship_id", "source_part", "original_filename", "media_type", "sha256", "byte_size", "page_numbers", "source_block_indexes", "binding_status", "relative_path", "asset_role", "processing", "blocking", "advisories"],
+        "properties": {
+          "asset_id": {"type": "string", "pattern": "^word_asset_[0-9]{3,}$"},
+          "relationship_id": {"type": "string", "minLength": 1},
+          "source_part": {"type": "string", "pattern": "^(word/|external:)"},
+          "original_filename": {"type": "string", "minLength": 1},
+          "media_type": {"type": "string", "minLength": 1},
+          "sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+          "byte_size": {"type": ["integer", "null"], "minimum": 0},
+          "page_numbers": {"type": "array", "items": {"type": "integer", "minimum": 1}, "uniqueItems": true},
+          "source_block_indexes": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": true},
+          "binding_status": {"enum": ["bound", "unresolved"]},
+          "asset_role": {"enum": ["mandatory_inline_image", "data_source", "document_source", "unsupported"]},
+          "processing": {"enum": ["direct_image", "extract_content", "unavailable"]},
+          "blocking": {"const": false},
+          "advisories": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "relative_path": {"type": "string", "pattern": "^00_source/word_assets/original/"},
+          "generation_input": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["relative_path", "sha256", "media_type", "derivation"],
+            "properties": {
+              "relative_path": {"type": "string", "pattern": "^00_source/word_assets/(original|derived)/"},
+              "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "media_type": {"enum": ["image/png", "image/jpeg", "image/webp", "text/plain"]},
+              "derivation": {"enum": ["original_supported", "deterministic_png", "text_extraction"]},
+              "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            }
+          },
+          "width": {"type": "integer", "minimum": 1},
+          "height": {"type": "integer", "minimum": 1}
+        },
+        "allOf": [
+          {"if": {"properties": {"binding_status": {"const": "bound"}}}, "then": {"properties": {"page_numbers": {"minItems": 1}}}}
+        ]
+      }
+    }
+  }
+}
