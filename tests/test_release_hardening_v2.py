@@ -331,7 +331,8 @@ def test_release_gate_validates_export_from_clean_public_development_checkout(tm
         ["commit", "-m", "clean checkout"],
     ):
         subprocess.run(["git", *args], cwd=checkout, check=True, capture_output=True)
-    assert (checkout / "docs/superpowers/specs/2026-08-11-v6-adaptive-image-materials-design.md").is_file()
+    # A private development checkout may contain excluded design notes; the
+    # reviewed public source checkout intentionally never contains them.
     assert json.loads((checkout / "package-info.json").read_text(encoding="utf-8"))["repositoryVisibility"] == "public"
 
     gated = subprocess.run(
@@ -373,7 +374,8 @@ def test_package_release_exports_clean_public_source_from_git_checkout(tmp_path:
         ["commit", "-m", "clean checkout"],
     ):
         subprocess.run(["git", *args], cwd=checkout, check=True, capture_output=True)
-    assert (checkout / "docs/superpowers/specs/2026-08-11-v6-adaptive-image-materials-design.md").is_file()
+    # Both the private reviewed tree and the already-public source tree are
+    # valid package inputs; the archive assertion below enforces exclusion.
 
     dist_a = tmp_path / "dist-a"
     dist_b = tmp_path / "dist-b"
