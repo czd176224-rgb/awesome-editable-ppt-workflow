@@ -1,0 +1,20 @@
+{
+  "name": "editable-ppt-public",
+  "interface": {
+    "displayName": "Awesome Editable PPT Workflow 1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "awesome-editable-ppt-workflow",
+      "source": {
+        "source": "local",
+        "path": "./plugins/awesome-editable-ppt-workflow"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
