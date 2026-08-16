@@ -1,0 +1,4 @@
+interface:
+  display_name: "校验与修复 PPT 成品"
+  short_description: "可选检查最终 PPT，并进行范围受控的局部修复"
+  default_prompt: "Use $validate-ppt-output to inspect and validate the completed PowerPoint output."

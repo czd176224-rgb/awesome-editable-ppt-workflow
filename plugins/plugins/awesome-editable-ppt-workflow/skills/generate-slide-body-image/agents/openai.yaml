@@ -1,0 +1,4 @@
+interface:
+  display_name: "生成 PPT 页面主体图"
+  short_description: "Adaptive generate/edit 生成确认材料对应的完整主体图"
+  default_prompt: "Use $generate-slide-body-image to adaptively generate or edit the complete 17:8 body image from sealed V6 materials."

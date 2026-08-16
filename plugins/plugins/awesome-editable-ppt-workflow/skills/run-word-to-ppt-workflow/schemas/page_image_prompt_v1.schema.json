@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "page_image_prompt_v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "page_number", "selected_reference_images", "image_prompt"],
+  "properties": {
+    "schema_version": {"const": "page-image-prompt-v1"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "selected_reference_images": {
+      "type": "array", "maxItems": 16, "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "image_prompt": {"type": "string", "minLength": 1}
+  }
+}

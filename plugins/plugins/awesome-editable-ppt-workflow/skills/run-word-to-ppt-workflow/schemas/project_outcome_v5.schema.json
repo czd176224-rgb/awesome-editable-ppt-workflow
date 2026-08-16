@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "project_outcome_v5.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_version",
+    "workflow_contract_version",
+    "precedence",
+    "user_outcome",
+    "material_policy",
+    "qa_policy",
+    "delivery_policy"
+  ],
+  "properties": {
+    "artifact_version": {"type": "string", "const": "outcome-contract-v1"},
+    "workflow_contract_version": {"type": "string", "const": "word-ppt-workflow-v5"},
+    "precedence": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "string", "const": "fixed_hard_rules"},
+        {"type": "string", "const": "word_facts"},
+        {"type": "string", "const": "page_comments"},
+        {"type": "string", "const": "ui_global_soft_style"},
+        {"type": "string", "const": "supporting_material"},
+        {"type": "string", "const": "model_creativity"}
+      ],
+      "items": false,
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "user_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "one_word_page_per_slide",
+        "object_level_editable",
+        "content_authority",
+        "accepted_image2_is_visual_authority",
+        "reconstruction_preserves_accepted_design",
+        "page_comment_overrides_global_soft_style",
+        "global_confirmation_count",
+        "fixed_svg_logo",
+        "internal_artifacts_visible_by_default"
+      ],
+      "properties": {
+        "one_word_page_per_slide": {"type": "boolean", "const": true},
+        "object_level_editable": {"type": "boolean", "const": true},
+        "content_authority": {"type": "string", "const": "word"},
+        "accepted_image2_is_visual_authority": {"type": "boolean", "const": true},
+        "reconstruction_preserves_accepted_design": {"type": "boolean", "const": true},
+        "page_comment_overrides_global_soft_style": {"type": "boolean", "const": true},
+        "global_confirmation_count": {"type": "integer", "const": 1},
+        "fixed_svg_logo": {"type": "boolean", "const": true},
+        "internal_artifacts_visible_by_default": {"type": "boolean", "const": false}
+      }
+    },
+    "material_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authenticity_definition",
+        "search_when",
+        "search_scope",
+        "authenticity_verification"
+      ],
+      "properties": {
+        "authenticity_definition": {
+          "type": "string",
+          "const": "source_pixels_in_delivered_pptx"
+        },
+        "search_when": {
+          "type": "string",
+          "const": "required_authentic_material_missing"
+        },
+        "search_scope": {"type": "string", "const": "project_shared_once"},
+        "authenticity_verification": {
+          "type": "string",
+          "const": "deterministic_provenance"
+        }
+      }
+    },
+    "qa_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "semantic_review_target",
+        "image2_preflight",
+        "advisory_may_block",
+        "maximum_automatic_repairs"
+      ],
+      "properties": {
+        "semantic_review_target": {
+          "type": "string",
+          "const": "accepted_image2_vs_final_editable_pair"
+        },
+        "image2_preflight": {"type": "string", "const": "deterministic_only"},
+        "advisory_may_block": {"type": "boolean", "const": false},
+        "maximum_automatic_repairs": {"type": "integer", "const": 1}
+      }
+    },
+    "delivery_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixed_layers_added_once",
+        "ordered_assembly",
+        "office_validation_required"
+      ],
+      "properties": {
+        "fixed_layers_added_once": {"type": "boolean", "const": true},
+        "ordered_assembly": {"type": "boolean", "const": true},
+        "office_validation_required": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}

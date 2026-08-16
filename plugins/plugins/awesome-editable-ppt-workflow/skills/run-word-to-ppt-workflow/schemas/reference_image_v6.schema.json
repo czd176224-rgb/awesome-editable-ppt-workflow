@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://word-to-editable-ppt.local/schemas/reference_image_v6.schema.json",
+  "title": "V6 reference image",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "reference_id",
+    "source",
+    "purpose",
+    "preservation",
+    "allow_crop",
+    "allow_restyle",
+    "status",
+    "original_path",
+    "model_input_path",
+    "thumbnail_path",
+    "source_url",
+    "integrity"
+  ],
+  "$defs": {
+    "projectPath": {
+      "type": ["string", "null"],
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "properties": {
+    "reference_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "source": {"enum": ["word_embedded", "attachment", "external_url"]},
+    "purpose": {"type": "string", "minLength": 1},
+    "preservation": {"enum": ["reference_only", "preserve", "required_presence"]},
+    "allow_crop": {"type": "boolean"},
+    "allow_restyle": {"type": "boolean"},
+    "status": {"enum": ["available", "unavailable", "not_requested"]},
+    "original_path": {"$ref": "#/$defs/projectPath"},
+    "model_input_path": {"$ref": "#/$defs/projectPath"},
+    "thumbnail_path": {"$ref": "#/$defs/projectPath"},
+    "source_url": {"type": ["string", "null"], "format": "uri"},
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["original_sha256", "model_input_sha256", "thumbnail_sha256"],
+      "properties": {
+        "original_sha256": {"$ref": "#/$defs/sha256"},
+        "model_input_sha256": {"$ref": "#/$defs/sha256"},
+        "thumbnail_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"source": {"const": "external_url"}}, "required": ["source"]},
+      "then": {"properties": {"source_url": {"type": "string", "format": "uri", "minLength": 1}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "available"}}, "required": ["status"]},
+      "then": {
+        "required": ["original_path", "model_input_path"],
+        "properties": {
+          "original_path": {"type": "string"},
+          "model_input_path": {"type": "string"}
+        }
+      }
+    }
+  ]
+}

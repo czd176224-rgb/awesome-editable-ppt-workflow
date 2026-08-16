@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "design_plan_v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["composition_archetype", "content_sequence", "comment_directives", "reference_substitutions", "hierarchy_order", "emphasis_ids", "groups", "reading_direction", "layout_density", "whitespace", "connector_style", "icon_policy", "reference_treatments"],
+  "properties": {
+    "composition_archetype": {"enum": ["single-focus", "two-column", "three-column", "grid", "timeline", "process-flow", "comparison", "matrix", "dashboard"]},
+    "content_sequence": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "comment_directives": {"type": "array", "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["comment_id", "actions"],
+      "properties": {
+        "comment_id": {"type": "string", "minLength": 1},
+        "actions": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["emphasize", "de-emphasize", "restructure", "abstract-to-model", "preserve-exact", "use-reference", "prohibit-promotional", "change-reading-order"]}},
+        "target_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "page_scope": {"const": "whole-page"},
+        "substitution_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^sub_[1-9][0-9]*$"}}
+      },
+      "oneOf": [{"required": ["target_ids"]}, {"required": ["page_scope"]}]
+    }},
+    "reference_substitutions": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["substitution_id", "source_id", "reference_id", "mode"], "properties": {
+      "substitution_id": {"type": "string", "pattern": "^sub_[1-9][0-9]*$"},
+      "source_id": {"type": "string", "minLength": 1},
+      "reference_id": {"type": "string", "minLength": 1},
+      "mode": {"const": "replace-visible-label-with-reference-image"}
+    }}},
+    "hierarchy_order": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "emphasis_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "groups": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["group_id", "member_ids"], "properties": {"group_id": {"type": "string", "pattern": "^group_[1-9][0-9]*$"}, "member_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}}}},
+    "reading_direction": {"enum": ["left-to-right", "top-to-bottom", "clockwise"]},
+    "layout_density": {"enum": ["airy", "balanced", "dense"]},
+    "whitespace": {"enum": ["generous", "balanced", "compact"]},
+    "connector_style": {"enum": ["none", "straight", "orthogonal", "curved"]},
+    "icon_policy": {"enum": ["none", "source-supported-only", "generic-functional-only"]},
+    "reference_treatments": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["reference_id", "preserve", "change", "crop", "placement"], "properties": {
+      "reference_id": {"type": "string", "minLength": 1},
+      "preserve": {"enum": ["all-content", "identity-and-content", "visual-appearance", "readable-content"]},
+      "change": {"enum": ["crop-scale-place", "crop-and-place", "scale-and-place", "place-only"]},
+      "crop": {"enum": ["fit", "fill", "none"]},
+      "placement": {"enum": ["primary", "supporting", "background", "inset"]}
+    }}}
+  }
+}

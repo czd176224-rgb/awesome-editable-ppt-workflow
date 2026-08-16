@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "workflow_contract_version",
+    "project_name",
+    "expected_page_count",
+    "created_date",
+    "source_mode",
+    "style_confirmation",
+    "render"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "workflow_contract_version": {"const": "word-ppt-workflow-v4"},
+    "project_name": {"type": "string", "minLength": 1},
+    "expected_page_count": {"type": "integer", "minimum": 1},
+    "created_date": {"type": "string", "minLength": 1},
+    "source_mode": {"const": "paginated_word"},
+    "style_confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {"status": {"const": "pending"}}
+    },
+    "render": {"type": "object"}
+  }
+}

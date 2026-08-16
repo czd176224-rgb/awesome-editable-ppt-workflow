@@ -1,0 +1,243 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "complex_page_evidence_v1.schema.json",
+  "title": "ComplexPageEvidenceV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "workspace_identity_sha256",
+    "source_snapshot_sha256",
+    "page_number",
+    "event_count",
+    "evidence_sha256",
+    "stages",
+    "duration_totals",
+    "calls",
+    "candidate_preflights",
+    "call_totals",
+    "image2_total_calls",
+    "reconstruct_image2_total_calls",
+    "attachment_cache",
+    "recovery",
+    "resource_peaks"
+  ],
+  "properties": {
+    "schema_version": {"const": "awesome-complex-page-evidence-v1"},
+    "experiment_id": {"$ref": "#/$defs/safeExperimentId"},
+    "workspace_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "page_number": {"type": "integer", "minimum": 1},
+    "event_count": {"type": "integer", "minimum": 0, "maximum": 64},
+    "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "stages": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/stage"}},
+    "duration_totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_duration_seconds", "external_wait_seconds", "reconstruction_duration_seconds"],
+      "properties": {
+        "local_duration_seconds": {"type": "number", "minimum": 0},
+        "external_wait_seconds": {"type": "number", "minimum": 0},
+        "reconstruction_duration_seconds": {"type": "number", "minimum": 0}
+      }
+    },
+    "calls": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/call"}},
+    "candidate_preflights": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/candidatePreflight"}},
+    "call_totals": {"$ref": "#/$defs/callTotals"},
+    "image2_total_calls": {"type": "integer", "minimum": 0, "maximum": 3},
+    "reconstruct_image2_total_calls": {"type": "integer", "minimum": 0, "maximum": 3},
+    "attachment_cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hits", "misses"],
+      "properties": {
+        "hits": {"type": "integer", "minimum": 0},
+        "misses": {"const": 0}
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events", "skipped_calls"],
+      "properties": {
+        "events": {"type": "integer", "minimum": 0},
+        "skipped_calls": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/callKind"}
+        }
+      }
+    },
+    "resource_peaks": {"$ref": "#/$defs/resources"}
+  },
+  "$defs": {
+    "safeExperimentId": {
+      "type": "string",
+      "pattern": "^(?!(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\.|$))[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9_-])?$"
+    },
+    "stageKind": {"enum": ["local", "codex_wait", "image2_wait", "office_wait", "reconstruction"]},
+    "stageName": {
+      "enum": [
+        "material_preparation",
+        "attachment_cache_lookup",
+        "page_director",
+        "image2_queue",
+        "image2_execution",
+        "visual_review",
+        "correction_decision",
+        "reconstruction",
+        "fixed_layer_assembly",
+        "lock_wait",
+        "oauth_wait",
+        "office_wait",
+        "network_wait",
+        "recovery"
+      ]
+    },
+    "callKind": {"enum": ["page_director", "correction_decision", "image2", "visual_review", "reconstruct_edit"]},
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rss_bytes", "handle_count", "active_external_calls", "temp_file_count"],
+      "properties": {
+        "rss_bytes": {"type": "integer", "minimum": 0},
+        "handle_count": {"type": "integer", "minimum": 0},
+        "active_external_calls": {"type": "integer", "minimum": 0},
+        "temp_file_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "experiment_id",
+        "workspace_identity_sha256",
+        "source_snapshot_sha256",
+        "page_number",
+        "name",
+        "kind",
+        "start_seconds",
+        "end_seconds",
+        "duration_seconds",
+        "local_duration_seconds",
+        "external_wait_seconds",
+        "unavailable_reason",
+        "status",
+        "resource_start",
+        "resource_end"
+      ],
+      "properties": {
+        "event": {"const": "stage"},
+        "experiment_id": {"$ref": "#/$defs/safeExperimentId"},
+        "workspace_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "source_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "page_number": {"type": "integer", "minimum": 1},
+        "name": {"$ref": "#/$defs/stageName"},
+        "kind": {"$ref": "#/$defs/stageKind"},
+        "start_seconds": {"type": ["number", "null"], "minimum": 0},
+        "end_seconds": {"type": ["number", "null"], "minimum": 0},
+        "duration_seconds": {"type": ["number", "null"], "minimum": 0},
+        "local_duration_seconds": {"type": ["number", "null"], "minimum": 0},
+        "external_wait_seconds": {"type": ["number", "null"], "minimum": 0},
+        "unavailable_reason": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+        "status": {"enum": ["ok", "error", "unavailable"]},
+        "resource_start": {"anyOf": [{"$ref": "#/$defs/resources"}, {"type": "null"}]},
+        "resource_end": {"anyOf": [{"$ref": "#/$defs/resources"}, {"type": "null"}]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "unavailable"}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "start_seconds": {"type": "null"},
+              "end_seconds": {"type": "null"},
+              "duration_seconds": {"type": "null"},
+              "local_duration_seconds": {"type": "null"},
+              "external_wait_seconds": {"type": "null"},
+              "unavailable_reason": {"type": "string", "minLength": 1},
+              "resource_start": {"type": "null"},
+              "resource_end": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "start_seconds": {"type": "number", "minimum": 0},
+              "end_seconds": {"type": "number", "minimum": 0},
+              "duration_seconds": {"type": "number", "minimum": 0},
+              "local_duration_seconds": {"type": "number", "minimum": 0},
+              "external_wait_seconds": {"type": "number", "minimum": 0},
+              "unavailable_reason": {"type": "null"},
+              "resource_start": {"$ref": "#/$defs/resources"},
+              "resource_end": {"$ref": "#/$defs/resources"}
+            }
+          }
+        }
+      ]
+    },
+    "call": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event", "experiment_id", "workspace_identity_sha256", "source_snapshot_sha256", "page_number", "kind", "attempt", "model", "effort", "operation", "duration_seconds", "unavailable_reason", "status", "metadata"],
+      "properties": {
+        "event": {"const": "call"},
+        "experiment_id": {"$ref": "#/$defs/safeExperimentId"},
+        "workspace_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "source_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "page_number": {"type": "integer", "minimum": 1},
+        "kind": {"$ref": "#/$defs/callKind"},
+        "attempt": {"type": ["integer", "null"], "minimum": 1, "maximum": 3},
+        "model": {"type": "string", "minLength": 1, "maxLength": 128},
+        "effort": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
+        "operation": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+        "duration_seconds": {"type": ["number", "null"], "minimum": 0},
+        "unavailable_reason": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+        "status": {"type": "string", "minLength": 1, "maxLength": 64},
+        "metadata": {"type": "object", "maxProperties": 64}
+      }
+    },
+    "candidatePreflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event", "experiment_id", "workspace_identity_sha256", "source_snapshot_sha256", "page_number", "attempt", "candidate_sha256", "request_identity", "passed", "problems"],
+      "properties": {
+        "event": {"const": "candidate_preflight"},
+        "experiment_id": {"$ref": "#/$defs/safeExperimentId"},
+        "workspace_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "source_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "page_number": {"type": "integer", "minimum": 1},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+        "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "request_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "passed": {"type": "boolean"},
+        "problems": {
+          "type": "array", "maxItems": 4, "uniqueItems": true,
+          "items": {"enum": [
+            "Candidate is not an existing readable regular file in the isolated project.",
+            "Candidate failed PNG decoding or corruption verification.",
+            "Candidate is not native PNG format.",
+            "Candidate dimensions must be exactly 1904x896 pixels."
+          ]}
+        }
+      },
+      "allOf": [{
+        "if": {"properties": {"passed": {"const": true}}, "required": ["passed"]},
+        "then": {"properties": {"problems": {"maxItems": 0}}},
+        "else": {"properties": {"problems": {"minItems": 1}}}
+      }]
+    },
+    "callTotals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page_director", "correction_decision", "image2", "visual_review", "reconstruct_edit"],
+      "properties": {
+        "page_director": {"type": "integer", "minimum": 0},
+        "correction_decision": {"type": "integer", "minimum": 0},
+        "image2": {"type": "integer", "minimum": 0, "maximum": 3},
+        "visual_review": {"type": "integer", "minimum": 0},
+        "reconstruct_edit": {"type": "integer", "minimum": 0, "maximum": 3}
+      }
+    }
+  }
+}
