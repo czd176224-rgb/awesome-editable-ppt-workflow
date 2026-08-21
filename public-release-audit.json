@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "page-prompt-v6-adaptive-confirmed-materials",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "8de8ea693907fd9a044c6e401cc435a5fe7d5bd4f542665f0ba16682dcd95833",
+  "sourceManifestSha256": "6b0050f571fcf133a743381a7e9704a0b073d1c8da0648fa18305f544ff15a57",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -143,8 +143,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/generate-slide-body-image/scripts/provider_keyring.py",
-      "bytes": 6501,
-      "sha256": "d8760e4ce880307d1bb7709c2ed48327e56d867538883730480343a7532961d8"
+      "bytes": 6654,
+      "sha256": "a5ff7751ec5db5f4ea3bfdd7a3b31e17b690e58b84f5298b7da20f942f6e2ddd"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/generate-slide-body-image/scripts/provider_worker.py",
@@ -1424,7 +1424,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 52412,
-      "sha256": "8de8ea693907fd9a044c6e401cc435a5fe7d5bd4f542665f0ba16682dcd95833"
+      "sha256": "6b0050f571fcf133a743381a7e9704a0b073d1c8da0648fa18305f544ff15a57"
     },
     {
       "path": "README.md",
@@ -1493,8 +1493,8 @@
     },
     {
       "path": "tests/test_release_hardening_v2.py",
-      "bytes": 19712,
-      "sha256": "f05caee21f6d5ee99e41aa3fe6b521fd206fbe81672405a4689d4f5012f5ecfa"
+      "bytes": 19825,
+      "sha256": "61bd5a60015b2b9a9eeb26de35d7342a8d32e79c2042f7b048f4151b6a09e5ab"
     },
     {
       "path": "tests/test_runtime_install_safety.py",
