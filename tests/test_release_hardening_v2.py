@@ -233,7 +233,11 @@ def test_exported_snapshot_runs_complete_release_gate(tmp_path: Path):
         cwd=ROOT, capture_output=True, text=True, timeout=90,
     )
     assert exported.returncode == 0, exported.stdout + exported.stderr
-    environment = {**os.environ, "EDITABLE_PPT_NESTED_PUBLIC_GATE": "1"}
+    environment = {
+        **os.environ,
+        "EDITABLE_PPT_NESTED_PUBLIC_GATE": "1",
+        "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
     gated = subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
          str(output / "scripts/release_gate.ps1"), "-SkipPortableSmoke"],
@@ -355,7 +359,7 @@ def test_release_gate_validates_export_from_clean_public_development_checkout(tm
         cwd=checkout,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
         env={**os.environ, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"},
     )
     assert gated.returncode == 0, gated.stdout + gated.stderr

@@ -38,7 +38,9 @@ def _harden_acl(path: Path) -> None:
         raise ValueError("provider keyring owner SID unavailable")
     subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"*{match.group(0)}:(F)",
                     "*S-1-5-18:(F)", "*S-1-5-32-544:(F)"], capture_output=True, text=True, check=True)
-    script = ("& { param($p) $ErrorActionPreference='Stop'; (Get-Acl -LiteralPath $p).Access | % {"
+    script = ("& { param($p) $ErrorActionPreference='Stop'; "
+              "Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -Force; "
+              "(Get-Acl -LiteralPath $p).Access | % {"
               "$sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value;"
               "Write-Output ($sid+'|'+$_.AccessControlType+'|'+$_.IsInherited)} }")
     acl = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script, str(path)],
