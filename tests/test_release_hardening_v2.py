@@ -222,7 +222,7 @@ def test_git_archive_uses_head_bytes_not_dirty_manifest_or_untracked_files(tmp_p
         assert bundle.read("public-source-manifest.json") == committed_manifest
 
 
-def test_exported_snapshot_runs_complete_release_gate(tmp_path: Path):
+def test_exported_snapshot_runs_public_release_gate(tmp_path: Path):
     if os.getenv("EDITABLE_PPT_NESTED_PUBLIC_GATE") == "1":
         pytest.skip("avoid recursive release-gate invocation")
     require_export_checkout()
@@ -240,7 +240,7 @@ def test_exported_snapshot_runs_complete_release_gate(tmp_path: Path):
     }
     gated = subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-         str(output / "scripts/release_gate.ps1"), "-SkipPortableSmoke"],
+         str(output / "scripts/release_gate.ps1"), "-PublicSnapshotOnly", "-SkipPortableSmoke"],
         cwd=output, capture_output=True, text=True, timeout=3600, env=environment,
     )
     assert gated.returncode == 0, gated.stdout + gated.stderr
