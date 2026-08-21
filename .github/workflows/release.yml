@@ -16,6 +16,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Prepare secure test root
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path (Join-Path $HOME ".codex") | Out-Null
       - name: Install test dependencies
         shell: pwsh
         run: python -m pip install -r plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/requirements-dev.txt
@@ -27,7 +30,7 @@ jobs:
           if ($package.releaseTag -ne ("v" + [string]$package.pluginVersion)) { throw "releaseTag must equal v<pluginVersion>." }
       - name: Complete release gate including Portable clean-install smoke
         shell: pwsh
-        run: .\scripts\release_gate.ps1
+        run: .\scripts\release_gate.ps1 -SkipOfficeTests
       - name: Package Windows release
         shell: pwsh
         run: .\scripts\package_release.ps1

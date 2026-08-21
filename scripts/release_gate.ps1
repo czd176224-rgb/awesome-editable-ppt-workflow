@@ -1,4 +1,8 @@
-param([switch]$SkipPortableSmoke, [switch]$PublicSnapshotOnly)
+param(
+    [switch]$SkipPortableSmoke,
+    [switch]$PublicSnapshotOnly,
+    [switch]$SkipOfficeTests
+)
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
@@ -14,6 +18,9 @@ try {
     $IsGitWorkTree = Test-Path -LiteralPath (Join-Path $RepoRoot ".git")
     if (-not $PublicSnapshotOnly) {
         $wordTests = @(Get-ChildItem "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests" -Filter "test_*.py" -File | Sort-Object Name)
+        if ($SkipOfficeTests) {
+            $wordTests = @($wordTests | Where-Object { $_.Name -ne "test_awesome_attachment_render.py" })
+        }
         for ($offset = 0; $offset -lt $wordTests.Count; $offset += 12) {
             $last = [Math]::Min($offset + 11, $wordTests.Count - 1)
             $batch = @($wordTests[$offset..$last] | ForEach-Object { $_.FullName })

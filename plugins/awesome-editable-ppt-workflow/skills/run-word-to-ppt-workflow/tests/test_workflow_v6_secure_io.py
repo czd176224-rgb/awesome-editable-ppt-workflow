@@ -111,7 +111,7 @@ def test_capability_publish_cannot_escape_after_parent_validation(
 
     monkeypatch.setattr(secure_io, "_secure_io_boundary", attack)
     monkeypatch.setattr(workflow_v6_image, "load", lambda _root: {
-        "plugin_id": "awesome-editable-ppt-workflow", "plugin_version": "1.0.0",
+        "plugin_id": "awesome-editable-ppt-workflow", "plugin_version": "1.0.1",
         "workflow_contract": "awesome-word-ppt-workflow-v1", "source_identity": "s",
         "word_source": {}, "logo_source": {}, "pages": [{}],
     })

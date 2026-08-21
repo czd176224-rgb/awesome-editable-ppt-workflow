@@ -487,6 +487,11 @@ def test_pre_network_local_validation_failure_reissues_lease(tmp_path: Path, mon
         workflow_v6_image.replace(request_value, capability_path=capability),
         prompt_file=prompt_path, output=output, trace=tmp_path / "trace.json",
     )
+    monkeypatch.setattr(
+        codex_gpt_image,
+        "load_or_login_codex_auth",
+        lambda _args: codex_gpt_image.CodexAuth("test"),
+    )
     monkeypatch.setattr(codex_gpt_image, "_invoke_provider_worker", lambda *_a, **_k: (_ for _ in ()).throw(codex_gpt_image.CliError("local framing failed")))
     with pytest.raises(codex_gpt_image.CliError, match="local framing"):
         codex_gpt_image.cmd_generate(codex_gpt_image.build_parser().parse_args(command[2:]))
@@ -565,7 +570,7 @@ def test_editppt_reconstruction_command_routes_to_real_provider_worker(tmp_path:
     rendered = BytesIO(); Image.new("RGB", (1904, 896), "green").save(rendered, format="PNG")
     raw = json.dumps({"data": [{"b64_json": base64.b64encode(rendered.getvalue()).decode()}]}).encode()
     auth = tmp_path / "auth.json"; auth.write_text(json.dumps({"tokens": {"access_token": "test"}}), encoding="utf-8")
-    env = {**os.environ, "CODEX_HOME": os.environ["CODEX_HOME"], "CODEX_AUTH_FILE": str(auth),
+    env = {**os.environ, "CODEX_HOME": os.environ.get("CODEX_HOME", str(Path.home() / ".codex")), "CODEX_AUTH_FILE": str(auth),
            "AWESOME_PROVIDER_TEST_BUILD": "1", "AWESOME_PROVIDER_TEST_RESPONSE_B64": base64.b64encode(raw).decode()}
     editppt = PLUGIN_ROOT / "skills/reconstruct-editable-slide/cli/editppt/cli.py"
     completed = subprocess.run([sys.executable, str(editppt), "image", "reconstruct-edit",
