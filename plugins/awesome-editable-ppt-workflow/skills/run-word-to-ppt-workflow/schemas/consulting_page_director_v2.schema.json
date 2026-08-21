@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "consulting_page_director_v2.schema.json",
+  "title": "ConsultingPageDirectorV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "page_number",
+    "quality",
+    "machine_record",
+    "creative_direction",
+    "prompt_sections"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "awesome-consulting-page-director-v2"
+    },
+    "page_number": {"type": "integer", "minimum": 1},
+    "quality": {"type": "string", "enum": ["medium", "high"]},
+    "machine_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "facts_and_sources",
+        "must_preserve_entities",
+        "core_content_and_comment_direction",
+        "material_use",
+        "selected_references",
+        "fixed_layer_exclusions"
+      ],
+      "properties": {
+        "facts_and_sources": {"$ref": "#/$defs/nonEmptyStrings"},
+        "must_preserve_entities": {"$ref": "#/$defs/nonEmptyStrings"},
+        "core_content_and_comment_direction": {"$ref": "#/$defs/nonEmptyStrings"},
+        "material_use": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["material_id", "status", "reason"],
+            "properties": {
+              "material_id": {"type": "string", "minLength": 1},
+              "status": {
+                "type": "string",
+                "enum": ["used_in_image", "background_understanding", "not_used"]
+              },
+              "reason": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "selected_references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "material_id",
+              "identity",
+              "use",
+              "preserve",
+              "allowed_changes",
+              "composition_relationship"
+            ],
+            "properties": {
+              "material_id": {"type": "string", "minLength": 1},
+              "identity": {"type": "string", "minLength": 1},
+              "use": {"type": "string", "minLength": 1},
+              "preserve": {"type": "string", "minLength": 1},
+              "allowed_changes": {"type": "string", "minLength": 1},
+              "composition_relationship": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "fixed_layer_exclusions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["title", "logo", "footer", "page_number"]
+          },
+          "minItems": 4,
+          "maxItems": 4
+        }
+      }
+    },
+    "creative_direction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "business_proposition",
+        "explanatory_lead",
+        "analytical_backbone",
+        "evidence_interpretation_conclusion",
+        "content_hierarchy",
+        "reading_path_and_density",
+        "takeaway_statement",
+        "supporting_visual_policy",
+        "anti_ai_visual_policy"
+      ],
+      "properties": {
+        "business_proposition": {"type": "string", "minLength": 1},
+        "explanatory_lead": {"type": "string", "minLength": 1},
+        "analytical_backbone": {"type": "string", "minLength": 1},
+        "evidence_interpretation_conclusion": {"type": "string", "minLength": 1},
+        "content_hierarchy": {"type": "string", "minLength": 1},
+        "reading_path_and_density": {"type": "string", "minLength": 1},
+        "takeaway_statement": {"type": "string", "minLength": 1},
+        "supporting_visual_policy": {"type": "string", "minLength": 1},
+        "anti_ai_visual_policy": {"type": "string", "minLength": 1}
+      }
+    },
+    "prompt_sections": {"$ref": "#/$defs/promptSections"}
+  },
+  "$defs": {
+    "nonEmptyStrings": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "promptSections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_and_canvas",
+        "core_proposition_and_content",
+        "consulting_information_architecture",
+        "visual_style_and_color",
+        "text_and_typography",
+        "strict_prohibitions"
+      ],
+      "properties": {
+        "task_and_canvas": {"type": "string", "minLength": 1},
+        "core_proposition_and_content": {"type": "string", "minLength": 1},
+        "consulting_information_architecture": {"type": "string", "minLength": 1},
+        "visual_style_and_color": {"type": "string", "minLength": 1},
+        "text_and_typography": {"type": "string", "minLength": 1},
+        "strict_prohibitions": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
