@@ -298,7 +298,7 @@ class _NetworkTransport:
                 target,
                 headers={
                     "Accept": "image/avif,image/webp,image/png,image/jpeg;q=0.9",
-                    "User-Agent": "awesome-editable-ppt-workflow/1.0.1",
+                    "User-Agent": "awesome-editable-ppt-workflow/1.1.0",
                     "Connection": "close",
                 },
             )

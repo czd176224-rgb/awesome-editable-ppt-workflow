@@ -83,13 +83,13 @@ def test_current_release_metadata_and_user_contract_are_consistent():
     package = json.loads(read("package-info.json"))
     plugin = json.loads(read("plugins/awesome-editable-ppt-workflow/.codex-plugin/plugin.json"))
     marketplace = json.loads(read(".agents/plugins/marketplace.json"))
-    assert package["pluginVersion"] == plugin["version"] == "1.0.1"
-    assert package["releaseTag"] == "v1.0.1"
-    assert marketplace["interface"]["displayName"] == "Awesome Editable PPT Workflow 1.0.1"
-    assert package["promptContractVersion"] == "page-prompt-v6-adaptive-confirmed-materials"
+    assert package["pluginVersion"] == plugin["version"] == "1.1.0"
+    assert package["releaseTag"] == "v1.1.0"
+    assert marketplace["interface"]["displayName"] == "Awesome Editable PPT Workflow 1.1.0"
+    assert package["promptContractVersion"] == "consulting-page-director-v2-six-part-image2"
     assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert package["designAcceptancePolicy"] == "single-independent-review-with-at-most-two-corrections"
-    assert package["qaPolicyVersion"] == "sole-independent-visual-review-v1"
+    assert package["qaPolicyVersion"] == "sole-independent-consulting-visual-review-v2"
     assert package["reconstructionVersion"] == "accepted-image-codex-worker-v1"
     docs = "\n".join(read(path) for path in (
         "README.md", "docs/RELEASE.md", "docs/USER_GUIDE.zh-CN.md", "docs/TROUBLESHOOTING.zh-CN.md"
@@ -137,11 +137,11 @@ def test_export_creates_public_metadata_and_removes_private_material(tmp_path):
     audit = json.loads((output / "public-release-audit.json").read_text(encoding="utf-8-sig"))
     source_manifest = json.loads((output / "public-source-manifest.json").read_text(encoding="utf-8-sig"))
     assert audit["schemaVersion"] == "public-release-audit-v1"
-    assert audit["promptContractVersion"] == "page-prompt-v6-adaptive-confirmed-materials"
+    assert audit["promptContractVersion"] == "consulting-page-director-v2-six-part-image2"
     assert audit["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert audit["sourceManifestSha256"]
     assert source_manifest["schemaVersion"] == "public-source-manifest-v1"
-    assert source_manifest["promptContractVersion"] == "page-prompt-v6-adaptive-confirmed-materials"
+    assert source_manifest["promptContractVersion"] == "consulting-page-director-v2-six-part-image2"
     assert source_manifest["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert audit["root"] == "."
     assert not (output / "docs/superpowers").exists()
