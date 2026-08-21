@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator
 from awesome_page_materials import collect_page_materials
 from codex_subscription_runtime import CodexStructuredResult
 from complex_page_experiment.director import (
+    _color_usage_constraint,
     _correction_schema,
     compile_six_part_prompt,
     decide_correction,
@@ -267,13 +268,96 @@ def _prompt_sections(*, suffix: str = "") -> dict[str, str]:
 
 def _compiler_material_view(
     background_color: str = "#FFFFFF",
+    primary_color: str = "#17365D",
+    secondary_color: str = "#CD202A",
 ) -> CompletePageMaterialView:
     return CompletePageMaterialView(
-        {"visual_contract": {"background_color": background_color}},
+        {
+            "visual_contract": {
+                "background_color": background_color,
+                "primary_color": primary_color,
+                "secondary_color": secondary_color,
+            }
+        },
         (),
         (),
         "",
     )
+
+
+def test_compile_prompt_injects_confirmed_color_roles_and_budgets_once():
+    view = _compiler_material_view("#F7F7F7", "#161616", "#CD202A")
+    value = _director_value(CompletePageMaterialView({}, (), (), ""))
+
+    prompt = compile_six_part_prompt(value, view)
+    sections = _compiled_prompt_sections(prompt)
+    positive, prohibited = _color_usage_constraint(view)
+
+    assert prompt.count(positive) == 1
+    assert prompt.count(prohibited) == 1
+    assert positive in sections["Composition Viewpoint Hierarchy and Medium"]
+    assert prohibited in sections["Preservation and Fixed Exclusions"]
+    assert "primary color #161616 for primary text and structural hierarchy" in positive
+    assert "secondary color #CD202A strictly as an accent" in positive
+    for marker in (
+        "70%-85%",
+        "15%-25%",
+        "3%-7%",
+        "never above 10%",
+        "continuous accent block above 2%",
+        "full-width solid headers",
+        "wide bands or paths",
+        "large tinted regions",
+    ):
+        assert marker in positive + prohibited
+    assert [line[3:] for line in prompt.splitlines() if line.startswith("## ")] == list(HEADINGS)
+
+
+@pytest.mark.parametrize("secondary_color", ["#CD202A", "#1F5AA6", "#287A55"])
+def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
+    value = _director_value(CompletePageMaterialView({}, (), (), ""))
+    prompt = compile_six_part_prompt(
+        value,
+        _compiler_material_view(secondary_color=secondary_color),
+    )
+    baseline = compile_six_part_prompt(
+        value,
+        _compiler_material_view(secondary_color="#CD202A"),
+    )
+
+    assert prompt.replace(secondary_color, "#SECONDARY") == baseline.replace(
+        "#CD202A", "#SECONDARY"
+    )
+    if secondary_color == "#1F5AA6":
+        compiler_owned = " ".join(
+            _color_usage_constraint(
+                _compiler_material_view(secondary_color=secondary_color)
+            )
+        ).casefold()
+        assert " red " not in f" {compiler_owned} "
+        assert not any(term in compiler_owned for term in ("红色", "scarlet", "crimson"))
+
+
+def test_compile_prompt_deduplicates_owned_color_contract_without_deleting_facts():
+    view = _compiler_material_view(secondary_color="#1F5AA6")
+    value = _director_value(CompletePageMaterialView({}, (), (), ""))
+    positive, prohibited = _color_usage_constraint(view)
+    value["prompt_sections"]["composition_viewpoint_hierarchy_and_medium"] += (
+        " " + positive
+    )
+    value["prompt_sections"]["preservation_and_fixed_exclusions"] += (
+        " " + prohibited
+    )
+    source_fact = (
+        "Source fact: Red Beacon, 红色标识, Scarlet Ledger, and Crimson Record are exact names."
+    )
+    value["prompt_sections"]["key_details"] += " " + source_fact
+
+    prompt = compile_six_part_prompt(value, view)
+
+    assert prompt.count(positive) == 1
+    assert prompt.count(prohibited) == 1
+    assert prompt.count(source_fact) == 1
 
 
 def _director_value(view: CompletePageMaterialView) -> dict[str, object]:
@@ -1170,6 +1254,15 @@ def test_visual_director_reference_requires_a_coherent_reporting_argument():
     assert "evidence" in text
     assert "conclusion" in text
     assert "single panorama" in text
+
+
+def test_visual_director_reference_treats_confirmed_secondary_color_as_an_accent():
+    text = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8").casefold()
+
+    assert "confirmed secondary color" in text
+    assert "semantic accent" in text
+    assert "large filled region" in text
+    assert "wide path" in text
 
 
 @pytest.mark.parametrize(

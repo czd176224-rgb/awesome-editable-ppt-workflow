@@ -386,19 +386,86 @@ def _validate_prompt_sections(value: Mapping[str, object]) -> Mapping[str, str]:
     return sections
 
 
-def _canvas_background_constraint(
+def _visual_contract_colors(
     material_view: CompletePageMaterialView,
-) -> str:
+) -> Mapping[str, str]:
     visual_contract = material_view.value.get("visual_contract")
     if not isinstance(visual_contract, Mapping):
         raise ValueError("complete material view visual contract is missing")
-    background_color = visual_contract.get("background_color")
-    if not isinstance(background_color, str) or not background_color.strip():
-        raise ValueError("complete material view background color is missing")
+    colors: dict[str, str] = {}
+    for key, label in (
+        ("background_color", "background"),
+        ("primary_color", "primary"),
+        ("secondary_color", "secondary"),
+    ):
+        color = visual_contract.get(key)
+        if not isinstance(color, str) or not color.strip():
+            raise ValueError(f"complete material view {label} color is missing")
+        colors[key] = color.strip()
+    return colors
+
+
+def _canvas_background_constraint(
+    material_view: CompletePageMaterialView,
+) -> str:
+    background_color = _visual_contract_colors(material_view)["background_color"]
     return (
         "Fill the entire canvas with the source-authoritative background color "
-        f"{background_color.strip()}; do not add any background scene, gradient, pattern, or texture."
+        f"{background_color}; do not add any background scene, gradient, pattern, or texture."
     )
+
+
+def _color_usage_constraint(
+    material_view: CompletePageMaterialView,
+) -> tuple[str, str]:
+    colors = _visual_contract_colors(material_view)
+    positive = (
+        "Treat the confirmed background color as the canvas base; use primary color "
+        f"{colors['primary_color']} for primary text and structural hierarchy, and use secondary "
+        f"color {colors['secondary_color']} strictly as an accent. Background and light gray areas "
+        "must cover 70%-85%; dark text and structure 15%-25%; target 3%-7% visible secondary/accent "
+        "coverage, never above 10%, with no single continuous accent block above 2%. Limit accent "
+        "uses to key numbers, conclusion terms, numbering, core nodes, arrow tips, local underlines, "
+        "small status markers, and key transitions. If the primary color is saturated, limit it to "
+        "tier-one structure and headings; use a sufficiently contrasting deep neutral for body text. "
+        "Neutral gray is an auxiliary layout color, not another brand color."
+    )
+    prohibited = (
+        "Do not use the secondary/accent color for full-width solid headers, full column fills, card "
+        "backgrounds, wide bands or paths, large tinted regions, repeated solid icons, or every "
+        "module having a colored border. Avoid thick accent paths, large brand-color headers or card "
+        "arrays, and compositions that depend on a particular hue."
+    )
+    return positive, prohibited
+
+
+def _normalized_director_clause(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def _proven_owned_color_contract_clauses(
+    material_view: CompletePageMaterialView,
+) -> frozenset[str]:
+    owned: set[str] = set()
+    for contract in _color_usage_constraint(material_view):
+        for match in _SENTENCE_PARTS.finditer(contract):
+            clause = match.group(0).strip()
+            if clause:
+                owned.add(_normalized_director_clause(clause))
+    return frozenset(owned)
+
+
+def _without_director_color_contract_clauses(
+    text: str,
+    *,
+    proven_owned_clauses: frozenset[str],
+) -> str:
+    kept: list[str] = []
+    for match in _SENTENCE_PARTS.finditer(text):
+        clause = match.group(0).strip()
+        if clause and _normalized_director_clause(clause) not in proven_owned_clauses:
+            kept.append(clause)
+    return " ".join(kept)
 
 
 def _without_director_canvas_background_clauses(
@@ -426,26 +493,47 @@ def compile_six_part_prompt(
 ) -> str:
     """Compile six natural-language sections in the approved order, each constraint once."""
     sections = dict(_validate_prompt_sections(value))
+    proven_owned_clauses = _proven_owned_color_contract_clauses(material_view)
+    compiler_color_keys = {
+        "composition_viewpoint_hierarchy_and_medium",
+        "preservation_and_fixed_exclusions",
+    }
     for _heading, key in _SECTION_SPECS:
         sections[key] = _without_director_canvas_background_clauses(
             sections[key], scene_section=key == "scene_or_background",
         )
-        if key != "scene_or_background" and not sections[key]:
+        sections[key] = _without_director_color_contract_clauses(
+            sections[key],
+            proven_owned_clauses=proven_owned_clauses,
+        )
+        if (
+            key != "scene_or_background"
+            and key not in compiler_color_keys
+            and not sections[key]
+        ):
             raise ValueError(
-                f"prompt section {key} contains only compiler-owned canvas background clauses"
+                f"prompt section {key} contains only compiler-owned clauses"
             )
     background = _canvas_background_constraint(material_view)
     foreground_scene = sections["scene_or_background"]
     sections["scene_or_background"] = (
         f"{foreground_scene} {background}" if foreground_scene else background
     )
+    color_roles, prohibited_color_uses = _color_usage_constraint(material_view)
+    composition_key = "composition_viewpoint_hierarchy_and_medium"
+    sections[composition_key] = "\n".join(
+        item for item in (sections[composition_key], color_roles) if item
+    )
     final_key = "preservation_and_fixed_exclusions"
-    sections[final_key] = (
-        sections[final_key]
-        + "\n"
-        + _FIXED_LAYER_EXCLUSION
-        + "\n"
-        + _CENTER_17_8_SAFE_REGION
+    sections[final_key] = "\n".join(
+        item
+        for item in (
+            sections[final_key],
+            prohibited_color_uses,
+            _FIXED_LAYER_EXCLUSION,
+            _CENTER_17_8_SAFE_REGION,
+        )
+        if item
     )
     return "\n\n".join(f"## {heading}\n{sections[key]}" for heading, key in _SECTION_SPECS)
 
