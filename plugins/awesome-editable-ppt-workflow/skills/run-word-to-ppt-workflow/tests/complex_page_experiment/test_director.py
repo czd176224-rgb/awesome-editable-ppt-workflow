@@ -10,10 +10,10 @@ from jsonschema import Draft202012Validator
 
 from awesome_page_materials import collect_page_materials
 from codex_subscription_runtime import CodexStructuredResult
+from complex_page_experiment.consulting_prompt import _color_constraints
 from complex_page_experiment.director import (
-    _color_usage_constraint,
     _correction_schema,
-    compile_six_part_prompt,
+    compile_consulting_six_part_prompt,
     decide_correction,
     direct_page,
 )
@@ -27,12 +27,12 @@ from test_materials import _prepare_complete_page_one
 
 
 HEADINGS = (
-    "Scene or Background",
-    "Subject and Core Expression",
-    "Key Details",
-    "Composition Viewpoint Hierarchy and Medium",
-    "Reference Roles and Combination",
-    "Preservation and Fixed Exclusions",
+    "Task and Canvas",
+    "Core Proposition and Content",
+    "Consulting Information Architecture",
+    "Visual Style and Color",
+    "Text and Typography",
+    "Strict Prohibitions",
 )
 VISUAL_DIRECTOR_REFERENCE = (
     Path(__file__).resolve().parents[2]
@@ -44,7 +44,7 @@ VISUAL_DIRECTOR_REFERENCE = (
 DIRECTOR_SCHEMA = (
     Path(__file__).resolve().parents[2]
     / "schemas"
-    / "complex_page_director_v1.schema.json"
+    / "consulting_page_director_v2.schema.json"
 )
 
 
@@ -131,7 +131,7 @@ def test_director_output_schema_types_every_const_and_enum() -> None:
     schema_path = (
         Path(__file__).resolve().parents[2]
         / "schemas"
-        / "complex_page_director_v1.schema.json"
+        / "consulting_page_director_v2.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     missing: list[str] = []
@@ -154,7 +154,7 @@ def test_director_output_schema_uses_only_scalar_constants() -> None:
     schema_path = (
         Path(__file__).resolve().parents[2]
         / "schemas"
-        / "complex_page_director_v1.schema.json"
+        / "consulting_page_director_v2.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     non_scalar: list[str] = []
@@ -177,7 +177,7 @@ def test_director_output_schema_avoids_unsupported_unique_items() -> None:
     schema_path = (
         Path(__file__).resolve().parents[2]
         / "schemas"
-        / "complex_page_director_v1.schema.json"
+        / "consulting_page_director_v2.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
@@ -255,12 +255,12 @@ def _workspace_without_viewable_materials(
 
 def _prompt_sections(*, suffix: str = "") -> dict[str, str]:
     return {
-        "scene_or_background": f"A calm luminous field with subtle depth{suffix}.",
-        "subject_and_core_expression": f"Make the verified relationship immediately legible{suffix}.",
-        "key_details": f"Keep names and figures crisp and restrained{suffix}.",
-        "composition_viewpoint_hierarchy_and_medium": f"Use a wide editorial composition with a clear reading path{suffix}.",
-        "reference_roles_and_combination": f"Use the supplied photograph for identity and the rendered page for factual context{suffix}.",
-        "preservation_and_fixed_exclusions": (
+        "task_and_canvas": f"A calm luminous field with subtle depth{suffix}.",
+        "core_proposition_and_content": f"Make the verified relationship immediately legible{suffix}.",
+        "text_and_typography": f"Keep names and figures crisp and restrained{suffix}.",
+        "visual_style_and_color": f"Use a wide editorial composition with a clear reading path{suffix}.",
+        "consulting_information_architecture": f"Use the supplied photograph for identity and the rendered page for factual context{suffix}.",
+        "strict_prohibitions": (
             "Preserve verified identities, source-exact visible copy, and source-supported relationships."
         ),
     }
@@ -289,14 +289,14 @@ def test_compile_prompt_injects_confirmed_color_roles_and_budgets_once():
     view = _compiler_material_view("#F7F7F7", "#161616", "#CD202A")
     value = _director_value(CompletePageMaterialView({}, (), (), ""))
 
-    prompt = compile_six_part_prompt(value, view)
+    prompt = compile_consulting_six_part_prompt(value, view)
     sections = _compiled_prompt_sections(prompt)
-    positive, prohibited = _color_usage_constraint(view)
+    positive, prohibited = _color_constraints(view)
 
     assert prompt.count(positive) == 1
     assert prompt.count(prohibited) == 1
-    assert positive in sections["Composition Viewpoint Hierarchy and Medium"]
-    assert prohibited in sections["Preservation and Fixed Exclusions"]
+    assert positive in sections["Visual Style and Color"]
+    assert prohibited in sections["Strict Prohibitions"]
     assert "primary color #161616 for primary text and structural hierarchy" in positive
     assert "secondary color #CD202A strictly as an accent" in positive
     for marker in (
@@ -316,11 +316,11 @@ def test_compile_prompt_injects_confirmed_color_roles_and_budgets_once():
 @pytest.mark.parametrize("secondary_color", ["#CD202A", "#1F5AA6", "#287A55"])
 def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
     value = _director_value(CompletePageMaterialView({}, (), (), ""))
-    prompt = compile_six_part_prompt(
+    prompt = compile_consulting_six_part_prompt(
         value,
         _compiler_material_view(secondary_color=secondary_color),
     )
-    baseline = compile_six_part_prompt(
+    baseline = compile_consulting_six_part_prompt(
         value,
         _compiler_material_view(secondary_color="#CD202A"),
     )
@@ -330,7 +330,7 @@ def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
     )
     if secondary_color == "#1F5AA6":
         compiler_owned = " ".join(
-            _color_usage_constraint(
+            _color_constraints(
                 _compiler_material_view(secondary_color=secondary_color)
             )
         ).casefold()
@@ -341,19 +341,19 @@ def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
 def test_compile_prompt_deduplicates_owned_color_contract_without_deleting_facts():
     view = _compiler_material_view(secondary_color="#1F5AA6")
     value = _director_value(CompletePageMaterialView({}, (), (), ""))
-    positive, prohibited = _color_usage_constraint(view)
-    value["prompt_sections"]["composition_viewpoint_hierarchy_and_medium"] += (
+    positive, prohibited = _color_constraints(view)
+    value["prompt_sections"]["visual_style_and_color"] += (
         " " + positive
     )
-    value["prompt_sections"]["preservation_and_fixed_exclusions"] += (
+    value["prompt_sections"]["strict_prohibitions"] += (
         " " + prohibited
     )
     source_fact = (
         "Source fact: Red Beacon, 红色标识, Scarlet Ledger, and Crimson Record are exact names."
     )
-    value["prompt_sections"]["key_details"] += " " + source_fact
+    value["prompt_sections"]["text_and_typography"] += " " + source_fact
 
-    prompt = compile_six_part_prompt(value, view)
+    prompt = compile_consulting_six_part_prompt(value, view)
 
     assert prompt.count(positive) == 1
     assert prompt.count(prohibited) == 1
@@ -362,7 +362,7 @@ def test_compile_prompt_deduplicates_owned_color_contract_without_deleting_facts
 
 def _director_value(view: CompletePageMaterialView) -> dict[str, object]:
     return {
-        "schema_version": "awesome-page-director-v1",
+        "schema_version": "awesome-consulting-page-director-v2",
         "page_number": 1,
         "quality": "high",
         "machine_record": {
@@ -390,10 +390,15 @@ def _director_value(view: CompletePageMaterialView) -> dict[str, object]:
             "fixed_layer_exclusions": ["title", "logo", "footer", "page_number"],
         },
         "creative_direction": {
-            "core_objective": "Turn the dense source into one confident visual argument.",
-            "visual_concept": "A cinematic evidence wall that resolves into a single insight.",
-            "scene_subject_hierarchy_reading_path": "Enter through the real subject, then move across evidence to the conclusion.",
-            "composition_viewpoint_whitespace_medium_texture": "Wide editorial collage, quiet whitespace, tactile paper and glass.",
+            "business_proposition": "Turn the dense source into one confident visual argument.",
+            "explanatory_lead": "Explain the source-supported decision context in two short lines.",
+            "analytical_backbone": "A continuous evidence chain that resolves into a single insight.",
+            "evidence_interpretation_conclusion": "Enter through the real subject, then move across evidence to the conclusion.",
+            "content_hierarchy": "Lead, analytical evidence, interpretation, and takeaway.",
+            "reading_path_and_density": "Wide editorial collage, quiet whitespace, tactile paper and glass.",
+            "takeaway_statement": "End with the source-supported decision implication.",
+            "supporting_visual_policy": "Use real references as evidence, not decoration.",
+            "anti_ai_visual_policy": "Avoid miniature scenes, neon, and decorative 3D machinery.",
         },
         "prompt_sections": _prompt_sections(),
     }
@@ -461,7 +466,7 @@ def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path
     assert "neutral non-trademark marker" not in prompt
     assert "3:2" not in prompt
     assert hashlib.sha256(DIRECTOR_SCHEMA.read_bytes()).hexdigest() == (
-        "8599376d24bbcf2fa49a215dd7af0897bc557f75fe7860cfbd32897c2ace4b25"
+        "9d63ed6ea05379a3afc480eae4fedf700091d5ab92d352c69d2ade9da6ad1860"
     )
     assert artifact.selected_reference_ids == ("word-image:word-photo",)
     assert artifact.quality == "high"
@@ -470,8 +475,8 @@ def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path
     assert artifact.effort == "high"
     assert artifact.usage == {"input_tokens": 123, "output_tokens": 45}
     assert artifact.duration_seconds == 3.25
-    assert artifact.creative_direction["visual_concept"].startswith("A cinematic")
-    assert artifact.actual_prompt == compile_six_part_prompt(artifact.value, view)
+    assert artifact.creative_direction["analytical_backbone"].startswith("A continuous")
+    assert artifact.actual_prompt == compile_consulting_six_part_prompt(artifact.value, view)
     authority_path = (
         workspace.project_copy
         / "02_v6"
@@ -538,7 +543,7 @@ def test_director_request_reserves_canvas_background_for_the_compiler(
     _assert_semantic_groups(
         requirements,
         (
-            (("scene_or_background",)),
+            (("task_and_canvas",)),
             (("foreground environment",)),
             (("spatial arrangement",)),
             (("any prompt_sections field", "every prompt_sections field")),
@@ -586,7 +591,7 @@ def test_direct_page_compiler_uses_only_the_sealed_ui_canvas_background(
     view = _material_view(workspace)
     value = copy.deepcopy(_director_value(view))
     free_background = "Ultraviolet burlap vortex with noisy silver texture."
-    value["prompt_sections"]["scene_or_background"] = free_background
+    value["prompt_sections"]["task_and_canvas"] = free_background
 
     artifact = direct_page(
         workspace,
@@ -595,7 +600,7 @@ def test_direct_page_compiler_uses_only_the_sealed_ui_canvas_background(
         invoke=lambda *args, **kwargs: _result(value),
     )
 
-    scene = _compiled_prompt_sections(artifact.actual_prompt)["Scene or Background"]
+    scene = _compiled_prompt_sections(artifact.actual_prompt)["Task and Canvas"]
     background_color = str(view.value["visual_contract"]["background_color"])
     assert background_color in scene
     assert artifact.actual_prompt.casefold().count(background_color.casefold()) == 1
@@ -605,13 +610,13 @@ def test_direct_page_compiler_uses_only_the_sealed_ui_canvas_background(
 
 def test_compiler_preserves_director_foreground_arrangement_in_scene_section():
     value = _director_value(CompletePageMaterialView({}, (), (), ""))
-    value["prompt_sections"]["scene_or_background"] = (
+    value["prompt_sections"]["task_and_canvas"] = (
         "Arrange the foreground evidence around one central relationship arc. "
         "Set the canvas background to a blue textured grid."
     )
 
-    prompt = compile_six_part_prompt(value, _compiler_material_view("#FFFFFF"))
-    scene = _compiled_prompt_sections(prompt)["Scene or Background"]
+    prompt = compile_consulting_six_part_prompt(value, _compiler_material_view("#FFFFFF"))
+    scene = _compiled_prompt_sections(prompt)["Task and Canvas"]
 
     assert "foreground evidence around one central relationship arc" in scene
     assert "blue textured grid" not in scene
@@ -622,34 +627,34 @@ def test_compiler_removes_only_explicit_canvas_background_clauses_from_other_sec
     value = _director_value(CompletePageMaterialView({}, (), (), ""))
     value["prompt_sections"].update(
         {
-            "subject_and_core_expression": (
+            "core_proposition_and_content": (
                 "Keep the foreground subject recognizable. "
                 "Use a soft glow around the subject. "
                 "Set the canvas background color to scarlet."
             ),
-            "key_details": (
+            "text_and_typography": (
                 "Keep the exact figure visible. "
                 "Align the facts in a compact grid. "
                 "Add a background grid and texture."
             ),
-            "composition_viewpoint_hierarchy_and_medium": (
+            "visual_style_and_color": (
                 "Keep tactile texture on the foreground garment. "
                 "Add a gradient and glow across the canvas."
             ),
-            "reference_roles_and_combination": (
+            "consulting_information_architecture": (
                 "Preserve the supplied identity. "
                 "Make the canvas background a cobalt texture."
             ),
-            "preservation_and_fixed_exclusions": (
+            "strict_prohibitions": (
                 "Preserve source-exact facts. Add a background glow."
             ),
         }
     )
 
-    prompt = compile_six_part_prompt(value, _compiler_material_view("#F7F7F7"))
+    prompt = compile_consulting_six_part_prompt(value, _compiler_material_view("#F7F7F7"))
     sections = _compiled_prompt_sections(prompt)
     non_scene = "\n".join(
-        body for heading, body in sections.items() if heading != "Scene or Background"
+        body for heading, body in sections.items() if heading != "Task and Canvas"
     ).casefold()
 
     for preserved in (
@@ -831,7 +836,7 @@ def test_direct_page_rejects_existing_different_signed_authority(tmp_path: Path)
         invoke=lambda *_args, **_kwargs: _result(_director_value(view)),
     )
     different = _director_value(view)
-    different["creative_direction"]["visual_concept"] = "A different signed concept."
+    different["creative_direction"]["analytical_backbone"] = "A different signed concept."
 
     with pytest.raises(ValueError, match="published director authority"):
         direct_page(
@@ -840,7 +845,7 @@ def test_direct_page_rejects_existing_different_signed_authority(tmp_path: Path)
             timeout=60,
             invoke=lambda *_args, **_kwargs: _result(different),
         )
-    assert first.actual_prompt == compile_six_part_prompt(first.value, view)
+    assert first.actual_prompt == compile_consulting_six_part_prompt(first.value, view)
 
 
 def test_direct_page_rejects_swapped_image_paths_before_codex(tmp_path: Path):
@@ -1185,7 +1190,7 @@ def test_compile_prompt_has_exact_natural_language_sections_and_single_fixed_exc
     value = _director_value(
         CompletePageMaterialView({}, (), (), "")
     )
-    prompt = compile_six_part_prompt(value, _compiler_material_view())
+    prompt = compile_consulting_six_part_prompt(value, _compiler_material_view())
 
     assert [line[3:] for line in prompt.splitlines() if line.startswith("## ")] == list(HEADINGS)
     for term in ("title", "logo", "footer", "page number"):
@@ -1199,12 +1204,12 @@ def test_compile_prompt_has_exact_natural_language_sections_and_single_fixed_exc
     ("section", "text", "preserved"),
     [
         (
-            "preservation_and_fixed_exclusions",
+            "strict_prohibitions",
             "Preserve verified identities. Do not generate a title, logo, footer, or page number.",
             "Preserve verified identities.",
         ),
         (
-            "composition_viewpoint_hierarchy_and_medium",
+            "visual_style_and_color",
             "Use a clear reading path. Put all content in the central largest 17:8 content region.",
             "Use a clear reading path.",
         ),
@@ -1216,7 +1221,7 @@ def test_compile_prompt_removes_model_restatement_and_keeps_source_preservation(
     value = _director_value(CompletePageMaterialView({}, (), (), ""))
     value["prompt_sections"][section] = text
 
-    prompt = compile_six_part_prompt(value, _compiler_material_view())
+    prompt = compile_consulting_six_part_prompt(value, _compiler_material_view())
 
     assert preserved in prompt
     for term in ("title", "logo", "footer", "page number"):
@@ -1276,25 +1281,25 @@ def test_visual_director_reference_treats_confirmed_secondary_color_as_an_accent
         ),
         (
             lambda value: value["prompt_sections"].update(
-                {"scene_or_background": "Read C:\\private\\source.png"}
+                {"task_and_canvas": "Read C:\\private\\source.png"}
             ),
             "custody|path",
         ),
         (
             lambda value: value["prompt_sections"].update(
-                {"scene_or_background": "Read /private/source.png"}
+                {"task_and_canvas": "Read /private/source.png"}
             ),
             "custody|path",
         ),
         (
             lambda value: value["prompt_sections"].update(
-                {"key_details": "Use digest " + "f" * 64}
+                {"text_and_typography": "Use digest " + "f" * 64}
             ),
             "custody|digest|hash",
         ),
         (
             lambda value: value["prompt_sections"].update(
-                {"scene_or_background": "Do not generate the logo."}
+                {"task_and_canvas": "Do not generate the logo."}
             ),
             "compiler-owned|boundary",
         ),
@@ -1316,9 +1321,9 @@ def test_visual_director_reference_treats_confirmed_secondary_color_as_an_accent
         ),
         (
             lambda value: value["creative_direction"].update(
-                {"visual_concept": " \t "}
+                {"analytical_backbone": " \t "}
             ),
-            "creative|non-whitespace|blank|visual_concept",
+            "creative|non-whitespace|blank|analytical_backbone",
         ),
     ],
 )
@@ -1374,7 +1379,7 @@ def test_decide_correction_compiler_reuses_the_sealed_ui_canvas_background(
     problem = "The hierarchy is unusable."
     free_background = "Crimson linen fog with a granular paper texture."
     value = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": workspace.page_number,
         "strategy": "edit_previous",
         "problem_addressed": [problem],
@@ -1382,7 +1387,7 @@ def test_decide_correction_compiler_reuses_the_sealed_ui_canvas_background(
         "selected_reference_ids": ["word-image:word-photo"],
         "prompt_sections": _prompt_sections(suffix=" with a corrected hierarchy"),
     }
-    value["prompt_sections"]["scene_or_background"] = free_background
+    value["prompt_sections"]["task_and_canvas"] = free_background
 
     decision = decide_correction(
         workspace,
@@ -1394,9 +1399,9 @@ def test_decide_correction_compiler_reuses_the_sealed_ui_canvas_background(
         invoke=lambda *args, **kwargs: _result(value),
     )
 
-    scene = _compiled_prompt_sections(decision.actual_prompt)["Scene or Background"]
+    scene = _compiled_prompt_sections(decision.actual_prompt)["Task and Canvas"]
     initial_scene = _compiled_prompt_sections(director.actual_prompt)[
-        "Scene or Background"
+        "Task and Canvas"
     ]
     background_color = str(view.value["visual_contract"]["background_color"])
     assert "source-authoritative background color" in scene
@@ -1419,7 +1424,7 @@ def test_decide_correction_schema_allows_only_viewable_image_map_ids(tmp_path: P
     candidate.write_bytes(b"candidate-schema")
     problem = "The source relationship is not visibly correct."
     value = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": workspace.page_number,
         "strategy": "regenerate_from_materials",
         "problem_addressed": [problem],
@@ -1478,7 +1483,7 @@ def test_decide_correction_rejects_duplicate_selected_references_locally(tmp_pat
     candidate.write_bytes(b"candidate-duplicate-refs")
     problem = "The source relationship is not visibly correct."
     duplicated = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": workspace.page_number,
         "strategy": "regenerate_from_materials",
         "problem_addressed": [problem],
@@ -1519,7 +1524,7 @@ def test_decide_correction_schema_requires_empty_selection_without_viewable_ids(
     candidate.write_bytes(b"candidate-no-refs")
     problem = "The hierarchy is unusable."
     value = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": workspace.page_number,
         "strategy": "edit_previous",
         "problem_addressed": [problem],
@@ -1566,7 +1571,7 @@ def test_decide_correction_lets_codex_choose_directly_and_keeps_candidate_separa
     candidate.write_bytes(b"candidate")
     calls: list[dict[str, object]] = []
     correction_value = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": 1,
         "strategy": strategy,
         "problem_addressed": ["The composition is plainly unusable in the 17:8 body region."],
@@ -1619,7 +1624,7 @@ def test_decide_correction_rejects_unknown_refs_unstated_problems_and_unchanged_
     candidate = workspace.project_copy / "candidate-1.png"
     candidate.write_bytes(b"candidate")
     base = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": 1,
         "strategy": "edit_previous",
         "problem_addressed": ["Wrong aspect ratio"],
@@ -1667,7 +1672,7 @@ def test_second_correction_rejects_same_request_as_previous_correction(tmp_path:
     candidate_one = workspace.project_copy / "candidate-1.png"
     candidate_one.write_bytes(b"candidate-one")
     correction_value = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": 1,
         "strategy": "edit_previous",
         "problem_addressed": ["Wrong aspect ratio"],
@@ -1707,7 +1712,7 @@ def test_second_correction_accepts_changed_strategy_or_candidate_identity(tmp_pa
     candidate_one = workspace.project_copy / "candidate-1.png"
     candidate_one.write_bytes(b"candidate-one")
     first_value = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": 1,
         "strategy": "edit_previous",
         "problem_addressed": ["Wrong aspect ratio"],
@@ -1748,7 +1753,7 @@ def test_correction_rejects_blank_preserve_text(tmp_path: Path):
     candidate = workspace.project_copy / "candidate-1.png"
     candidate.write_bytes(b"candidate")
     correction_value = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": 1,
         "strategy": "edit_previous",
         "problem_addressed": ["Wrong aspect ratio"],

@@ -416,14 +416,14 @@ def test_review_rejects_forged_material_or_director_before_codex(review_fixture)
     assert called is False
 
     forged_value = json.loads(json.dumps(director.value))
-    forged_value["creative_direction"]["visual_concept"] = "A different but schema-valid visual concept."
-    from complex_page_experiment.director import compile_six_part_prompt
+    forged_value["creative_direction"]["analytical_backbone"] = "A different but schema-valid visual concept."
+    from complex_page_experiment.director import compile_consulting_six_part_prompt
 
-    forged_value["prompt_sections"]["scene_or_background"] = "A different but valid calm luminous field."
+    forged_value["prompt_sections"]["task_and_canvas"] = "A different but valid calm luminous field."
     forged_director = replace(
         director,
         value=forged_value,
-        actual_prompt=compile_six_part_prompt(forged_value, view),
+        actual_prompt=compile_consulting_six_part_prompt(forged_value, view),
     )
     with pytest.raises(ValueError, match="published director"):
         review_candidate_once(

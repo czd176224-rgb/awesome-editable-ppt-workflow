@@ -17,7 +17,7 @@ from .materials import (
 from .director import (
     CorrectionDecision,
     DirectorArtifact,
-    compile_six_part_prompt,
+    compile_consulting_six_part_prompt,
     decide_correction,
     direct_page,
 )
@@ -55,7 +55,7 @@ __all__ = [
     "validate_published_complete_page_material_view",
     "CorrectionDecision",
     "DirectorArtifact",
-    "compile_six_part_prompt",
+    "compile_consulting_six_part_prompt",
     "decide_correction",
     "direct_page",
     "EvidenceRecorder",

@@ -182,6 +182,16 @@ def test_compiler_rejects_the_legacy_six_part_shape() -> None:
         module.compile_consulting_six_part_prompt(value, _material_view())
 
 
+def test_compiler_accepts_the_v2_correction_authority() -> None:
+    module = _load_compiler_module()
+    value = _director_value()
+    value["schema_version"] = "awesome-page-correction-v2"
+
+    prompt = module.compile_consulting_six_part_prompt(value, _material_view())
+
+    assert "## Consulting Information Architecture" in prompt
+
+
 def test_visual_director_reference_teaches_the_consulting_report_recipe() -> None:
     text = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8").casefold()
 
@@ -197,3 +207,41 @@ def test_visual_director_reference_teaches_the_consulting_report_recipe() -> Non
         "neon",
     ):
         assert required in text
+
+
+def test_runtime_exports_only_the_v2_compiler_and_schema() -> None:
+    from complex_page_experiment import director
+
+    assert director.SCHEMA.name == "consulting_page_director_v2.schema.json"
+    assert hasattr(director, "compile_consulting_six_part_prompt")
+    assert not hasattr(director, "compile_six_part_prompt")
+    assert not (
+        Path(__file__).resolve().parents[2]
+        / "schemas"
+        / "complex_page_director_v1.schema.json"
+    ).exists()
+
+
+def test_initial_director_and_correction_schema_use_the_v2_shape(tmp_path: Path) -> None:
+    from complex_page_experiment.director import _correction_schema, direct_page
+    from test_director import _material_view as runtime_material_view
+    from test_director import _result, _workspace
+
+    workspace = _workspace(tmp_path)
+    view = runtime_material_view(workspace)
+    value = _director_value()
+    value["page_number"] = workspace.page_number
+
+    artifact = direct_page(
+        workspace,
+        view,
+        timeout=60,
+        invoke=lambda *args, **kwargs: _result(value),
+    )
+
+    assert artifact.value["schema_version"] == "awesome-consulting-page-director-v2"
+    assert "## Task and Canvas" in artifact.actual_prompt
+    assert "## Strict Prohibitions" in artifact.actual_prompt
+    correction_sections = _correction_schema()["properties"]["prompt_sections"]
+    assert set(correction_sections["required"]) == EXPECTED_PROMPT_FIELDS
+    assert set(correction_sections["properties"]) == EXPECTED_PROMPT_FIELDS

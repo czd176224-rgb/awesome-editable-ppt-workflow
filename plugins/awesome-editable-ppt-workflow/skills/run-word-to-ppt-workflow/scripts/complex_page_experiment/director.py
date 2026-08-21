@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import hashlib
 import hmac
-import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -21,6 +20,8 @@ if str(IMAGE_PROVIDER_SCRIPTS) not in sys.path:
 from provider_keyring import signing_key, verification_key
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 
+from .consulting_prompt import compile_consulting_six_part_prompt
+
 from .materials import (
     CompletePageMaterialView,
     validate_published_complete_page_material_view,
@@ -31,61 +32,16 @@ from .workspace import ExperimentWorkspace
 SCHEMA = (
     Path(__file__).resolve().parents[2]
     / "schemas"
-    / "complex_page_director_v1.schema.json"
+    / "consulting_page_director_v2.schema.json"
 )
 VISUAL_DIRECTOR_REFERENCE = (
     Path(__file__).resolve().parent / "references" / "visual_director.md"
 )
-_SECTION_SPECS = (
-    ("Scene or Background", "scene_or_background"),
-    ("Subject and Core Expression", "subject_and_core_expression"),
-    ("Key Details", "key_details"),
-    (
-        "Composition Viewpoint Hierarchy and Medium",
-        "composition_viewpoint_hierarchy_and_medium",
-    ),
-    ("Reference Roles and Combination", "reference_roles_and_combination"),
-    ("Preservation and Fixed Exclusions", "preservation_and_fixed_exclusions"),
-)
-_FIXED_TERMS = {
-    "title": re.compile(r"\btitle\b", re.IGNORECASE),
-    "logo": re.compile(r"\blogo\b", re.IGNORECASE),
-    "footer": re.compile(r"\bfooter\b", re.IGNORECASE),
-    "page_number": re.compile(r"\bpage(?:[_ -]+)number\b", re.IGNORECASE),
-}
-
 _CENTER_17_8_SAFE_REGION = (
     "Regardless of the provider's eventual canvas aspect ratio, place all body text, charts, "
     "people, real references, connections, and key decoration inside the central largest 17:8 "
     "content region; leave a visibly empty perimeter on all four sides, and outside the safe "
     "region use only discardable background, texture, or whitespace."
-)
-_FIXED_LAYER_EXCLUSION = (
-    "Do not generate title, logo, footer, or page number; those are supplied as fixed layers."
-)
-_CUSTODY_PATTERNS = (
-    re.compile(r"[A-Za-z]:[\\/]"),
-    re.compile(r"(?:^|\s)/(?:[^/\s]+/)*[^/\s]+"),
-    re.compile(r"(?:^|\s)(?:\.\.?[\\/]|\\\\)"),
-    re.compile(r"\b(?:00_source|01_source_assets|02_v6)[\\/]", re.IGNORECASE),
-    re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE),
-    re.compile(r"\b(?:sha-?256|digest|receipt[_ -]?id)\b", re.IGNORECASE),
-)
-_SENTENCE_PARTS = re.compile(r"[^.!?;。！？；\r\n]+[.!?;。！？；]?")
-
-_CANVAS_BACKGROUND_CLAUSE = re.compile(
-    r"(?:\bcanvas\s+background\b|"
-    r"\b(?:canvas|background)\b.*\b(?:color|grid|texture|gradient|glow)\b|"
-    r"\b(?:color|grid|texture|gradient|glow)\b.*\b(?:canvas|background)\b)",
-    re.IGNORECASE,
-)
-_SCENE_BACKGROUND_EFFECT = re.compile(
-    r"\b(?:texture|gradient|glow|fog|vortex|burlap|linen|paper)\b",
-    re.IGNORECASE,
-)
-_FOREGROUND_SCENE_CONTEXT = re.compile(
-    r"\b(?:foreground|subject|evidence|person|people|object|arrange|arrangement|relationship)\b",
-    re.IGNORECASE,
 )
 
 
@@ -349,195 +305,6 @@ def _visual_director_reference() -> str:
     return text
 
 
-def _without_compiler_owned_boundaries(text: str) -> str:
-    kept: list[str] = []
-    for match in _SENTENCE_PARTS.finditer(text):
-        part = match.group(0).strip()
-        if not part:
-            continue
-        if "17:8" in part or any(pattern.search(part) for pattern in _FIXED_TERMS.values()):
-            continue
-        kept.append(part)
-    return " ".join(kept)
-
-
-def _validate_prompt_sections(value: Mapping[str, object]) -> Mapping[str, str]:
-    raw = value.get("prompt_sections")
-    if not isinstance(raw, Mapping):
-        raise ValueError("prompt sections are missing")
-    sections: dict[str, str] = {}
-    expected_keys = {key for _heading, key in _SECTION_SPECS}
-    if set(raw) != expected_keys:
-        raise ValueError("prompt sections must have the approved six-part shape")
-    for _heading, key in _SECTION_SPECS:
-        text = raw.get(key)
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError(f"prompt section {key} must be non-empty natural language")
-        if any(pattern.search(text) for pattern in _CUSTODY_PATTERNS):
-            raise ValueError("compiled prompt contains a local custody path, digest, or receipt ID")
-        cleaned = _without_compiler_owned_boundaries(text.strip())
-        if not cleaned and key == "preservation_and_fixed_exclusions":
-            cleaned = (
-                "Preserve source-exact facts, identities, selected-reference roles, and relationships."
-            )
-        if not cleaned:
-            raise ValueError(f"prompt section {key} contains only compiler-owned boundaries")
-        sections[key] = cleaned
-    return sections
-
-
-def _visual_contract_colors(
-    material_view: CompletePageMaterialView,
-) -> Mapping[str, str]:
-    visual_contract = material_view.value.get("visual_contract")
-    if not isinstance(visual_contract, Mapping):
-        raise ValueError("complete material view visual contract is missing")
-    colors: dict[str, str] = {}
-    for key, label in (
-        ("background_color", "background"),
-        ("primary_color", "primary"),
-        ("secondary_color", "secondary"),
-    ):
-        color = visual_contract.get(key)
-        if not isinstance(color, str) or not color.strip():
-            raise ValueError(f"complete material view {label} color is missing")
-        colors[key] = color.strip()
-    return colors
-
-
-def _canvas_background_constraint(
-    material_view: CompletePageMaterialView,
-) -> str:
-    background_color = _visual_contract_colors(material_view)["background_color"]
-    return (
-        "Fill the entire canvas with the source-authoritative background color "
-        f"{background_color}; do not add any background scene, gradient, pattern, or texture."
-    )
-
-
-def _color_usage_constraint(
-    material_view: CompletePageMaterialView,
-) -> tuple[str, str]:
-    colors = _visual_contract_colors(material_view)
-    positive = (
-        "Treat the confirmed background color as the canvas base; use primary color "
-        f"{colors['primary_color']} for primary text and structural hierarchy, and use secondary "
-        f"color {colors['secondary_color']} strictly as an accent. Background and light gray areas "
-        "must cover 70%-85%; dark text and structure 15%-25%; target 3%-7% visible secondary/accent "
-        "coverage, never above 10%, with no single continuous accent block above 2%. Limit accent "
-        "uses to key numbers, conclusion terms, numbering, core nodes, arrow tips, local underlines, "
-        "small status markers, and key transitions. If the primary color is saturated, limit it to "
-        "tier-one structure and headings; use a sufficiently contrasting deep neutral for body text. "
-        "Neutral gray is an auxiliary layout color, not another brand color."
-    )
-    prohibited = (
-        "Do not use the secondary/accent color for full-width solid headers, full column fills, card "
-        "backgrounds, wide bands or paths, large tinted regions, repeated solid icons, or every "
-        "module having a colored border. Avoid thick accent paths, large brand-color headers or card "
-        "arrays, and compositions that depend on a particular hue."
-    )
-    return positive, prohibited
-
-
-def _normalized_director_clause(text: str) -> str:
-    return " ".join(text.casefold().split())
-
-
-def _proven_owned_color_contract_clauses(
-    material_view: CompletePageMaterialView,
-) -> frozenset[str]:
-    owned: set[str] = set()
-    for contract in _color_usage_constraint(material_view):
-        for match in _SENTENCE_PARTS.finditer(contract):
-            clause = match.group(0).strip()
-            if clause:
-                owned.add(_normalized_director_clause(clause))
-    return frozenset(owned)
-
-
-def _without_director_color_contract_clauses(
-    text: str,
-    *,
-    proven_owned_clauses: frozenset[str],
-) -> str:
-    kept: list[str] = []
-    for match in _SENTENCE_PARTS.finditer(text):
-        clause = match.group(0).strip()
-        if clause and _normalized_director_clause(clause) not in proven_owned_clauses:
-            kept.append(clause)
-    return " ".join(kept)
-
-
-def _without_director_canvas_background_clauses(
-    text: str, *, scene_section: bool = False,
-) -> str:
-    kept: list[str] = []
-    for match in _SENTENCE_PARTS.finditer(text):
-        clause = match.group(0).strip()
-        scene_effect_without_foreground = (
-            scene_section
-            and _SCENE_BACKGROUND_EFFECT.search(clause)
-            and not _FOREGROUND_SCENE_CONTEXT.search(clause)
-        )
-        if (
-            clause
-            and not _CANVAS_BACKGROUND_CLAUSE.search(clause)
-            and not scene_effect_without_foreground
-        ):
-            kept.append(clause)
-    return " ".join(kept)
-
-
-def compile_six_part_prompt(
-    value: Mapping[str, object], material_view: CompletePageMaterialView
-) -> str:
-    """Compile six natural-language sections in the approved order, each constraint once."""
-    sections = dict(_validate_prompt_sections(value))
-    proven_owned_clauses = _proven_owned_color_contract_clauses(material_view)
-    compiler_color_keys = {
-        "composition_viewpoint_hierarchy_and_medium",
-        "preservation_and_fixed_exclusions",
-    }
-    for _heading, key in _SECTION_SPECS:
-        sections[key] = _without_director_canvas_background_clauses(
-            sections[key], scene_section=key == "scene_or_background",
-        )
-        sections[key] = _without_director_color_contract_clauses(
-            sections[key],
-            proven_owned_clauses=proven_owned_clauses,
-        )
-        if (
-            key != "scene_or_background"
-            and key not in compiler_color_keys
-            and not sections[key]
-        ):
-            raise ValueError(
-                f"prompt section {key} contains only compiler-owned clauses"
-            )
-    background = _canvas_background_constraint(material_view)
-    foreground_scene = sections["scene_or_background"]
-    sections["scene_or_background"] = (
-        f"{foreground_scene} {background}" if foreground_scene else background
-    )
-    color_roles, prohibited_color_uses = _color_usage_constraint(material_view)
-    composition_key = "composition_viewpoint_hierarchy_and_medium"
-    sections[composition_key] = "\n".join(
-        item for item in (sections[composition_key], color_roles) if item
-    )
-    final_key = "preservation_and_fixed_exclusions"
-    sections[final_key] = "\n".join(
-        item
-        for item in (
-            sections[final_key],
-            prohibited_color_uses,
-            _FIXED_LAYER_EXCLUSION,
-            _CENTER_17_8_SAFE_REGION,
-        )
-        if item
-    )
-    return "\n\n".join(f"## {heading}\n{sections[key]}" for heading, key in _SECTION_SPECS)
-
-
 def _complete_material_use(
     value: Mapping[str, object], material_view: CompletePageMaterialView
 ) -> Mapping[str, object]:
@@ -614,10 +381,15 @@ def _validate_director_value(
     creative = value["creative_direction"]
     assert isinstance(creative, Mapping)
     for field in (
-        "core_objective",
-        "visual_concept",
-        "scene_subject_hierarchy_reading_path",
-        "composition_viewpoint_whitespace_medium_texture",
+        "business_proposition",
+        "explanatory_lead",
+        "analytical_backbone",
+        "evidence_interpretation_conclusion",
+        "content_hierarchy",
+        "reading_path_and_density",
+        "takeaway_statement",
+        "supporting_visual_policy",
+        "anti_ai_visual_policy",
     ):
         if not str(creative[field]).strip():
             raise ValueError(
@@ -653,7 +425,7 @@ def _validate_director_value(
         item not in allowed_references for item in selected_ids
     ):
         raise ValueError("selected reference must be a unique viewable project-owned material ID")
-    compile_six_part_prompt(value, material_view)
+    compile_consulting_six_part_prompt(value, material_view)
     return selected_ids
 
 
@@ -692,21 +464,25 @@ def direct_page(
         "COMPLETE PAGE MATERIAL VIEW\n"
         f"{_canonical_text(material_view.value)}\n\n"
         "STRUCTURED OUTPUT REQUIREMENTS\n"
-        "Act as the page-level visual director and produce the existing machine audit plus open "
-        "natural-language creative direction. Audit statuses do not impose a coverage score or "
-        "retry gate. In Key Details, list only the short, source-exact names, dates, numbers, and "
-        "phrases that Image2 may visibly render; do not authorize any other factual prose. Use "
-        "visual hierarchy, "
-        "relationships, grouping, and concise labels for dense material. Use only the mapped "
+        "Act as the consulting-report page director and produce the machine audit plus the v2 "
+        "creative direction and six prompt sections. Audit statuses do not impose a coverage "
+        "score or retry gate. Define one source-supported business proposition, a short "
+        "explanatory lead, one content-driven analytical backbone, the evidence-to-interpretation-"
+        "to-conclusion path, content hierarchy, reading path, explicit takeaway, supporting-visual "
+        "policy, and anti-AI-spectacle policy. In core_proposition_and_content, authorize only "
+        "source-exact names, dates, numbers, labels, and explanatory copy grounded in the Word "
+        "body; do not authorize any other factual prose. Use visual hierarchy, relationships, "
+        "grouping, and concise labels for dense material. Use only the mapped "
         "images as selectable references. If, after material completion, a specifically requested "
         "real asset is still absent from the mapped images, continue using only its source-exact "
         "formal name from the Word body. Never generate or imply a fake logo, fake person, or fake "
         "factual image, and do not claim the original comment has been fully implemented. Use "
-        "scene_or_background only for foreground environment and spatial arrangement. Do not "
-        "specify the canvas background, its background color, grid, texture, gradient, or glow "
-        "in any prompt_sections field; the compiler supplies the canvas background. Do not restate "
-        "compiler-owned hard-boundary language inside prompt_sections. Return exactly the "
-        "existing structured-output shape."
+        "task_and_canvas only for foreground environment and spatial arrangement. Do not specify "
+        "the canvas background, background color, grid, texture, gradient, or glow in any "
+        "prompt_sections field. The compiler owns canvas geometry, fixed-layer exclusions, the "
+        "confirmed color roles, and the central safe region; do not restate or override those "
+        "constraints. Return exactly "
+        "the consulting director v2 structured-output shape."
     )
     result = invoke(
         workspace.project_copy,
@@ -722,7 +498,7 @@ def direct_page(
     assert quality in {"medium", "high"}
     artifact = DirectorArtifact(
         value=director_value,
-        actual_prompt=compile_six_part_prompt(director_value, material_view),
+        actual_prompt=compile_consulting_six_part_prompt(director_value, material_view),
         selected_reference_ids=selected_ids,
         quality=quality,
         model=result.model,
@@ -754,7 +530,7 @@ def _correction_schema(page_number: int = 1) -> dict[str, object]:
             "prompt_sections",
         ],
         "properties": {
-            "schema_version": {"type": "string", "const": "awesome-page-correction-v1"},
+            "schema_version": {"type": "string", "const": "awesome-page-correction-v2"},
             "page_number": {"type": "integer", "const": page_number},
             "strategy": {
                 "type": "string",
@@ -873,7 +649,7 @@ def decide_correction(
         raise ValueError("correction contains a duplicate selected reference")
     if any(item not in allowed_references for item in selected_ids):
         raise ValueError("selected reference must be a viewable source material ID")
-    actual_prompt = compile_six_part_prompt(result.value, material_view)
+    actual_prompt = compile_consulting_six_part_prompt(result.value, material_view)
     if actual_prompt == director.actual_prompt and selected_ids == director.selected_reference_ids:
         raise ValueError("correction cannot reproduce the unchanged prior prompt and input request")
     strategy = result.value["strategy"]
