@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "page-prompt-v6-adaptive-confirmed-materials",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "indexTreeSha256": "49a82198694a2c4fa3d72c02d6b347c0666f988fc5eaf549bf65457ee03801d6",
+  "indexTreeSha256": "4fc48fee273c43126d858c3dac3aba03cd99c0ef830986f993a006bb4786318e",
   "files": {
     ".agents/plugins/marketplace.json": "c887152f4ec35b08f52a3c390d3b7f17a96b9ea0929c87c4ef20084d9683b7f3",
     ".gitattributes": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
@@ -250,7 +250,7 @@
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_100_page_scale.py": "248c7f0439f967d08e92fe65fafbc803355142d50cba8e2319851d9f86691bfa",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_accepted_image_reconstruction.py": "7c70b71c738ca347c19dc7efee1bd12c7212d0d7f08dd549a74075f6d612f4d0",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_attachment_render.py": "e506e07b2657346a816030600a0ae1eda791ec6e3cb1a8a0cc14c120794c039a",
-    "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_image_request.py": "d1edf491ae543207513d06505718aee0efe406336729b42e44ef8f04ee7d406b",
+    "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_image_request.py": "0347b133f18879a71ba5793fa5253e2908af8e46fd98865dcaf19e653f378c9e",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_live_creative_page.py": "31b615babdb1e86e9601a1f44f1327aae7b30f40b6c3f6a8687efdd6d76dc8ef",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_page_materials.py": "64f85c16fdc1be5a495b072aef6fb9d8d6e767bbb81e974dc4d8c9d0e1d72137",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_performance_report.py": "1bfc7af861e9106e90be816e6a6f04ba9848558343970716ec062b7fb344b122",
