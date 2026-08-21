@@ -18,6 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 SERVER = SCRIPTS / "confirm_ui" / "server.py"
 FIXTURE = Path(__file__).parent / "fixtures" / "v6_adaptive_project" / "fixture.json"
+CONSULTING_REGRESSION_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "consulting_director_cases.json"
+)
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
@@ -33,6 +36,18 @@ from workflow_v6_source import initialize_v6_project  # noqa: E402
 from workflow_v6_state import load, save  # noqa: E402
 from awesome_page_materials import publish_page_materials  # noqa: E402
 from fixed_region_contract import fixed_frame_execution  # noqa: E402
+
+
+def test_adaptive_e2e_tracks_all_public_consulting_director_patterns() -> None:
+    fixture = json.loads(CONSULTING_REGRESSION_FIXTURE.read_text(encoding="utf-8"))
+
+    assert [case["id"] for case in fixture["cases"]] == [
+        "three-lane-portfolio",
+        "five-stage-capital-loop",
+        "four-capability-transformation-chain",
+        "four-row-investment-matrix",
+    ]
+    assert all(case["privacy_class"] == "public-synthetic" for case in fixture["cases"])
 
 
 def _load_server():

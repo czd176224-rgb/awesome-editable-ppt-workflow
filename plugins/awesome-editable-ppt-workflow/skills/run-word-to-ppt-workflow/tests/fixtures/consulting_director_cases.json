@@ -1,0 +1,73 @@
+{
+  "schema_version": "awesome-consulting-director-regressions-v1",
+  "cases": [
+    {
+      "id": "three-lane-portfolio",
+      "privacy_class": "public-synthetic",
+      "proposition": "Three coordinated growth lanes balance near-term cash, scalable expansion, and long-horizon options.",
+      "analytical_backbone": "Read three parallel portfolio lanes from mandate through evidence to management implication.",
+      "explanatory_lead": "The portfolio is designed as one coordinated system rather than three unrelated initiatives.",
+      "takeaway": "Takeaway: fund the lanes with different horizons but govern them through one portfolio cadence.",
+      "colors": {"background": "#F7F5F0", "primary": "#24364B", "secondary": "#B33A3A"},
+      "prompt_sections": {
+        "task_and_canvas": "Build a restrained executive portfolio body with a continuous left-to-right reading path.",
+        "core_proposition_and_content": "Three coordinated growth lanes balance near-term cash, scalable expansion, and long-horizon options. The portfolio is designed as one coordinated system rather than three unrelated initiatives. Takeaway: fund the lanes with different horizons but govern them through one portfolio cadence.",
+        "consulting_information_architecture": "Read three parallel portfolio lanes from mandate through evidence to management implication. Connect the lanes at shared governance decisions and finish at the portfolio takeaway.",
+        "visual_style_and_color": "Use a formal consulting-report aesthetic with quiet surfaces, thin rules, and compact evidence marks.",
+        "text_and_typography": "Use concise Chinese-ready explanatory sentences, clear lane labels, and one prominent takeaway sentence.",
+        "strict_prohibitions": "No disconnected card grid, decorative panorama, miniature scene, neon glow, or ornamental 3D object."
+      }
+    },
+    {
+      "id": "five-stage-capital-loop",
+      "privacy_class": "public-synthetic",
+      "proposition": "A five-stage capital loop converts disciplined screening into repeatable value realization.",
+      "analytical_backbone": "Follow one clockwise capital loop from sourcing to screening, investment, value creation, and realization.",
+      "explanatory_lead": "Each stage produces the evidence and decision needed by the next stage, closing the operating loop.",
+      "takeaway": "Takeaway: returns depend on the closed-loop discipline, not on isolated deal selection.",
+      "colors": {"background": "#F6F4EF", "primary": "#1F3446", "secondary": "#A63D40"},
+      "prompt_sections": {
+        "task_and_canvas": "Build one sober executive capital-cycle body with a clear loop and ample whitespace.",
+        "core_proposition_and_content": "A five-stage capital loop converts disciplined screening into repeatable value realization. Each stage produces the evidence and decision needed by the next stage, closing the operating loop. Takeaway: returns depend on the closed-loop discipline, not on isolated deal selection.",
+        "consulting_information_architecture": "Follow one clockwise capital loop from sourcing to screening, investment, value creation, and realization. Attach one evidence note and one management implication to each transition.",
+        "visual_style_and_color": "Use report-grade vector geometry, restrained line weight, and small evidence annotations rather than spectacle.",
+        "text_and_typography": "Keep stage names short, explanations readable, and the final capital-discipline takeaway explicit.",
+        "strict_prohibitions": "No glowing track, cyberpunk ring, toy-model assets, 3D machinery, or decorative investment cityscape."
+      }
+    },
+    {
+      "id": "four-capability-transformation-chain",
+      "privacy_class": "public-synthetic",
+      "proposition": "Four linked capabilities turn fragmented operations into a measurable transformation engine.",
+      "analytical_backbone": "Read a four-capability chain from data foundation through decision intelligence and operating adoption to measurable outcomes.",
+      "explanatory_lead": "The chain explains how enabling capabilities compound rather than presenting four independent workstreams.",
+      "takeaway": "Takeaway: transformation value appears only when all four capabilities connect into daily operations.",
+      "colors": {"background": "#F8F6F1", "primary": "#26384A", "secondary": "#B04444"},
+      "prompt_sections": {
+        "task_and_canvas": "Build one coherent transformation-chain body with explicit causal connectors and restrained supporting evidence.",
+        "core_proposition_and_content": "Four linked capabilities turn fragmented operations into a measurable transformation engine. The chain explains how enabling capabilities compound rather than presenting four independent workstreams. Takeaway: transformation value appears only when all four capabilities connect into daily operations.",
+        "consulting_information_architecture": "Read a four-capability chain from data foundation through decision intelligence and operating adoption to measurable outcomes. Show cause, interpretation, and outcome at each handoff.",
+        "visual_style_and_color": "Use a formal transformation-report language with flat shapes, crisp arrows, and documentary evidence accents.",
+        "text_and_typography": "Use compact capability names, explanatory handoff copy, outcome evidence, and one decisive takeaway.",
+        "strict_prohibitions": "No robot hero image, futuristic tunnel, floating hologram, miniature factory, or disconnected capability cards."
+      }
+    },
+    {
+      "id": "four-row-investment-matrix",
+      "privacy_class": "public-synthetic",
+      "proposition": "A four-row investment matrix makes risk-return trade-offs comparable and decision-ready.",
+      "analytical_backbone": "Read four investment rows against the same evidence, interpretation, risk, and decision columns.",
+      "explanatory_lead": "Common comparison logic reveals why superficially similar opportunities require different capital decisions.",
+      "takeaway": "Takeaway: prioritize the options with evidence-backed upside and controllable execution risk.",
+      "colors": {"background": "#F7F5F1", "primary": "#23384C", "secondary": "#A83E43"},
+      "prompt_sections": {
+        "task_and_canvas": "Build a compact executive investment-comparison body that reads as one decision table, not a dashboard.",
+        "core_proposition_and_content": "A four-row investment matrix makes risk-return trade-offs comparable and decision-ready. Common comparison logic reveals why superficially similar opportunities require different capital decisions. Takeaway: prioritize the options with evidence-backed upside and controllable execution risk.",
+        "consulting_information_architecture": "Read four investment rows against the same evidence, interpretation, risk, and decision columns. Use a single comparison spine and end with the portfolio decision.",
+        "visual_style_and_color": "Use a disciplined diligence-report aesthetic with light row rules, restrained markers, and no decorative scene.",
+        "text_and_typography": "Keep row labels concise, explanatory cells legible, risks explicit, and the final prioritization takeaway prominent.",
+        "strict_prohibitions": "No oversized icons, card mosaic, glossy 3D coins, miniature park, neon chart, or ornamental hero composition."
+      }
+    }
+  ]
+}
