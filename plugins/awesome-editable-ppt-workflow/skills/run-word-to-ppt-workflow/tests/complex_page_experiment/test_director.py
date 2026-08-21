@@ -1162,6 +1162,16 @@ def test_visual_director_reference_is_short_generic_and_template_free():
     assert not any(term.casefold() in text.casefold() for term in forbidden)
 
 
+def test_visual_director_reference_requires_a_coherent_reporting_argument():
+    text = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8").casefold()
+
+    assert "one coherent argument" in text
+    assert "explanatory copy" in text
+    assert "evidence" in text
+    assert "conclusion" in text
+    assert "single panorama" in text
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [

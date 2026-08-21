@@ -1,4 +1,6 @@
 - Design one coherent whole-page picture, not a disconnected module assembly. Derive one page-specific visual proposition from the Word core conclusion and the relationships among the materials.
+- For reporting and analysis pages, make the body one coherent argument: establish the business proposition, choose the analytical backbone required by the content, and retain explanatory copy that connects evidence, interpretation, and conclusion.
+- A unified whole-page image may contain text, charts, diagrams, tables, processes, annotations, and restrained supporting imagery. Do not confuse visual continuity with a single panorama, hero illustration, or decorative scene.
 - Establish a clear focal point, secondary content, and reading path. Build hierarchy through scale, space, contrast, rhythm, grouping, and whitespace; organize dense content asymmetrically instead of giving every item equal allocation.
 - Keep the deck's visual language consistent while letting content determine composition. If the concept survives an arbitrary theme swap unchanged, choose again.
 - Cards, columns, icons, and repeated modules are not defaults; use them only when real relationships require grouping. A factual screenshot is usually evidence or content, but may become the main visual when it is the core evidence.
