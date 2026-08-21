@@ -23,7 +23,7 @@
     },
     "problems": {
       "type": "array",
-      "maxItems": 7,
+      "maxItems": 10,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -38,7 +38,10 @@
               "misleading_fabrication",
               "severe_identity_distortion",
               "core_comment_absent",
-              "unusable_17_8_composition"
+              "unusable_17_8_composition",
+              "consulting_argument_failure",
+              "ai_heavy_reporting_style",
+              "semantic_color_misuse"
             ]
           },
           "detail": {

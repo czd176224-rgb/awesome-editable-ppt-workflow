@@ -518,6 +518,14 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
     if accepted is not None:
         recorder.record_recovery(skipped_calls=RECOVERY_CALLS)
         return LoopOutcome("accepted", (accepted.candidate,), accepted, (), 0)
+    director_root = workspace.project_copy / "02_v6" / "experiments" / workspace.experiment_id
+    legacy_director = director_root / "director.json"
+    v2_director = director_root / "director_v2.json"
+    if legacy_director.exists() and not v2_director.exists():
+        raise ValueError(
+            "unfinished v1 page cannot reuse its legacy director or candidates; "
+            "restart this page from the consulting director v2 in a fresh page run"
+        )
     failed = _load_failed_outcome(workspace, recorder)
     if failed is not None:
         return failed

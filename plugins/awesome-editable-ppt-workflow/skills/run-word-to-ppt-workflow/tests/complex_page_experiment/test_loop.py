@@ -214,6 +214,8 @@ def test_recovery_happens_before_material_access_and_skips_every_call(
         provider_fixture, monkeypatch, [_review_result("accept")]
     )
     recorder.finalize()
+    director_root = workspace.project_copy / "02_v6/experiments" / workspace.experiment_id
+    (director_root / "director_v2.json").replace(director_root / "director.json")
     material_path = workspace.project_copy / "02_v6/awesome_page_materials/page_001.json"
     material_path.unlink()
     evidence_root = workspace.project_copy / "04_v6/experiments" / workspace.experiment_id
@@ -239,6 +241,34 @@ def test_recovery_happens_before_material_access_and_skips_every_call(
     assert summary["recovery"]["skipped_calls"] == [
         "page_director", "correction_decision", "image2", "visual_review", "reconstruct_edit"
     ]
+
+
+def test_unfinished_v1_director_state_requires_clean_v2_page_restart_before_any_call(
+    provider_fixture,
+):
+    workspace, view, recorder, _refs = provider_fixture
+    director_root = workspace.project_copy / "02_v6/experiments" / workspace.experiment_id
+    director_root.mkdir(parents=True, exist_ok=True)
+    legacy_path = director_root / "director.json"
+    legacy_bytes = b'{"schema_version":"awesome-page-director-authority-v1"}\n'
+    legacy_path.write_bytes(legacy_bytes)
+
+    with pytest.raises(
+        ValueError,
+        match="unfinished v1 page.*restart this page from the consulting director v2",
+    ):
+        run_candidate_loop(
+            workspace,
+            timeout=17,
+            recorder=recorder,
+            material_view_factory=lambda _workspace: pytest.fail("material chain was read"),
+            director_invoke=lambda *_a, **_k: pytest.fail("director was called"),
+            reviewer_invoke=lambda *_a, **_k: pytest.fail("reviewer was called"),
+            provider_runner=lambda *_a, **_k: pytest.fail("provider was called"),
+        )
+
+    assert legacy_path.read_bytes() == legacy_bytes
+    assert not (director_root / "director_v2.json").exists()
 
 
 def test_completed_page_keeps_the_same_accepted_seal_for_zero_call_recovery(

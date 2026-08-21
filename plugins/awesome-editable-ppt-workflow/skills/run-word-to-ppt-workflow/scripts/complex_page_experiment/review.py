@@ -24,6 +24,7 @@ from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 from . import provider as experiment_provider
 from .director import (
     DirectorArtifact,
+    _director_relative,
     _validate_director_value,
     _validate_material_view,
     compile_consulting_six_part_prompt,
@@ -84,6 +85,9 @@ class ReviewProblem:
         "severe_identity_distortion",
         "core_comment_absent",
         "unusable_17_8_composition",
+        "consulting_argument_failure",
+        "ai_heavy_reporting_style",
+        "semantic_color_misuse",
     ]
     detail: str
 
@@ -520,12 +524,17 @@ def _review_prompt(
     return (
         "You are the fresh independent visual reviewer and the only semantic QA after image generation. "
         "Review the actual candidate, not the director's intentions. Default to accept reasonable Image2 randomness. "
-        "Return correct on ONLY these seven serious grounds: (1) damaged output or wrong size/aspect; "
+        "Return correct on ONLY these ten serious grounds: (1) damaged output or wrong size/aspect; "
         "(2) generated fixed title, fixed logo, footer, or page number; (3) clear departure from this page's subject; "
         "(4) clearly misleading fabrication; (5) severe distortion of a must-preserve real identity; "
-        "(6) the core original comment direction is entirely absent; or (7) the composition is plainly unusable "
-        "in the 17:8 body region. Every correction problem must name the visible defect and a concrete repair. "
-        "Style variance, harmless randomness, noncritical omission, incomplete verbatim text, and possible polish "
+        "(6) the core original comment direction is entirely absent; (7) the composition is plainly unusable "
+        "in the 17:8 body region; (8) the page fails as one coherent body image and argument: it lacks a clear "
+        "business proposition, analytical backbone, explanatory copy, evidence → interpretation → conclusion flow, "
+        "or explicit takeaway, including disconnected module grids; (9) AI-heavy spectacle unsuitable for a formal "
+        "report dominates the body, including decorative hero scenes, 3D machinery, miniature factories or parks, "
+        "neon, cyberpunk, glowing tracks, or toy-model aesthetics; or (10) visible colors contradict the confirmed "
+        "semantic color meaning in the page authority. Every correction problem must name the visible defect and a "
+        "concrete repair. Harmless rendering variance, noncritical omission, incomplete verbatim text, and possible polish "
         "must be accepted. For a comment that specifically requests a real logo, person, product, project, or factual "
         "image, judge availability against all mapped Context-Images, not merely the selected references. After the "
         "completed project material search/import stage, if no corresponding mapped Context-Image exists, accept the "
@@ -605,7 +614,7 @@ def _review_authority_value(
     duration: float,
 ) -> dict[str, object]:
     root = workspace.project_copy.resolve(strict=True)
-    director_relative = Path("02_v6") / "experiments" / workspace.experiment_id / "director.json"
+    director_relative = _director_relative(workspace)
     receipt_relative = _review_snapshot_root(workspace, candidate) / "receipt.json"
     candidate_relative = candidate.path.resolve(strict=True).relative_to(root).as_posix()
     candidate_bytes = read_bytes(root, PurePosixPath(candidate_relative), max_bytes=_MAX_CANDIDATE_BYTES)

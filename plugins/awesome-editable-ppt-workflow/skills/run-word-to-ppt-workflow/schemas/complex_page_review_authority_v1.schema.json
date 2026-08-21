@@ -35,12 +35,12 @@
     },
     "decision": {"enum": ["accept", "correct"]},
     "problems": {
-      "type": "array", "maxItems": 7,
+      "type": "array", "maxItems": 10,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["category", "detail"],
         "properties": {
-          "category": {"enum": ["technical_output", "fixed_layer_violation", "clear_subject_departure", "misleading_fabrication", "severe_identity_distortion", "core_comment_absent", "unusable_17_8_composition"]},
+          "category": {"enum": ["technical_output", "fixed_layer_violation", "clear_subject_departure", "misleading_fabrication", "severe_identity_distortion", "core_comment_absent", "unusable_17_8_composition", "consulting_argument_failure", "ai_heavy_reporting_style", "semantic_color_misuse"]},
           "detail": {"type": "string", "minLength": 1}
         }
       }
