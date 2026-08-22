@@ -24,12 +24,35 @@ _CUSTODY_PATTERNS = (
     re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE),
     re.compile(r"\b(?:sha-?256|digest|receipt[_ -]?id)\b", re.IGNORECASE),
 )
+_SENTENCE_PARTS = re.compile(r"[^.!?;。！？；\r\n]+[.!?;。！？；]?")
+_FIXED_TERMS = (
+    re.compile(r"\btitle\b", re.IGNORECASE),
+    re.compile(r"\blogo\b", re.IGNORECASE),
+    re.compile(r"\bfooter\b", re.IGNORECASE),
+    re.compile(r"\bpage(?:[_ -]+)number\b", re.IGNORECASE),
+)
+_SAFE_REGION = re.compile(r"\b(?:central|largest|safe)\b.*\b17:8\b", re.IGNORECASE)
+_CANVAS_BACKGROUND = re.compile(
+    r"(?:\bcanvas\s+background\b|"
+    r"\b(?:canvas|background)\b.*\b(?:color|grid|texture|gradient|glow)\b|"
+    r"\b(?:color|grid|texture|gradient|glow)\b.*\b(?:canvas|background)\b)",
+    re.IGNORECASE,
+)
+_BACKGROUND_EFFECT = re.compile(
+    r"\b(?:texture|gradient|glow|fog|vortex|burlap|linen|paper)\b",
+    re.IGNORECASE,
+)
+_FOREGROUND_CONTEXT = re.compile(
+    r"\b(?:foreground|subject|evidence|person|people|object|arrange|arrangement|relationship|garment)\b",
+    re.IGNORECASE,
+)
 
 _TASK_CONSTRAINT = (
-    "Generate one coherent consulting-report slide body at 1904x896 with a 17:8 aspect ratio. "
-    "Keep every body text block, chart, diagram, table, annotation, connector, and supporting "
-    "visual inside the central safe region. Do not generate title, logo, footer, or page number; "
-    "those are supplied as fixed PowerPoint layers."
+    "Generate one coherent consulting-report slide body at 1904x896. Regardless of the provider's "
+    "eventual canvas aspect ratio, place all body text, charts, diagrams, tables, annotations, "
+    "connectors, references, and key decoration inside the central largest 17:8 content region; "
+    "leave a visibly empty perimeter on all four sides. Do not generate title, logo, footer, or "
+    "page number; those are supplied as fixed PowerPoint layers."
 )
 
 _ARGUMENT_CONSTRAINT = (
@@ -76,19 +99,32 @@ def _visual_contract_colors(material_view: object) -> dict[str, str]:
 def _color_constraints(material_view: object) -> tuple[str, str]:
     colors = _visual_contract_colors(material_view)
     positive = (
-        f"Fill the entire canvas with confirmed background color {colors['background_color']}. "
-        f"Use confirmed primary color {colors['primary_color']} for body text and structural "
-        f"hierarchy. Use confirmed secondary color {colors['secondary_color']} only as a semantic "
-        "accent for decisive terms, numbers, numbering, core nodes, arrow tips, local underlines, "
-        "status markers, and key transitions. Keep background and light neutral areas dominant, "
-        "dark text and structure secondary, and visible accent coverage restrained."
+        "Treat the confirmed background color as the canvas base; "
+        f"use primary color {colors['primary_color']} for primary text and structural hierarchy, "
+        f"and use secondary color {colors['secondary_color']} strictly as an accent. Background "
+        "and light gray areas must cover 70%-85%; dark text and structure 15%-25%; target 3%-7% "
+        "visible secondary/accent coverage, never above 10%, with no single continuous accent "
+        "block above 2%. Limit accent uses to key numbers, conclusion terms, numbering, core "
+        "nodes, arrow tips, local underlines, small status markers, and key transitions. If the "
+        "primary color is saturated, limit it to tier-one structure and headings; use a "
+        "sufficiently contrasting deep neutral for body text. Neutral gray is an auxiliary "
+        "layout color, not another brand color."
     )
     prohibited = (
         "Do not use the accent color for full-width solid headers, full-column fills, card "
         "backgrounds, wide bands or paths, large tinted regions, repeated solid icons, or a "
-        "colored border around every module."
+        "colored border around every module. Avoid thick accent paths, large brand-color headers "
+        "or card arrays, and compositions that depend on a particular hue."
     )
     return positive, prohibited
+
+
+def _background_constraint(material_view: object) -> str:
+    background = _visual_contract_colors(material_view)["background_color"]
+    return (
+        "Fill the entire canvas with the source-authoritative background color "
+        f"{background}; do not add any background scene, gradient, pattern, or texture."
+    )
 
 
 def _validated_sections(value: Mapping[str, object]) -> dict[str, str]:
@@ -109,6 +145,28 @@ def _validated_sections(value: Mapping[str, object]) -> dict[str, str]:
     return result
 
 
+def _without_compiler_owned_clauses(text: str, *, task_section: bool) -> str:
+    kept: list[str] = []
+    for match in _SENTENCE_PARTS.finditer(text):
+        clause = match.group(0).strip()
+        if not clause:
+            continue
+        task_background_effect = (
+            task_section
+            and _BACKGROUND_EFFECT.search(clause)
+            and not _FOREGROUND_CONTEXT.search(clause)
+        )
+        if (
+            any(pattern.search(clause) for pattern in _FIXED_TERMS)
+            or _SAFE_REGION.search(clause)
+            or _CANVAS_BACKGROUND.search(clause)
+            or task_background_effect
+        ):
+            continue
+        kept.append(clause)
+    return " ".join(kept)
+
+
 def _join(parts: Sequence[str]) -> str:
     return "\n".join(part for part in parts if part)
 
@@ -117,12 +175,32 @@ def compile_consulting_six_part_prompt(
     value: Mapping[str, object], material_view: object
 ) -> str:
     """Compile exactly six consulting-report sections in their sealed order."""
-    if value.get("schema_version") != "awesome-consulting-page-director-v2":
-        raise ValueError("consulting prompt requires awesome-consulting-page-director-v2")
+    if value.get("schema_version") not in {
+        "awesome-consulting-page-director-v2",
+        "awesome-page-correction-v2",
+    }:
+        raise ValueError("consulting prompt requires a v2 director or correction authority")
     sections = _validated_sections(value)
     positive_color, prohibited_color = _color_constraints(material_view)
+    for _heading, key in SECTION_SPECS:
+        original = sections[key]
+        sections[key] = _without_compiler_owned_clauses(
+            original, task_section=key == "task_and_canvas"
+        )
+        sections[key] = sections[key].replace(positive_color, "").replace(
+            prohibited_color, ""
+        ).strip()
+        fixed_or_safe_restatement = any(
+            pattern.search(original) for pattern in _FIXED_TERMS
+        ) or _SAFE_REGION.search(original)
+        if not sections[key] and (
+            key != "task_and_canvas" or fixed_or_safe_restatement
+        ):
+            raise ValueError(
+                f"consulting prompt section {key} contains only compiler-owned boundary clauses"
+            )
     sections["task_and_canvas"] = _join(
-        (sections["task_and_canvas"], _TASK_CONSTRAINT)
+        (sections["task_and_canvas"], _background_constraint(material_view), _TASK_CONSTRAINT)
     )
     sections["core_proposition_and_content"] = _join(
         (sections["core_proposition_and_content"], _ARGUMENT_CONSTRAINT)

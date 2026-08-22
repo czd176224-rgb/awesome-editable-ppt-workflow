@@ -26,7 +26,7 @@ from .director import (
     DirectorArtifact,
     _validate_director_value,
     _validate_material_view,
-    compile_six_part_prompt,
+    compile_consulting_six_part_prompt,
     validate_published_director_authority,
 )
 from .evidence import EvidenceRecorder
@@ -345,7 +345,8 @@ def _validate_director(
 ) -> None:
     selected = _validate_director_value(director.value, material_view)
     if (
-        compile_six_part_prompt(director.value, material_view) != director.actual_prompt
+        compile_consulting_six_part_prompt(director.value, material_view)
+        != director.actual_prompt
         or selected != director.selected_reference_ids
         or director.value.get("quality") != director.quality
         or not isinstance(director.model, str)

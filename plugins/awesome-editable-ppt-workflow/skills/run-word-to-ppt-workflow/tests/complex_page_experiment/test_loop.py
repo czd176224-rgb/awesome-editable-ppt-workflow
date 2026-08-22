@@ -62,7 +62,7 @@ def _off_ratio_response(*, marker_in_safe_region: bool) -> bytes:
 def _correction_result(view, strategy: str, marker: str):
     value = _director_value(view)
     value = {
-        "schema_version": "awesome-page-correction-v1",
+        "schema_version": "awesome-page-correction-v2",
         "page_number": 1,
         "strategy": strategy,
         "problem_addressed": ["candidate is clearly off topic"],
@@ -70,7 +70,7 @@ def _correction_result(view, strategy: str, marker: str):
         "selected_reference_ids": [],
         "prompt_sections": value["prompt_sections"],
     }
-    value["prompt_sections"]["key_details"] += f" Correction {marker}."
+    value["prompt_sections"]["text_and_typography"] += f" Correction {marker}."
     return CodexStructuredResult(
         value=value, thread_id=f"correction-{marker}", turn_id="turn",
         model="correction-model", model_provider="test", auth_mode="chatgpt",
