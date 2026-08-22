@@ -15,7 +15,7 @@ from fixed_region_contract import BODY_BOX_CM, CONTRACT_VERSION, SLIDE_SIZE_CM
 
 
 PLUGIN_ID = "awesome-editable-ppt-workflow"
-PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.1.0"
 WORKFLOW_VERSION = "awesome-word-ppt-workflow-v1"
 PROJECT_ARTIFACT_VERSION = "awesome-word-ppt-project-v1"
 PAGE_ARTIFACT_VERSION = "word-ppt-page-v6"

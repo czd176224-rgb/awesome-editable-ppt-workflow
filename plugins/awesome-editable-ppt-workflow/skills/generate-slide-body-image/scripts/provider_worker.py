@@ -174,7 +174,7 @@ def _verify(envelope, key):
             raise ValueError(f"provider full authority lacks {field}")
     project_identity = authority["project_identity"]
     if project_identity != {
-        "plugin_id": "awesome-editable-ppt-workflow", "plugin_version": "1.0.1",
+        "plugin_id": "awesome-editable-ppt-workflow", "plugin_version": "1.1.0",
         "workflow_contract": "awesome-word-ppt-workflow-v1",
         "source_identity": authority.get("source_identity"),
     }:

@@ -4,7 +4,7 @@
 
 The sealed workflow contract is `awesome-word-ppt-workflow-v1`.
 
-Each page uses one initial Codex page director, one initial Image2 candidate and one independent visual-review chain. Only an explicit rejection can consume either of the two correction opportunities. Image2 results are center-cropped from their actual returned dimensions to the largest 17:8 region and uniformly resized to 1904x896 before review.
+Each page uses one consulting-report Codex page director, one initial Image2 candidate and one independent visual-review chain. The director compiles exactly six Image2 prompt sections and requires a coherent business proposition, analytical backbone, explanatory copy, evidence-to-interpretation-to-conclusion flow, explicit takeaway, restrained supporting imagery, and confirmed semantic colors. The sole review rejects disconnected module grids and AI-heavy spectacle unsuitable for formal reporting. Only an explicit rejection can consume either of the two correction opportunities. Image2 results are center-cropped from their actual returned dimensions to the largest 17:8 region and uniformly resized to 1904x896 before review.
 
 The Word body remains the page fact and narrative authority; comments guide presentation without rewriting facts. The confirmed UI contract directly controls the canvas background, colors, fonts and body region. When a comment explicitly requires a missing real identity image, a single conditional project-level search pass accepts only verifiable official sources and otherwise records `not_found` without generating a fake asset.
 

@@ -84,9 +84,9 @@ if ($PackageInfo.initialImageEndpoint -ne "adaptive-images/generate-or-edit") {
 if ($PackageInfo.localRepairEndpoint -ne "same-provider-at-most-two-review-directed-corrections") {
     throw "V6 page repair must stay on the same provider and remain bounded by two review-directed corrections"
 }
-if ($PackageInfo.promptContractVersion -ne "page-prompt-v6-adaptive-confirmed-materials" -or
+if ($PackageInfo.promptContractVersion -ne "consulting-page-director-v2-six-part-image2" -or
     $PackageInfo.pageImagePolicy -ne "generate-without-refs-edit-with-confirmed-refs") {
-    throw "package-info must declare the adaptive confirmed-materials prompt and image policy"
+    throw "package-info must declare the consulting director v2 prompt and confirmed-materials image policy"
 }
 
 if ($MetadataOnly) {
