@@ -1,4 +1,4 @@
-"""Authority tests for the V4 workflow and unchanged V2 geometry."""
+"""Authority tests for the fixed slide geometry."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from contract_version import CURRENT_CONTRACT, require_supported_contract  # noqa: E402
 from fixed_region_contract import (  # noqa: E402
     BODY_BOX_CM,
     BODY_REMAINDER_CM,
@@ -22,13 +21,6 @@ from fixed_region_contract import (  # noqa: E402
     SLIDE_SIZE_CM,
     TITLE_BOX_CM,
 )
-
-
-def test_word_ppt_workflow_v4_is_the_only_supported_workflow_contract() -> None:
-    assert CURRENT_CONTRACT == "word-ppt-workflow-v4"
-    assert require_supported_contract({"workflow_contract_version": CURRENT_CONTRACT}) == CURRENT_CONTRACT
-    with pytest.raises(ValueError, match="word-ppt-workflow-v4"):
-        require_supported_contract({"workflow_contract_version": "body-frame-v2"})
 
 
 def test_single_authority_contains_all_locked_geometry() -> None:

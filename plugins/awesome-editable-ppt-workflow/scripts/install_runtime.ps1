@@ -161,7 +161,7 @@ if (-not (Test-Path -LiteralPath $CurrentWorkflowRoot -PathType Container)) {
         Remove-Item -LiteralPath $WorkflowStage -Recurse -Force
     }
     New-Item -ItemType Directory -Path $WorkflowStage | Out-Null
-    foreach ($name in @("scripts", "schemas", "template")) {
+    foreach ($name in @("scripts", "schemas")) {
         Copy-Item -LiteralPath (Join-Path $WorkflowSkill $name) -Destination $WorkflowStage -Recurse
     }
     Copy-Item -LiteralPath (Join-Path $PluginRoot "scripts\runtime_office.py") -Destination (Join-Path $WorkflowStage "scripts\runtime_office.py")
