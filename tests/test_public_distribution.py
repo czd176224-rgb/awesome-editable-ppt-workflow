@@ -207,11 +207,16 @@ def test_release_zip_contains_dot_directories_and_double_click_installer(tmp_pat
         "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction_worker.py",
         "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/complex_page_experiment/loop.py",
         "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/schemas/complex_page_acceptance_v1.schema.json",
-        "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/template/README.md",
         "plugins/awesome-editable-ppt-workflow/.codex-plugin/plugin.json",
         "package-info.json",
     }
     assert required <= names
+    assert not any(
+        name.startswith(
+            "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/template/"
+        )
+        for name in names
+    )
 
 
 def test_checker_ignores_untracked_git_and_test_cache_files(tmp_path):
