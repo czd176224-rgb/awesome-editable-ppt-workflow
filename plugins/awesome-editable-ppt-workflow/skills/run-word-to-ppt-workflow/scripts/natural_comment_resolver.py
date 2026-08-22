@@ -1,7 +1,7 @@
 """Resolve Word page comments into closed structured directives.
 
 Comments are resolved by the closed deterministic vocabulary consumed by
-``effective_page_authority.py``. Ambiguous required comments block the page.
+the V6 materials compiler. Ambiguous required comments block the page.
 """
 
 from __future__ import annotations
