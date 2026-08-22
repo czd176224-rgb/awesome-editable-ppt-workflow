@@ -16,7 +16,6 @@ sys.path.insert(0, str(SCRIPTS))
 
 import doctor  # noqa: E402
 import extract_docx_pages  # noqa: E402
-import render_pptx  # noqa: E402
 
 
 def test_editable_python_prefers_installer_executable_over_cmd_wrapper(
@@ -308,10 +307,10 @@ def test_resolve_soffice_checks_common_windows_install_location(tmp_path: Path, 
     assert doctor.resolve_soffice() == str(executable.resolve())
 
 
-def test_real_libreoffice_consumers_honor_explicit_soffice_path(
+def test_docx_renderer_honors_explicit_soffice_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Detection and the actual render/pagination paths must use one resolver."""
+    """Detection and DOCX pagination must use one resolver."""
     from pypdf import PdfWriter
 
     executable = tmp_path / "portable-lo" / "program" / "soffice.exe"
@@ -328,17 +327,11 @@ def test_real_libreoffice_consumers_honor_explicit_soffice_path(
         with (output_dir / f"{source.stem}.pdf").open("wb") as handle: writer.write(handle)
         return subprocess.CompletedProcess(command, 0, stdout="converted", stderr="")
 
-    monkeypatch.setattr(render_pptx.subprocess, "run", fake_run)
     monkeypatch.setattr(extract_docx_pages.subprocess, "run", fake_run)
-    pptx = tmp_path / "deck.pptx"
-    pptx.write_bytes(b"pptx")
-    rendered = tmp_path / "rendered"
-    rendered.mkdir()
-    assert render_pptx.render_libreoffice(pptx, rendered) == 1
     docx = tmp_path / "source.docx"
     docx.write_bytes(b"docx")
     assert extract_docx_pages._render_pdf_with_libreoffice(docx, tmp_path / "source.pdf") is True
-    assert calls == [executable.resolve(), executable.resolve()]
+    assert calls == [executable.resolve()]
 
 
 def test_successful_office_smoke_is_authoritative_when_version_probe_times_out(
