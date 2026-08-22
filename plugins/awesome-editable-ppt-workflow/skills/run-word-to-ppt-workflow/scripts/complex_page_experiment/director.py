@@ -105,7 +105,7 @@ def _canonical_bytes(value: object) -> bytes:
 
 
 def _director_relative(workspace: ExperimentWorkspace) -> Path:
-    return Path("02_v6") / "experiments" / workspace.experiment_id / "director.json"
+    return Path("02_v6") / "experiments" / workspace.experiment_id / "director_v2.json"
 
 
 def _director_authority_value(
@@ -114,7 +114,7 @@ def _director_authority_value(
     artifact: DirectorArtifact,
 ) -> dict[str, object]:
     return {
-        "schema_version": "awesome-page-director-authority-v1",
+        "schema_version": "awesome-consulting-page-director-authority-v2",
         "experiment_id": workspace.experiment_id,
         "page_number": workspace.page_number,
         "source_snapshot_sha256": workspace.source_snapshot_sha256,

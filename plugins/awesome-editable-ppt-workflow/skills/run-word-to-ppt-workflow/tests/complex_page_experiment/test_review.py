@@ -291,6 +291,9 @@ def test_review_allows_only_actionable_serious_correction_prompt_classes(
         {"category": "severe_identity_distortion", "detail": "The must-preserve real person's identity is severely distorted; restore it."},
         {"category": "core_comment_absent", "detail": "The core original comment direction is entirely absent; express it directly."},
         {"category": "unusable_17_8_composition", "detail": "The composition is unusable in the 17:8 body area; rebuild the hierarchy."},
+        {"category": "consulting_argument_failure", "detail": "The body is a disconnected module grid without an evidence-to-conclusion argument; rebuild one coherent analytical story."},
+        {"category": "ai_heavy_reporting_style", "detail": "A decorative neon 3D miniature factory dominates the body; replace it with restrained report-grade visual evidence."},
+        {"category": "semantic_color_misuse", "detail": "Red and green contradict the confirmed business semantics; restore the confirmed color meaning."},
     ]
     workspace, view, director, candidate, recorder = review_fixture
     captured: list[str] = []
@@ -315,8 +318,15 @@ def test_review_allows_only_actionable_serious_correction_prompt_classes(
     assert tuple(problem.category for problem in result.problem_records) == tuple(
         problem["category"] for problem in problems
     )
-    assert "ONLY these seven serious grounds" in captured[0]
-    assert "Style variance" in captured[0]
+    assert "ONLY these ten serious grounds" in captured[0]
+    assert "one coherent body image and argument" in captured[0]
+    assert "evidence → interpretation → conclusion" in captured[0]
+    assert "explicit takeaway" in captured[0]
+    assert "disconnected module grids" in captured[0]
+    assert "miniature factories or parks" in captured[0]
+    assert "neon, cyberpunk" in captured[0]
+    assert "confirmed semantic color meaning" in captured[0]
+    assert "Harmless rendering variance" in captured[0]
     assert "noncritical omission" in captured[0]
     assert "possible polish" in captured[0]
 

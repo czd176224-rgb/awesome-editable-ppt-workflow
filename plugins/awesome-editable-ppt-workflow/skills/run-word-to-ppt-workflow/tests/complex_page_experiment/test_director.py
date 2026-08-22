@@ -482,10 +482,10 @@ def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path
         / "02_v6"
         / "experiments"
         / workspace.experiment_id
-        / "director.json"
+        / "director_v2.json"
     )
     authority = json.loads(authority_path.read_text(encoding="utf-8"))
-    assert authority["schema_version"] == "awesome-page-director-authority-v1"
+    assert authority["schema_version"] == "awesome-consulting-page-director-authority-v2"
     assert authority["material_view_sha256"] == view.sha256
     assert authority["actual_prompt"] == artifact.actual_prompt
     assert authority["selected_reference_ids"] == list(artifact.selected_reference_ids)
