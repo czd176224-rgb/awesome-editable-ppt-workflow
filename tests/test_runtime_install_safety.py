@@ -155,6 +155,14 @@ def test_portable_installer_injects_current_workflow_and_runs_real_v6_object_bui
     assert '"submission_id": "portable-smoke-0001"' in e2e
 
 
+def test_runtime_installer_does_not_require_retired_project_template():
+    """The installed V6 runtime contains executable assets, not the retired starter tree."""
+    source = INSTALLER.read_text(encoding="utf-8")
+
+    assert 'foreach ($name in @("scripts", "schemas"))' in source
+    assert 'foreach ($name in @("scripts", "schemas", "template"))' not in source
+
+
 def test_workflow_runtime_installs_its_declared_editppt_package_dependency():
     """Word orchestration imports editppt state/finalize modules and must own that package."""
     source = INSTALLER.read_text(encoding="utf-8")
