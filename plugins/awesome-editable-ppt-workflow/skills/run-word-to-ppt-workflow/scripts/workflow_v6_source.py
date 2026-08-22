@@ -14,7 +14,6 @@ from docx.oxml.ns import qn
 
 from extract_docx_pages import extract_auto, iter_blocks
 from source_assets import extract_source_assets
-from build_page_contracts import _split_page_title_body_with_origin
 from workflow_v6_contract import new_page, new_project
 from workflow_v6_materials import (
     chart_to_facts, extract_attachment_material, new_page_materials, reference_image_from_normalized, reference_image_from_source, resolve_page_comments,
@@ -34,6 +33,132 @@ _LEGACY_PROJECT_MARKERS = frozenset({
 })
 _SEARCH_TERMS = re.compile(r"(?:搜索|查找|检索|新闻|资料|公开材料|网络材料)")
 _ATTACHMENT_TERMS = re.compile(r"(?:附件|附带文件|链接材料|链接附件)")
+_PAGE_MARKER_RE = re.compile(r"^第\s*(\d+)\s*页\s*[：:]?\s*$")
+_COMMENT_TITLE_RE = re.compile(
+    r"(?:\[title\s*[：:]\s*([^\]\r\n]+)\]|(?:PPT标题|页面标题|本页标题|标题)\s*[：:]\s*([^\r\n]+))",
+    re.IGNORECASE,
+)
+_HEADING_RE = re.compile(
+    r"^(?:[一二三四五六七八九十]+、|[（(][一二三四五六七八九十]+[）)]|\d+(?:\.\d+)*[、.)）])\s*"
+)
+_CONTINUATION_PREFIX_RE = re.compile(r"^[，。；：,.;:]")
+
+
+def _normalize_page_text(text: str) -> str:
+    return "\n".join(
+        line.rstrip()
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    ).strip()
+
+
+def _comment_title(page_comments: list[dict] | None) -> str | None:
+    for comment in page_comments or []:
+        if not isinstance(comment, dict):
+            continue
+        match = _COMMENT_TITLE_RE.search(str(comment.get("text", "")))
+        if match:
+            title = " ".join(next(group for group in match.groups() if group).split()).strip(
+                "，。；：,.;: "
+            )
+            if title:
+                return title[:40]
+    return None
+
+
+def _looks_like_explicit_physical_title(line: str) -> bool:
+    value = line.strip()
+    if not value or _CONTINUATION_PREFIX_RE.match(value) or "|" in value:
+        return False
+    if len(value) > 34 or value.endswith(("，", "。", "；", "：", ",", ".", ";", ":")):
+        return False
+    if _HEADING_RE.match(value):
+        return len(value) <= 26
+    return len(value) <= 24 and bool(
+        re.search(r"(报告|进展|方案|计划|安排|情况|分析|总结|建议|任务)$", value)
+    )
+
+
+def _looks_like_ordered_marker_title(line: str, line_count: int) -> bool:
+    value = line.strip()
+    return bool(
+        line_count > 1
+        and value
+        and len(value) <= 34
+        and not _CONTINUATION_PREFIX_RE.match(value)
+        and "|" not in value
+        and not value.endswith(("，", "。", "；", ",", ".", ";"))
+    )
+
+
+def _derive_short_page_title(text: str, page_number: int) -> str:
+    value = _normalize_page_text(text)
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if lines:
+        lines[0] = re.sub(r"^图\s*\d+\s*[：:]\s*", "", lines[0], flags=re.IGNORECASE)
+    derived = f"第{page_number}页工作进展"
+    for raw in lines:
+        if not _HEADING_RE.match(raw.strip()):
+            continue
+        candidate = _HEADING_RE.sub("", raw.strip()).lstrip("，。；：,.;: ")
+        clause = re.split(r"[，。；：,;:]", candidate, maxsplit=1)[0].strip()
+        if 2 <= len(clause) <= 28:
+            derived = clause
+            break
+    else:
+        for raw in lines:
+            if re.search(r"\s{2,}", raw) or ("牵头方" in raw and "方案" in raw):
+                continue
+            candidate = _HEADING_RE.sub("", raw.strip()).lstrip("，。；：,.;: ")
+            if not candidate or "|" in candidate:
+                continue
+            clause = re.split(r"[，。；：,;:]", candidate, maxsplit=1)[0].strip()
+            if len(clause) < 6:
+                clause = candidate
+            derived = clause[:28].rstrip("，。；：,.;: ") or derived
+            break
+    entities = re.findall(r"[一二三四五六七八九十百\d]+(?:地市场|种增长模式)", value)
+    action = re.match(r"^(聚焦|围绕|推动|加快|深化|提升|推进|建设|实现|形成)", value)
+    if action and len(entities) >= 2:
+        title = f"{action.group(1)}{entities[0]}与{entities[1]}"
+        if len(title) <= 28:
+            return title
+    return derived
+
+
+def _split_page_title_body_with_origin(
+    text: str,
+    page_number: int,
+    *,
+    pagination_mode: str | None = None,
+    page_comments: list[dict] | None = None,
+) -> tuple[str, str, str]:
+    content_text = _normalize_page_text(text)
+    raw_lines = content_text.splitlines()
+    lines = [line.strip() for line in raw_lines if line.strip()]
+    marker_removed = False
+    if lines:
+        marker = _PAGE_MARKER_RE.fullmatch(lines[0])
+        if marker:
+            if int(marker.group(1)) != page_number:
+                raise ValueError(f"page {page_number} contains a mismatched page marker")
+            marker_index = next(index for index, line in enumerate(raw_lines) if line.strip())
+            content_text = _normalize_page_text("\n".join(raw_lines[marker_index + 1 :]))
+            raw_lines = content_text.splitlines()
+            lines = [line.strip() for line in raw_lines if line.strip()]
+            marker_removed = True
+    if not lines:
+        raise ValueError(f"page {page_number} has no title or body content")
+    overridden = _comment_title(page_comments)
+    if overridden:
+        return overridden, content_text, "comment_override"
+    ordered_page = pagination_mode in {"ordered_markers", "explicit_text_markers"} or marker_removed
+    if _looks_like_explicit_physical_title(lines[0]) or (
+        ordered_page and _looks_like_ordered_marker_title(lines[0], len(lines))
+    ):
+        heading_index = next(index for index, line in enumerate(raw_lines) if line.strip())
+        body_text = _normalize_page_text("\n".join(raw_lines[heading_index + 1 :]))
+        return lines[0], body_text, "explicit_word_heading"
+    return _derive_short_page_title(content_text, page_number), content_text, "derived_from_body"
 
 
 def _sha256(path: Path) -> str:

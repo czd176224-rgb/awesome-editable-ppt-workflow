@@ -57,3 +57,16 @@ def test_prompt_validator_is_internal_to_the_main_workflow_skill() -> None:
     assert validator.SCHEMA == ROOT / "schemas" / "page_image_prompt_v1.schema.json"
     assert validator.DESIGN_PLAN_SCHEMA_PATH == ROOT / "schemas" / "design_plan_v1.schema.json"
     assert validator.MATERIAL_SCHEMA == ROOT / "schemas" / "awesome_page_materials_v1.schema.json"
+
+
+def test_v6_source_does_not_import_the_retired_page_contract_builder() -> None:
+    source = (SCRIPTS / "workflow_v6_source.py").read_text(encoding="utf-8")
+    assert "build_page_contracts" not in source
+
+
+def test_confirm_ui_ships_only_assets_loaded_by_the_current_document() -> None:
+    static = SCRIPTS / "confirm_ui" / "static"
+    assert not (static / "style.css").exists()
+    assert not (static / "visual_system.js").exists()
+    assert not (static / "color.js").exists()
+    assert not (SCRIPTS / "confirm_ui" / "preview.py").exists()
