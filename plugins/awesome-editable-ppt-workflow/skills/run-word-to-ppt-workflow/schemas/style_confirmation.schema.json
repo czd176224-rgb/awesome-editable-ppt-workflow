@@ -14,9 +14,7 @@
     "latin_font",
     "title_size_pt",
     "body_size_pt",
-    "caption_size_pt",
-    "regional_characteristics",
-    "visual_description"
+    "caption_size_pt"
   ],
   "properties": {
     "submission_id": {"type": "string", "minLength": 8, "maxLength": 128},
@@ -28,8 +26,6 @@
     "latin_font": {"type": "string", "minLength": 1, "maxLength": 120},
     "title_size_pt": {"type": "number", "minimum": 12, "maximum": 72},
     "body_size_pt": {"type": "number", "minimum": 8, "maximum": 32},
-    "caption_size_pt": {"type": "number", "minimum": 8, "maximum": 24},
-    "regional_characteristics": {"type": "string", "maxLength": 500},
-    "visual_description": {"type": "string", "minLength": 1, "maxLength": 500}
+    "caption_size_pt": {"type": "number", "minimum": 8, "maximum": 24}
   }
 }

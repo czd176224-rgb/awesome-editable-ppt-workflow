@@ -14,6 +14,7 @@ from docx.oxml.ns import qn
 
 from extract_docx_pages import extract_auto, iter_blocks
 from source_assets import extract_source_assets
+from workflow_v6_composition import compose_pages, explicit_comment_role, explicit_role
 from workflow_v6_contract import new_page, new_project
 from workflow_v6_materials import (
     chart_to_facts, extract_attachment_material, new_page_materials, reference_image_from_normalized, reference_image_from_source, resolve_page_comments,
@@ -24,7 +25,10 @@ from workflow_v6_state import create, load, mutation_lock
 from style_recommendations import _recommendations
 
 
-V6_PAGE_MARKER = r"^第\s*(\d+)\s*页(?:\s*PPT)?$"
+V6_PAGE_MARKER = (
+    r"^\s*(?:PPT\s*)?第\s*(\d+)\s*页(?:\s*PPT)?"
+    r"(?:\s*(?:[·|｜])\s*.*)?\s*$"
+)
 _LEGACY_PROJECT_MARKERS = frozenset({
     "workflow_run.json",
     "workflow_state.json",
@@ -33,22 +37,14 @@ _LEGACY_PROJECT_MARKERS = frozenset({
 })
 _SEARCH_TERMS = re.compile(r"(?:搜索|查找|检索|新闻|资料|公开材料|网络材料)")
 _ATTACHMENT_TERMS = re.compile(r"(?:附件|附带文件|链接材料|链接附件)")
-_PAGE_MARKER_RE = re.compile(r"^第\s*(\d+)\s*页\s*[：:]?\s*$")
 _COMMENT_TITLE_RE = re.compile(
     r"(?:\[title\s*[：:]\s*([^\]\r\n]+)\]|(?:PPT标题|页面标题|本页标题|标题)\s*[：:]\s*([^\r\n]+))",
     re.IGNORECASE,
 )
-_HEADING_RE = re.compile(
-    r"^(?:[一二三四五六七八九十]+、|[（(][一二三四五六七八九十]+[）)]|\d+(?:\.\d+)*[、.)）])\s*"
+_BODY_TITLE_RE = re.compile(
+    r"^(?:\[title\s*[：:]\s*([^\]\r\n]+)\]|(?:PPT标题|页面标题|本页标题|标题)\s*[：:]\s*(.+))$",
+    re.IGNORECASE,
 )
-_CONTINUATION_PREFIX_RE = re.compile(r"^[，。；：,.;:]")
-
-
-def _normalize_page_text(text: str) -> str:
-    return "\n".join(
-        line.rstrip()
-        for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    ).strip()
 
 
 def _comment_title(page_comments: list[dict] | None) -> str | None:
@@ -65,100 +61,44 @@ def _comment_title(page_comments: list[dict] | None) -> str | None:
     return None
 
 
-def _looks_like_explicit_physical_title(line: str) -> bool:
-    value = line.strip()
-    if not value or _CONTINUATION_PREFIX_RE.match(value) or "|" in value:
-        return False
-    if len(value) > 34 or value.endswith(("，", "。", "；", "：", ",", ".", ";", ":")):
-        return False
-    if _HEADING_RE.match(value):
-        return len(value) <= 26
-    return len(value) <= 24 and bool(
-        re.search(r"(报告|进展|方案|计划|安排|情况|分析|总结|建议|任务)$", value)
-    )
+def _title_block_text(block: Mapping[str, Any]) -> str:
+    if block.get("type") not in {"paragraph", "list"}:
+        return ""
+    value = block.get("text")
+    return value.strip() if isinstance(value, str) else ""
 
 
-def _looks_like_ordered_marker_title(line: str, line_count: int) -> bool:
-    value = line.strip()
-    return bool(
-        line_count > 1
-        and value
-        and len(value) <= 34
-        and not _CONTINUATION_PREFIX_RE.match(value)
-        and "|" not in value
-        and not value.endswith(("，", "。", "；", ",", ".", ";"))
-    )
-
-
-def _derive_short_page_title(text: str, page_number: int) -> str:
-    value = _normalize_page_text(text)
-    lines = [line.strip() for line in value.splitlines() if line.strip()]
-    if lines:
-        lines[0] = re.sub(r"^图\s*\d+\s*[：:]\s*", "", lines[0], flags=re.IGNORECASE)
-    derived = f"第{page_number}页工作进展"
-    for raw in lines:
-        if not _HEADING_RE.match(raw.strip()):
-            continue
-        candidate = _HEADING_RE.sub("", raw.strip()).lstrip("，。；：,.;: ")
-        clause = re.split(r"[，。；：,;:]", candidate, maxsplit=1)[0].strip()
-        if 2 <= len(clause) <= 28:
-            derived = clause
-            break
-    else:
-        for raw in lines:
-            if re.search(r"\s{2,}", raw) or ("牵头方" in raw and "方案" in raw):
-                continue
-            candidate = _HEADING_RE.sub("", raw.strip()).lstrip("，。；：,.;: ")
-            if not candidate or "|" in candidate:
-                continue
-            clause = re.split(r"[，。；：,;:]", candidate, maxsplit=1)[0].strip()
-            if len(clause) < 6:
-                clause = candidate
-            derived = clause[:28].rstrip("，。；：,.;: ") or derived
-            break
-    entities = re.findall(r"[一二三四五六七八九十百\d]+(?:地市场|种增长模式)", value)
-    action = re.match(r"^(聚焦|围绕|推动|加快|深化|提升|推进|建设|实现|形成)", value)
-    if action and len(entities) >= 2:
-        title = f"{action.group(1)}{entities[0]}与{entities[1]}"
-        if len(title) <= 28:
-            return title
-    return derived
-
-
-def _split_page_title_body_with_origin(
-    text: str,
+def _resolve_page_title(
+    page: Mapping[str, Any],
     page_number: int,
     *,
-    pagination_mode: str | None = None,
     page_comments: list[dict] | None = None,
-) -> tuple[str, str, str]:
-    content_text = _normalize_page_text(text)
-    raw_lines = content_text.splitlines()
-    lines = [line.strip() for line in raw_lines if line.strip()]
-    marker_removed = False
-    if lines:
-        marker = _PAGE_MARKER_RE.fullmatch(lines[0])
-        if marker:
-            if int(marker.group(1)) != page_number:
-                raise ValueError(f"page {page_number} contains a mismatched page marker")
-            marker_index = next(index for index, line in enumerate(raw_lines) if line.strip())
-            content_text = _normalize_page_text("\n".join(raw_lines[marker_index + 1 :]))
-            raw_lines = content_text.splitlines()
-            lines = [line.strip() for line in raw_lines if line.strip()]
-            marker_removed = True
-    if not lines:
+) -> tuple[str, str, str | None, str]:
+    blocks = [block for block in page.get("blocks", []) if isinstance(block, Mapping)]
+    candidates = [(block, _title_block_text(block)) for block in blocks]
+    candidates = [(block, text) for block, text in candidates if text]
+    if not candidates:
         raise ValueError(f"page {page_number} has no title or body content")
     overridden = _comment_title(page_comments)
     if overridden:
-        return overridden, content_text, "comment_override"
-    ordered_page = pagination_mode in {"ordered_markers", "explicit_text_markers"} or marker_removed
-    if _looks_like_explicit_physical_title(lines[0]) or (
-        ordered_page and _looks_like_ordered_marker_title(lines[0], len(lines))
-    ):
-        heading_index = next(index for index, line in enumerate(raw_lines) if line.strip())
-        body_text = _normalize_page_text("\n".join(raw_lines[heading_index + 1 :]))
-        return lines[0], body_text, "explicit_word_heading"
-    return _derive_short_page_title(content_text, page_number), content_text, "derived_from_body"
+        return overridden, "comment_override", None, _page_text(page)
+
+    selected: tuple[Mapping[str, Any], str, str] | None = None
+    for block, text in candidates:
+        match = _BODY_TITLE_RE.fullmatch(text)
+        if match:
+            selected = (block, next(value for value in match.groups() if value).strip(), "explicit_word_title")
+            break
+    if selected is None:
+        block, text = candidates[0]
+        selected = (block, text, "first_word_paragraph")
+
+    block, title, origin = selected
+    source_block_id = block.get("source_block_id")
+    if not isinstance(source_block_id, str) or not source_block_id:
+        raise ValueError(f"page {page_number} title has no source block ID")
+    body_page = {**dict(page), "blocks": [item for item in blocks if item is not block]}
+    return title, origin, source_block_id, _page_text(body_page)
 
 
 def _sha256(path: Path) -> str:
@@ -197,34 +137,6 @@ def _page_text(page: Mapping[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             values.append(value.strip())
     return "\n\n".join(values)
-
-
-def _explicit_title_source_block_id(page: Mapping[str, Any], title_origin: str) -> str | None:
-    """Bind a title only when its complete source block is structurally proven."""
-    if title_origin != "explicit_word_heading":
-        return None
-    for block in page.get("blocks", []):
-        if not isinstance(block, Mapping):
-            continue
-        block_type = block.get("type")
-        if block_type in {"paragraph", "list"}:
-            value = block.get("text")
-            has_content = isinstance(value, str) and bool(value.strip())
-        elif block_type == "table":
-            rows = block.get("rows")
-            has_content = isinstance(rows, list) and any(
-                str(cell).strip() for row in rows if isinstance(row, list) for cell in row
-            )
-        else:
-            has_content = False
-        if not has_content:
-            continue
-        if block_type != "paragraph":
-            return None
-        lines = [line for line in str(block.get("text", "")).splitlines() if line.strip()]
-        source_id = block.get("source_block_id")
-        return source_id if len(lines) == 1 and isinstance(source_id, str) else None
-    return None
 
 
 def _hyperlinks_by_block(docx_path: Path) -> dict[int, list[str]]:
@@ -429,22 +341,96 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
     pages_payload = extract_auto(locked_word, marker_pattern=V6_PAGE_MARKER)
     assets = extract_source_assets(locked_word, pages_payload, project / "01_source_assets")
     links_by_block = _hyperlinks_by_block(locked_word)
-    state_pages = []
     for raw_page in pages_payload["pages"]:
+        _role, title_blocks = explicit_role(raw_page.get("blocks", []))
+        _comment_role, title_comments = explicit_comment_role(raw_page.get("page_comments", []))
+        title_page = {**raw_page, "blocks": title_blocks}
+        title, origin, source_block_id, body_text = _resolve_page_title(
+            title_page,
+            int(raw_page["page_number"]),
+            page_comments=title_comments,
+        )
+        raw_page["resolved_title"] = title
+        raw_page["resolved_title_origin"] = origin
+        raw_page["resolved_title_source_block_id"] = source_block_id
+        raw_page["resolved_body_text"] = body_text
+    composition = compose_pages(pages_payload)
+    source_pages = {
+        int(page["page_number"]): page for page in pages_payload["pages"]
+    }
+    source_blocks = {
+        block["source_block_id"]: dict(block)
+        for page in pages_payload["pages"]
+        for block in page.get("blocks", [])
+        if isinstance(block, Mapping) and isinstance(block.get("source_block_id"), str)
+    }
+    composed_pages = []
+    for item in composition["pages"]:
+        output_page_number = int(item["output_page_number"])
+        source_page_number = item["source_page_number"]
+        material_ids = item["material_source_block_ids"]
+        if source_page_number is None:
+            selected_blocks = [dict(source_blocks[block_id]) for block_id in material_ids]
+            composed_pages.append({
+                "page_number": output_page_number,
+                "source_asset_page_number": None,
+                "blocks": selected_blocks,
+                "page_comments": [],
+                "resolved_title": item["fixed_page_title"],
+                "resolved_title_origin": "composition_authority",
+                "resolved_title_source_block_id": (
+                    material_ids[0]
+                    if selected_blocks and _page_text({"blocks": selected_blocks[:1]}) == item["fixed_page_title"]
+                    else None
+                ),
+                "resolved_body_text": _page_text({"blocks": selected_blocks}),
+                "composition_page_id": item.get("composition_page_id"),
+            })
+            continue
+        raw_page = dict(source_pages[int(source_page_number)])
+        _role, raw_page["blocks"] = explicit_role(raw_page.get("blocks", []))
+        allowed_ids = set(material_ids)
+        raw_page["blocks"] = [
+            block for block in raw_page["blocks"] if block.get("source_block_id") in allowed_ids
+        ]
+        _comment_role, raw_page["page_comments"] = explicit_comment_role(
+            raw_page.get("page_comments", [])
+        )
+        title_source_id = raw_page.get("resolved_title_source_block_id")
+        raw_page["resolved_body_text"] = _page_text({
+            "blocks": [
+                block for block in raw_page["blocks"]
+                if block.get("source_block_id") != title_source_id
+            ],
+        })
+        raw_page["page_number"] = output_page_number
+        raw_page["source_asset_page_number"] = int(source_page_number)
+        composed_pages.append(raw_page)
+    _write_json(project / "02_v6" / "page_composition.json", composition)
+
+    state_pages = []
+    for raw_page in composed_pages:
         page_number = int(raw_page["page_number"])
+        source_asset_page_number = raw_page.get("source_asset_page_number")
         text = _page_text(raw_page)
         page_comments = raw_page.get("page_comments", [])
-        title, body_render_content, title_origin = _split_page_title_body_with_origin(
-            text,
-            page_number,
-            pagination_mode=str(pages_payload.get("pagination_mode", "")),
-            page_comments=page_comments,
-        )
+        title = raw_page.get("resolved_title")
+        title_origin = raw_page.get("resolved_title_origin")
+        title_source_block_id = raw_page.get("resolved_title_source_block_id")
+        body_render_content = raw_page.get("resolved_body_text")
+        if not all(isinstance(value, str) for value in (title, title_origin, body_render_content)):
+            title, title_origin, title_source_block_id, body_render_content = _resolve_page_title(
+                raw_page,
+                page_number,
+                page_comments=page_comments,
+            )
         raw_page["fixed_page_title"] = title
-        raw_page["fixed_page_title_source_block_id"] = _explicit_title_source_block_id(
-            raw_page, title_origin,
+        raw_page["fixed_page_title_source_block_id"] = title_source_block_id
+        references = _asset_references(
+            int(source_asset_page_number) if source_asset_page_number is not None else -1,
+            assets,
+            project=project,
         )
-        references = _asset_references(page_number, assets, project=project)
         links = _links_for_page(raw_page, links_by_block)
         for link in links:
             references.append({
@@ -458,6 +444,8 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             "page_number": page_number,
             "word_original": text,
             "fixed_page_title": title,
+            "fixed_page_title_origin": title_origin,
+            "fixed_page_title_source_block_id": title_source_block_id,
             "body_render_content": body_render_content,
             "comments": page_comments,
             "references": references,
@@ -538,7 +526,10 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
             dict(requirement) for requirement in comment_resolution.image_requirements
         ]
         materials["chart_facts"] = [
-            chart_to_facts(chart) for chart in _chart_records(assets, page_number)
+            chart_to_facts(chart) for chart in _chart_records(
+                assets,
+                int(source_asset_page_number) if source_asset_page_number is not None else -1,
+            )
         ]
         materials["degradations"].extend(
             dict(degradation) for degradation in comment_resolution.degradations
@@ -554,7 +545,21 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
         _write_json(project / "02_v6" / "page_materials" / f"page_{page_number:03d}.json", materials)
         state_pages.append(new_page(page_number, title=title))
 
-    _write_json(project / "02_v6" / "paginated_word_source.json", pages_payload)
+    manifest_pages = []
+    for page in composed_pages:
+        manifest_page = dict(page)
+        if (
+            manifest_page.get("source_asset_page_number") is None
+            and not str(manifest_page.get("composition_page_id") or "").startswith("toc-continuation:")
+        ):
+            # Synthesized special pages trace existing source blocks; copying them
+            # here would create a second, ambiguous source-block authority.
+            manifest_page["blocks"] = []
+        manifest_pages.append(manifest_page)
+    _write_json(
+        project / "02_v6" / "paginated_word_source.json",
+        {**pages_payload, "page_count": len(manifest_pages), "pages": manifest_pages},
+    )
 
     state = new_project(
         word_source={"path": "00_source/source.docx", "sha256": _sha256(locked_word)},
@@ -567,7 +572,7 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
         project / "confirm_ui" / "recommendations.json",
         _recommendations([
             {"source_text": _page_text(page), "page_purpose": "", "asset_bindings": []}
-            for page in pages_payload["pages"]
+            for page in composed_pages
         ]),
     )
     return state

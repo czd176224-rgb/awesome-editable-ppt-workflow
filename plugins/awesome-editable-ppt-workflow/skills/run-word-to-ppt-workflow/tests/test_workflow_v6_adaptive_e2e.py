@@ -6,6 +6,7 @@ import json
 import sys
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from docx import Document
@@ -34,8 +35,231 @@ from workflow_v6_reconstruction import (  # noqa: E402
 )
 from workflow_v6_source import initialize_v6_project  # noqa: E402
 from workflow_v6_state import load, save  # noqa: E402
+from director_taskbook import confirmed_taskbook_prompt  # noqa: E402
+from workflow_v6_contract import transition_page  # noqa: E402
+from workflow_v6_pipeline import (  # noqa: E402
+    PipelineConfiguration,
+    PipelineDependencies,
+    run_pages,
+)
+from workflow_v6_special_pages import render_special_page  # noqa: E402
 from awesome_page_materials import publish_page_materials  # noqa: E402
 from fixed_region_contract import fixed_frame_execution  # noqa: E402
+
+
+def test_44_logical_markers_ignore_physical_pagination_and_keep_source_ids(tmp_path: Path) -> None:
+    # Break caught: Word section/page breaks are counted instead of explicit logical markers.
+    source_ids = list(range(1, 45))
+    for index, source_id in zip((7, 18, 29, 40), (107, 218, 329, 440)):
+        source_ids[index] = source_id
+    word = tmp_path / "44-logical-pages.docx"
+    document = Document()
+    for logical_number, source_id in enumerate(source_ids, start=1):
+        document.add_paragraph(f"第 {source_id} 页")
+        document.add_paragraph(f"逻辑页 {logical_number}")
+        document.add_paragraph(f"这是第 {logical_number} 个逻辑页的正文。")
+        if logical_number % 3 == 0 and logical_number != 44:
+            document.add_page_break()
+    document.save(word)
+    logo = tmp_path / "logo.svg"
+    logo.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><rect width="100" height="20"/></svg>',
+        encoding="utf-8",
+    )
+
+    project = tmp_path / "project"
+    initialize_v6_project(word, logo, project)
+    extraction = json.loads(
+        (project / "02_v6/paginated_word_source.json").read_text(encoding="utf-8")
+    )
+    composition = json.loads(
+        (project / "02_v6/page_composition.json").read_text(encoding="utf-8")
+    )
+
+    assert extraction["page_count"] == 44
+    assert [page["source_page_id"] for page in extraction["pages"]] == source_ids
+    assert composition["page_count"] >= 44
+    assert [page["output_page_number"] for page in composition["pages"]] == list(
+        range(1, composition["page_count"] + 1)
+    )
+
+
+def test_one_confirmation_completes_and_assembles_every_confirmed_role(tmp_path: Path) -> None:
+    # Break caught: special pages need a second approval or disappear from final assembly.
+    word = tmp_path / "complete-composition.docx"
+    document = Document()
+    pages = [
+        ("cover", "黄石产业项目建议", "联合产业升级"),
+        ("toc", "目录", "PART 1｜产业目标\nPART 2｜创新转化"),
+        ("section", "PART 1｜产业目标", "聚焦主导产业升级"),
+        ("content", "产业基础", "以现有产业链为基础形成项目组合。"),
+        ("appendix", "附录：数据口径", "本页说明数据口径。"),
+        ("closing", "最终目标：形成可持续产业生态", "全联并购公会"),
+    ]
+    for number, (role, title, body) in enumerate(pages, start=1):
+        document.add_paragraph(f"第 {number} 页")
+        document.add_paragraph({
+            "cover": "PPT页型：封面", "toc": "PPT页型：目录",
+            "section": "PPT页型：章节", "content": "PPT页型：正文",
+            "appendix": "PPT页型：附录", "closing": "PPT页型：尾页",
+        }[role])
+        document.add_paragraph(title)
+        document.add_paragraph(body)
+    document.save(word)
+    logo = tmp_path / "logo.svg"
+    logo.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><rect width="100" height="20"/></svg>',
+        encoding="utf-8",
+    )
+    project = tmp_path / "confirmed-deck"
+    initialize_v6_project(word, logo, project)
+
+    server = _load_server()
+    client = server.create_app(project).test_client()
+    recommendations = client.get("/api/recommendations").get_json()
+    expected_roles = ["cover", "toc", "section", "content", "appendix", "closing"]
+    proposed = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
+    assert [page["page_role"] for page in proposed["pages"]] == expected_roles
+    template = next(
+        item for item in recommendations["templates"]
+        if item["id"] == recommendations["recommended_template_id"]
+    )
+    payload = {
+        "submission_id": "full-deck-e2e-0001",
+        "revision": recommendations["revision"],
+        **template["defaults"],
+        "selected_director_template_id": template["id"],
+        "director_taskbook": recommendations["director_taskbook"],
+    }
+    first = client.post("/api/confirm", json=payload)
+    assert server._wait(project, "final", 1) == 0
+    second = client.post("/api/confirm", json=payload)
+    assert first.status_code == 200
+    assert second.status_code == 409
+    result = json.loads((project / "confirm_ui/result.json").read_text(encoding="utf-8"))
+    assert result["revision"] == 1
+    assert len(result["confirmed_pages"]) == result["confirmed_pages"][-1]["output_page_number"]
+    assert [page["page_role"] for page in result["confirmed_pages"]] == expected_roles
+    frozen = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
+    assert [page["page_role"] for page in frozen["pages"]] == expected_roles
+
+    def open_workspace(root: Path, page_number: int):
+        return SimpleNamespace(project_copy=root, page_number=page_number)
+
+    content_pages = []
+    native_pages = []
+
+    def accept_content(workspace, **_kwargs):
+        content_pages.append(workspace.page_number)
+        state = load(workspace.project_copy)
+        page = state["pages"][workspace.page_number - 1]
+        for target in ("generating", "qa_review", "accepted"):
+            page = transition_page(page, target)
+        state["pages"][workspace.page_number - 1] = page
+        save(workspace.project_copy, state)
+        return SimpleNamespace(
+            status="accepted", accepted=SimpleNamespace(candidate=object()),
+            attempts=(), failure_problems=(), correction_count=0,
+        )
+
+    def reconstruct_content(workspace, _outcome):
+        body = project / f"editable-body-{workspace.page_number}.pptx"
+        _editable_body(body, workspace.page_number)
+        return finalize_reconstructed_page(
+            workspace.project_copy,
+            page_number=workspace.page_number,
+            reconstructed_body=body,
+        )
+
+    def render_native(root: Path, page_number: int):
+        native_pages.append(page_number)
+        return render_special_page(root, page_number)
+
+    assembled_outcomes = []
+    report = run_pages(
+        project,
+        list(range(1, len(result["confirmed_pages"]) + 1)),
+        dependencies=PipelineDependencies(
+            open_workspace=open_workspace,
+            evidence_recorder=lambda _workspace: object(),
+            candidate_loop=accept_content,
+            reconstruct_page=reconstruct_content,
+            native_page_renderer=render_native,
+            assemble_project=lambda _root, outcomes: assembled_outcomes.append(outcomes),
+        ),
+        configuration=PipelineConfiguration(
+            page_workers=1, initial_page_concurrency=1, maximum_page_concurrency=1,
+        ),
+    )
+
+    assert report.failed_pages == {}
+    assert native_pages == [1, 2, 3, 6]
+    assert content_pages == [4, 5]
+    assert set(assembled_outcomes[0]) == set(range(1, len(result["confirmed_pages"]) + 1))
+    assemble_v6_deck(project)
+    composition = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
+    assembly = json.loads((project / "08_final/assembly.json").read_text(encoding="utf-8"))
+    deck = Presentation(project / "08_final/deck.pptx")
+    assert all(page["state"] == "page_complete" for page in load(project)["pages"])
+    assert len(deck.slides) == composition["page_count"] == assembly["page_count"]
+    assert assembly["page_order"] == list(range(1, composition["page_count"] + 1))
+    expected_number_visibility = {
+        "cover": False, "toc": True, "section": True,
+        "content": True, "appendix": True, "closing": False,
+    }
+    for slide, page, expected_role in zip(deck.slides, composition["pages"], expected_roles):
+        assert page["page_role"] == expected_role
+        names = {shape.name for shape in slide.shapes}
+        has_number = "special-page-number" in names or "fixed-frame-page-number" in names
+        assert has_number is expected_number_visibility[expected_role]
+
+
+def test_confirmation_rejects_reorder_delete_and_preserves_word_authority(tmp_path: Path) -> None:
+    word = tmp_path / "three-content-pages.docx"
+    document = Document()
+    image_sha256 = {}
+    for source_position, source_id in enumerate((10, 30, 50), start=1):
+        image = tmp_path / f"source-{source_position}.png"
+        Image.new("RGB", (40, 20), (source_position * 60, 20, 120)).save(image)
+        image_sha256[source_position] = hashlib.sha256(image.read_bytes()).hexdigest()
+        document.add_paragraph(f"第 {source_id} 页")
+        document.add_paragraph("PPT页型：正文")
+        document.add_paragraph(f"标题-{source_position}")
+        document.add_paragraph(f"BODY-{source_position}")
+        document.add_picture(str(image))
+    document.save(word)
+    logo = tmp_path / "logo.svg"
+    logo.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><rect width="100" height="20"/></svg>',
+        encoding="utf-8",
+    )
+    project = tmp_path / "reordered-project"
+    initialize_v6_project(word, logo, project)
+    server = _load_server()
+    client = server.create_app(project).test_client()
+    recommendations = client.get("/api/recommendations").get_json()
+    template = next(
+        item for item in recommendations["templates"]
+        if item["id"] == recommendations["recommended_template_id"]
+    )
+    proposed = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))["pages"]
+    confirmed_pages = []
+    for output_number, original_index in enumerate((2, 0), start=1):
+        page = {key: value for key, value in proposed[original_index].items() if key != "source_preview"}
+        page["output_page_number"] = output_number
+        confirmed_pages.append(page)
+    payload = {
+        "submission_id": "reorder-delete-e2e-0001", "revision": 0,
+        **template["defaults"], "confirmed_pages": confirmed_pages,
+    }
+
+    response = client.post("/api/confirm", json=payload)
+    assert response.status_code == 400, response.get_json()
+    source = json.loads((project / "02_v6/paginated_word_source.json").read_text(encoding="utf-8"))
+
+    assert [page["page_number"] for page in source["pages"]] == [1, 2, 3]
+    assert [page["source_page_id"] for page in source["pages"]] == [10, 30, 50]
+    assert [page["source_asset_page_number"] for page in source["pages"]] == [1, 2, 3]
 
 
 def test_adaptive_e2e_tracks_all_public_consulting_director_patterns() -> None:
@@ -48,6 +272,63 @@ def test_adaptive_e2e_tracks_all_public_consulting_director_patterns() -> None:
         "four-row-investment-matrix",
     ]
     assert all(case["privacy_class"] == "public-synthetic" for case in fixture["cases"])
+
+
+@pytest.mark.parametrize(
+    ("expected_template_id", "signal_text"),
+    [
+        ("company-business-introduction", "公司介绍、业务介绍、核心能力与合作价值。"),
+        ("investment-committee", "提交投委会审议，重点说明估值、投资回报与退出。"),
+        ("project-initiation", "申请项目立项，说明初步尽调、可行性和工作计划。"),
+        ("corporate-planning", "公司三年规划围绕战略目标、重点任务与实施路径。"),
+        ("investment-project-bp", "投资项目 BP 说明融资需求、商业模式与资金用途。"),
+    ],
+)
+def test_director_template_confirmation_preserves_word_and_automatic_pages(
+    tmp_path: Path, expected_template_id: str, signal_text: str,
+) -> None:
+    word = tmp_path / f"{expected_template_id}.docx"
+    document = Document()
+    document.add_paragraph("第 1 页")
+    document.add_paragraph("项目标题")
+    document.add_paragraph(signal_text)
+    document.save(word)
+    logo = tmp_path / "logo.svg"
+    logo.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><rect width="100" height="20"/></svg>',
+        encoding="utf-8",
+    )
+    project = tmp_path / "project"
+    initialize_v6_project(word, logo, project)
+    source_before = json.loads((project / "02_v6/page_sources/page_001.json").read_text(encoding="utf-8"))
+    composition_before = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
+    client = _load_server().create_app(project).test_client()
+    recommendations = client.get("/api/recommendations").get_json()
+    assert recommendations["recommended_template_id"] == expected_template_id
+    template = next(item for item in recommendations["templates"] if item["id"] == expected_template_id)
+    payload = {
+        "submission_id": f"director-template-{expected_template_id}",
+        "revision": 0,
+        **template["defaults"],
+        "selected_director_template_id": expected_template_id,
+        "director_taskbook": template["director_taskbook"],
+    }
+
+    response = client.post("/api/confirm", json=payload)
+    assert response.status_code == 200, response.get_json()
+    result = json.loads((project / "confirm_ui/result.json").read_text(encoding="utf-8"))
+    state = load(project)
+    source_after = json.loads((project / "02_v6/page_sources/page_001.json").read_text(encoding="utf-8"))
+    composition_after = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
+    taskbook_prompt = confirmed_taskbook_prompt(project)
+
+    assert state["director_confirmation"] == result["director_confirmation"]
+    assert result["director_confirmation"]["taskbook"] == template["director_taskbook"]
+    assert source_after["word_original"] == source_before["word_original"]
+    assert composition_after["pages"] == composition_before["pages"]
+    assert all(value in taskbook_prompt for value in template["director_taskbook"].values())
+    for forbidden in (expected_template_id, "template_version", "taskbook_digest", '"defaults"'):
+        assert forbidden not in taskbook_prompt
 
 
 def _load_server():

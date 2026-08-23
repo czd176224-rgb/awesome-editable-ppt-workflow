@@ -225,10 +225,18 @@ def test_materials_must_pass_authoritative_page_material_schema():
     ("primary_color", "blue"), ("title_size_pt", 0), ("body_size_pt", "18"),
     ("regional_characteristics", None), ("visual_description", 7),
 ])
-def test_visual_contract_has_exact_ten_typed_and_ranged_fields(field, value):
+def test_visual_contract_has_typed_and_ranged_fields(field, value):
     m = _materials(); m["visual_contract"][field] = value
     with pytest.raises(ValueError):
         _module().validate_page_image_prompt(m, _result(m))
+
+
+def test_visual_contract_accepts_new_eight_field_confirmation():
+    m = _materials()
+    m["visual_contract"].pop("regional_characteristics")
+    m["visual_contract"].pop("visual_description")
+
+    _module().validate_page_image_prompt(m, _result(m))
 
 
 def test_visual_contract_cannot_add_jointly_forged_field():

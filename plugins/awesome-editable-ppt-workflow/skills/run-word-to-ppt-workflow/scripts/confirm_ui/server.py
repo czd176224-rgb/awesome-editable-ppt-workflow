@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Serve the embedded three-step visual-contract confirmation session."""
+"""Serve the embedded visual-and-composition confirmation session."""
 
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import logging
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -42,7 +44,14 @@ from fixed_region_contract import (  # noqa: E402
     GEOMETRY_TOLERANCE_RATIO,
     SLIDE_SIZE_CM,
 )
-from workflow_v6_state import load as load_v6_state, mutation_lock  # noqa: E402
+from workflow_v6_composition import freeze_composition, validate_composition  # noqa: E402
+from workflow_v6_contract import validate_project as validate_v6_project  # noqa: E402
+from workflow_v6_state import (  # noqa: E402
+    load as load_v6_state,
+    mutation_lock,
+)
+from director_taskbook import taskbook_digest, validate_taskbook  # noqa: E402
+from director_templates import public_templates, taskbook_for_template  # noqa: E402
 
 
 LOGGER = logging.getLogger("word_to_editable_ppt.confirm_ui")
@@ -60,6 +69,15 @@ NEW_PROJECT_REQUIRED = (
 )
 _START_THREAD_LOCK = threading.Lock()
 _LOCK_MUTATION_THREAD_LOCK = threading.RLock()
+_TRANSACTION_DIR = Path("02_v6") / ".confirm_composition_transaction"
+_TRANSACTION_PREPARING_DIR = Path("02_v6") / ".confirm_composition_transaction.preparing"
+_PAGE_AUTHORITY_DIRECTORIES = (
+    "page_sources",
+    "effective_pages",
+    "page_materials",
+    "reference_materials",
+)
+_REPARSE_POINT = 0x400
 
 VISUAL_FIELDS = (
     "primary_color",
@@ -70,63 +88,16 @@ VISUAL_FIELDS = (
     "title_size_pt",
     "body_size_pt",
     "caption_size_pt",
-    "regional_characteristics",
-    "visual_description",
 )
 CONFIRMATION_FIELDS = ("submission_id", "revision", *VISUAL_FIELDS)
+DIRECTOR_SUBMISSION_FIELDS = ("selected_director_template_id", "director_taskbook")
 STYLE_SCHEMA_PATH = SCRIPT_DIR.parents[1] / "schemas" / "style_confirmation.schema.json"
-TEMPLATE_DEFAULTS = (
+TEMPLATE_DEFAULTS = tuple(
     {
-        "id": "policy-project",
-        "name": "政策与项目简报",
-        "description": "正式、清晰、适合项目进展和政策汇报。",
-        "defaults": {
-            "primary_color": "#17365D",
-            "secondary_color": "#C7352B",
-            "background_color": "#FFFFFF",
-            "cjk_font": "Microsoft YaHei",
-            "latin_font": "Arial",
-            "title_size_pt": 28,
-            "body_size_pt": 12,
-            "caption_size_pt": 9,
-            "regional_characteristics": "",
-            "visual_description": "Formal editorial presentation with restrained visual evidence.",
-        },
-    },
-    {
-        "id": "brand-narrative",
-        "name": "品牌叙事商务",
-        "description": "鲜明标题、摄影感和更强的视觉节奏。",
-        "defaults": {
-            "primary_color": "#161616",
-            "secondary_color": "#CD202A",
-            "background_color": "#F7F7F7",
-            "cjk_font": "Source Han Sans SC",
-            "latin_font": "Arial",
-            "title_size_pt": 34,
-            "body_size_pt": 15,
-            "caption_size_pt": 10,
-            "regional_characteristics": "",
-            "visual_description": "Bold editorial brand narrative with high-impact photography.",
-        },
-    },
-    {
-        "id": "evidence-investment",
-        "name": "技术证据投资 BP",
-        "description": "突出数据、研发证据和投资判断。",
-        "defaults": {
-            "primary_color": "#000000",
-            "secondary_color": "#FF2C00",
-            "background_color": "#FFFFFF",
-            "cjk_font": "Microsoft YaHei",
-            "latin_font": "Arial",
-            "title_size_pt": 30,
-            "body_size_pt": 14,
-            "caption_size_pt": 10,
-            "regional_characteristics": "",
-            "visual_description": "Evidence-led technical presentation with precise data hierarchy.",
-        },
-    },
+        **template,
+        "director_taskbook": taskbook_for_template(template["id"]),
+    }
+    for template in public_templates()
 )
 
 STAGE1_EDITABLE = (
@@ -302,6 +273,170 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
             os.close(descriptor)
 
 
+def _json_bytes(data: dict[str, Any]) -> bytes:
+    return (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+
+def _is_reparse(path: Path) -> bool:
+    status = path.lstat()
+    return path.is_symlink() or bool(
+        getattr(status, "st_file_attributes", 0) & _REPARSE_POINT
+    )
+
+
+def _literal_project_directory(
+    project: Path, relative: Path, *, required: bool
+) -> Path | None:
+    root = Path(project).resolve(strict=True)
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if not os.path.lexists(current):
+            if required:
+                raise ValueError(f"required literal project directory is missing: {relative}")
+            return None
+        if _is_reparse(current) or not current.is_dir() or current.resolve(strict=True) != current.absolute():
+            raise ValueError(f"page authority must use a literal project directory, not a reparse point: {relative}")
+    return current
+
+
+def _literal_existing_file(path: Path) -> Path:
+    if not os.path.lexists(path) or _is_reparse(path) or not path.is_file():
+        raise ValueError(f"transaction target must be a literal regular file: {path.name}")
+    if path.resolve(strict=True) != path.absolute() or path.lstat().st_nlink != 1:
+        raise ValueError(f"transaction target must be an unaliased project file: {path.name}")
+    return path
+
+
+def _transaction_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _transaction_replace(source: Path, target: Path) -> None:
+    os.replace(source, target)
+
+
+def _transaction_directory(project: Path, *, required: bool) -> Path | None:
+    directory = _literal_project_directory(project, _TRANSACTION_DIR, required=required)
+    if directory is not None and directory.resolve(strict=True) != directory.absolute():
+        raise ValueError("confirmation transaction directory must be project-local")
+    return directory
+
+
+def _preparing_transaction_directory(project: Path, *, required: bool) -> Path | None:
+    directory = _literal_project_directory(
+        project, _TRANSACTION_PREPARING_DIR, required=required
+    )
+    if directory is not None and directory.resolve(strict=True) != directory.absolute():
+        raise ValueError("confirmation preparing directory must be project-local")
+    return directory
+
+
+def _remove_transaction(project: Path) -> None:
+    directory = _transaction_directory(project, required=False)
+    if directory is not None:
+        shutil.rmtree(directory)
+
+
+def _remove_preparing_transaction(project: Path) -> None:
+    directory = _preparing_transaction_directory(project, required=False)
+    if directory is not None:
+        shutil.rmtree(directory)
+
+
+def _transaction_target(project: Path, relative: str) -> Path:
+    allowed = {
+        "workflow_v6.json",
+        "02_v6/page_composition.json",
+        "02_v6/paginated_word_source.json",
+        "confirm_ui/result.json",
+    }
+    match = re.fullmatch(
+        r"02_v6/(page_sources|effective_pages|page_materials|reference_materials)/page_([0-9]{3})\.json",
+        relative,
+    )
+    if relative not in allowed and match is None:
+        raise ValueError("confirmation recovery manifest contains an unauthorized target")
+    if match is not None:
+        _literal_project_directory(
+            project, Path("02_v6") / match.group(1), required=True
+        )
+    elif relative == "02_v6/page_composition.json":
+        _literal_project_directory(project, Path("02_v6"), required=True)
+    elif relative == "confirm_ui/result.json":
+        _literal_project_directory(project, Path("confirm_ui"), required=True)
+    path = Path(project).resolve(strict=True) / Path(relative)
+    if os.path.lexists(path):
+        _literal_existing_file(path)
+    return path
+
+
+def _read_transaction_manifest(project: Path) -> dict[str, Any]:
+    directory = _transaction_directory(project, required=True)
+    assert directory is not None
+    manifest = _read_json(_literal_existing_file(directory / "manifest.json"))
+    if set(manifest) != {"version", "phase", "targets"} or manifest["version"] != 1:
+        raise ValueError("confirmation recovery manifest is invalid")
+    if manifest["phase"] not in {"preparing", "prepared", "committing", "committed"}:
+        raise ValueError("confirmation recovery phase is invalid")
+    if not isinstance(manifest["targets"], list):
+        raise ValueError("confirmation recovery target list is invalid")
+    for item in manifest["targets"]:
+        if not isinstance(item, dict) or set(item) != {"relative", "original", "staged"}:
+            raise ValueError("confirmation recovery target is invalid")
+        _transaction_target(project, item["relative"])
+        for field in ("original", "staged"):
+            value = item[field]
+            if value is not None and not re.fullmatch(rf"{field}/[0-9]{{4}}\.bin", value):
+                raise ValueError("confirmation recovery payload path is invalid")
+    return manifest
+
+
+def _restore_transaction(project: Path, manifest: dict[str, Any]) -> None:
+    directory = _transaction_directory(project, required=True)
+    assert directory is not None
+    for item in manifest["targets"]:
+        target = _transaction_target(project, item["relative"])
+        original = item["original"]
+        if original is None:
+            if os.path.lexists(target):
+                _literal_existing_file(target).unlink()
+            continue
+        backup = _literal_existing_file(directory / Path(original))
+        _transaction_write_bytes(target, backup.read_bytes())
+    _remove_transaction(project)
+
+
+def _recover_composition_transaction(project: Path) -> bool:
+    directory = _transaction_directory(project, required=False)
+    preparing = _preparing_transaction_directory(project, required=False)
+    if directory is None:
+        if preparing is not None:
+            _remove_preparing_transaction(project)
+        return False
+    if preparing is not None:
+        raise ValueError("ambiguous confirmation transaction directories")
+    manifest = _read_transaction_manifest(project)
+    if manifest["phase"] == "preparing":
+        _remove_transaction(project)
+        return False
+    if manifest["phase"] == "committed":
+        _remove_transaction(project)
+        return True
+    else:
+        _restore_transaction(project, manifest)
+        return False
+
+
 def _clean(value: Any) -> Any:
     """Recursively remove capabilities outside this plugin's workflow."""
     if isinstance(value, dict):
@@ -323,6 +458,28 @@ def _contract_error(payload: dict[str, Any]) -> str | None:
     return errors[0].message if errors else None
 
 
+def _composition_view(project: Path, composition: dict[str, Any]) -> dict[str, Any]:
+    validate_composition(composition)
+    source_directory = _literal_project_directory(
+        project, Path("02_v6") / "page_sources", required=True
+    )
+    assert source_directory is not None
+    pages = []
+    for page in composition["pages"]:
+        number = page["output_page_number"]
+        source = _read_json(_literal_existing_file(
+            source_directory / f"page_{number:03d}.json"
+        ))
+        if source.get("page_number") != number or not isinstance(source.get("word_original"), str):
+            raise ValueError("composition source preview is not backed by a valid page source")
+        pages.append({**copy.deepcopy(page), "source_preview": source["word_original"]})
+    return {
+        "page_count": composition["page_count"],
+        "warnings": copy.deepcopy(composition["warnings"]),
+        "pages": pages,
+    }
+
+
 def _template_recommendations(project: Path) -> dict[str, Any]:
     recommendation_path = project / CONFIRM_DIR / RECOMMENDATIONS
     source = _read_json(recommendation_path) if recommendation_path.is_file() else {}
@@ -339,15 +496,63 @@ def _template_recommendations(project: Path) -> dict[str, Any]:
         existing = _read_json(result_path)
         if type(existing.get("revision")) is int:
             revision = existing["revision"]
-    return {
+    result = {
         "step_count": 3,
         "recommended_template_id": recommended,
         "revision": revision,
         "templates": _clean(list(TEMPLATE_DEFAULTS)),
+        "recommendation_reason": _clean(source.get(
+            "recommendation_reason", f"默认推荐“{TEMPLATE_DEFAULTS[0]['name']}”。"
+        )),
+        "recommendation_confidence": _clean(source.get("recommendation_confidence", "low")),
+        "director_taskbook": _clean(source.get(
+            "director_taskbook", taskbook_for_template(recommended)
+        )),
+    }
+    return result
+
+
+def _director_confirmation(project: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    source_path = project / CONFIRM_DIR / RECOMMENDATIONS
+    source = _read_json(source_path) if source_path.is_file() else {}
+    template_id = payload.get("selected_director_template_id", source.get("recommended_template_id"))
+    known = {template["id"] for template in TEMPLATE_DEFAULTS}
+    if template_id not in known:
+        template_id = TEMPLATE_DEFAULTS[0]["id"]
+    taskbook = payload.get("director_taskbook", source.get("director_taskbook"))
+    if taskbook is None:
+        taskbook = taskbook_for_template(template_id)
+    taskbook = validate_taskbook(taskbook)
+    return {
+        "template_id": template_id,
+        "template_version": "1.0",
+        "taskbook": taskbook,
+        "taskbook_digest": taskbook_digest(taskbook),
     }
 
 
 def _save_visual_contract(project: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if (project / "workflow_v6.json").is_file():
+        legacy = {*CONFIRMATION_FIELDS, "confirmed_pages"}
+        current = {*CONFIRMATION_FIELDS, *DIRECTOR_SUBMISSION_FIELDS}
+        if set(payload) not in (legacy, current):
+            raise ValueError("confirmation must contain visual fields and approved director fields only")
+        if set(payload) == legacy:
+            proposed = _read_json(project / "02_v6" / "page_composition.json")
+            if payload["confirmed_pages"] != proposed["pages"]:
+                raise ValueError("page composition is automatic and cannot be changed")
+            payload = {field: payload[field] for field in CONFIRMATION_FIELDS}
+        visual_payload = {field: payload[field] for field in CONFIRMATION_FIELDS}
+        if type(visual_payload["revision"]) is not int or visual_payload["revision"] < 0:
+            raise ValueError("revision must be a non-negative integer")
+        error = _contract_error({**visual_payload, "revision": visual_payload["revision"] + 1})
+        if error:
+            raise ValueError(error)
+        return _v6_final_submission(
+            project,
+            {field: _clean(payload[field]) for field in VISUAL_FIELDS},
+            payload,
+        )
     error = _contract_error(payload)
     if error:
         raise ValueError(error)
@@ -503,13 +708,6 @@ def _v6_project_pages(project: Path) -> list[dict[str, Any]]:
     return pages
 
 
-_V6_PAGE_EDITABLE_FIELDS = (
-    "page_number", "effective_body", "attachment_extracts", "chart_facts",
-    "image_requirements", "degradations", "reference_images", "reference_decisions",
-)
-_V6_PROMPT_LIMIT = 32000
-
-
 @contextmanager
 def _v6_confirmation_lock(project: Path, timeout: float = 15.0):
     """Serialize the one authoritative UI commit without touching V6 source state."""
@@ -517,130 +715,331 @@ def _v6_confirmation_lock(project: Path, timeout: float = 15.0):
         yield
 
 
-def _estimate_v6_final_prompt_chars(global_contract: dict[str, Any], page: dict[str, Any]) -> int:
-    """Compatibility boundary for the shared final prompt compiler estimate."""
-    return estimate_frozen_page_chars(global_contract, page)
+def _composition_trace(page: dict[str, Any]) -> tuple[Any, ...]:
+    page_id = page.get("composition_page_id")
+    if isinstance(page_id, str) and page_id:
+        return ("composition_page_id", page_id)
+    block_ids = page.get("material_source_block_ids")
+    return (
+        page.get("source_page_id"),
+        page.get("source_page_number"),
+        tuple(block_ids) if isinstance(block_ids, list) else (),
+    )
 
 
-def _v6_final_submission(project: Path, global_contract: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    """Validate and seal all V6 page material in the same final UI revision."""
+_IMMUTABLE_COMPOSITION_FIELDS = (
+    "source_page_id",
+    "source_page_number",
+    "material_source_block_ids",
+    "composition_page_id",
+)
+_EDITABLE_COMPOSITION_FIELDS = (
+    "output_page_number",
+    "page_role",
+    "chapter_title",
+    "fixed_page_title",
+    "visible_page_number",
+)
+
+
+def _freeze_confirmed_composition(
+    proposed: dict[str, Any], submitted_pages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    submitted = freeze_composition(proposed, submitted_pages)
+    proposed_by_id = {
+        page["composition_page_id"]: page
+        for page in proposed["pages"] if "composition_page_id" in page
+    }
+    proposed_by_trace = {
+        _composition_trace(page): page
+        for page in proposed["pages"] if "composition_page_id" not in page
+    }
+    if len(proposed_by_id) + len(proposed_by_trace) != len(proposed["pages"]):
+        raise ValueError("proposed composition pages require unique traceability")
+    trusted_pages = []
+    seen = set()
+    for page in submitted["pages"]:
+        page_id = page.get("composition_page_id")
+        if page_id is not None:
+            original = proposed_by_id.get(page_id)
+            identity = ("composition_page_id", page_id)
+        else:
+            identity = _composition_trace(page)
+            original = proposed_by_trace.get(identity)
+        if original is None or identity in seen:
+            raise ValueError("confirmed composition page traceability is invalid")
+        seen.add(identity)
+        if any(page.get(field) != original.get(field) for field in _IMMUTABLE_COMPOSITION_FIELDS):
+            raise ValueError("confirmed composition page immutable trace was modified")
+        role_changed = page["page_role"] != original["page_role"]
+        accepted_role_sources = (
+            {"explicit"} if role_changed else {original["role_source"], "explicit"}
+        )
+        if page["role_source"] not in accepted_role_sources:
+            raise ValueError("confirmed composition role provenance is invalid")
+        trusted = copy.deepcopy(original)
+        for field in _EDITABLE_COMPOSITION_FIELDS:
+            trusted[field] = copy.deepcopy(page[field])
+        trusted["role_source"] = page["role_source"]
+        trusted_pages.append(trusted)
+    return freeze_composition(proposed, trusted_pages)
+
+
+def _validated_paginated_word_source(
+    project: Path, state: dict[str, Any], proposed_pages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source_path = _literal_existing_file(
+        project / "02_v6" / "paginated_word_source.json"
+    )
+    source = _read_json(source_path)
+    if not isinstance(source, dict):
+        raise ValueError("pre-confirmation paginated Word source is invalid")
+    pages = source.get("pages")
+    expected_count = len(proposed_pages)
+    if (
+        type(source.get("page_count")) is not int
+        or source["page_count"] != expected_count
+        or not isinstance(pages, list)
+        or len(pages) != expected_count
+        or len(state.get("pages", [])) != expected_count
+    ):
+        raise ValueError("pre-confirmation paginated Word source page count is incorrect")
+    if any(
+        not isinstance(page, dict)
+        or type(page.get("page_number")) is not int
+        or page["page_number"] != number
+        for number, page in enumerate(pages, start=1)
+    ):
+        raise ValueError("pre-confirmation paginated Word source pages must be continuous")
+    for source_page, proposed_page in zip(pages, proposed_pages):
+        for source_field, proposed_field in (
+            ("source_page_id", "source_page_id"),
+            ("source_asset_page_number", "source_page_number"),
+        ):
+            source_value = source_page.get(source_field)
+            proposed_value = proposed_page.get(proposed_field)
+            if type(source_value) is not type(proposed_value) or source_value != proposed_value:
+                raise ValueError("pre-confirmation paginated Word source identity is incorrect")
+    return source
+
+
+def _composition_transaction_targets(
+    project: Path,
+    state: dict[str, Any],
+    proposed_pages: list[dict[str, Any]],
+    frozen: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, bytes | None]:
+    if state.get("page_materials_status") != "pre_confirmation":
+        raise ValueError("page composition can only be frozen before page materials are prepared")
+    original_numbers = {
+        _composition_trace(page): page["output_page_number"] for page in proposed_pages
+    }
+    frozen_pages = frozen["pages"]
+    selected_numbers = [original_numbers[_composition_trace(page)] for page in frozen_pages]
+
+    targets: dict[str, bytes | None] = {}
+    source_manifest = _validated_paginated_word_source(project, state, proposed_pages)
+    source_pages = source_manifest["pages"]
+    migrated_source_pages = []
+    for new_number, old_number in enumerate(selected_numbers, start=1):
+        source_page = copy.deepcopy(source_pages[old_number - 1])
+        source_page["page_number"] = new_number
+        migrated_source_pages.append(source_page)
+    migrated_source = copy.deepcopy(source_manifest)
+    migrated_source["page_count"] = len(migrated_source_pages)
+    migrated_source["pages"] = migrated_source_pages
+    targets["02_v6/paginated_word_source.json"] = _json_bytes(migrated_source)
+    for directory_name in _PAGE_AUTHORITY_DIRECTORIES:
+        directory = _literal_project_directory(
+            project, Path("02_v6") / directory_name, required=False
+        )
+        if directory is None:
+            continue
+        original_values: dict[int, dict[str, Any]] = {}
+        for old_number in range(1, len(proposed_pages) + 1):
+            source = directory / f"page_{old_number:03d}.json"
+            if not os.path.lexists(source):
+                if directory_name != "reference_materials":
+                    raise ValueError(f"pre-confirmation {directory_name} page is missing")
+                continue
+            original_values[old_number] = _read_json(_literal_existing_file(source))
+        rewritten: dict[int, bytes] = {}
+        for new_number, old_number in enumerate(selected_numbers, start=1):
+            if old_number not in original_values:
+                if directory_name == "reference_materials":
+                    continue
+                raise ValueError(f"pre-confirmation {directory_name} page is missing")
+            value = copy.deepcopy(original_values[old_number])
+            value["page_number"] = new_number
+            if "fixed_page_title" in value:
+                value["fixed_page_title"] = frozen_pages[new_number - 1]["fixed_page_title"]
+            rewritten[new_number] = _json_bytes(value)
+        for number in range(1, len(proposed_pages) + 1):
+            relative = f"02_v6/{directory_name}/page_{number:03d}.json"
+            targets[relative] = rewritten.get(number)
+
+    next_state_pages = []
+    for new_number, (old_number, composition_page) in enumerate(
+        zip(selected_numbers, frozen_pages), start=1
+    ):
+        page = dict(state["pages"][old_number - 1])
+        page["page_number"] = new_number
+        page["title"] = composition_page["fixed_page_title"]
+        next_state_pages.append(page)
+    next_state = copy.deepcopy(state)
+    next_state["pages"] = next_state_pages
+    next_state["director_confirmation"] = copy.deepcopy(result["director_confirmation"])
+    validate_v6_project(next_state)
+    targets.update({
+        "workflow_v6.json": _json_bytes(next_state),
+        "02_v6/page_composition.json": _json_bytes(frozen),
+        "confirm_ui/result.json": _json_bytes(result),
+    })
+    return targets
+
+
+def _prepare_composition_transaction(
+    project: Path, targets: dict[str, bytes | None]
+) -> dict[str, Any]:
+    _literal_project_directory(project, Path("02_v6"), required=True)
+    if _transaction_directory(project, required=False) is not None:
+        raise ValueError("unrecovered confirmation transaction already exists")
+    if _preparing_transaction_directory(project, required=False) is not None:
+        raise ValueError("unrecovered confirmation preparation already exists")
+    project_root = Path(project).resolve(strict=True)
+    preparing = project_root / _TRANSACTION_PREPARING_DIR
+    directory = project_root / _TRANSACTION_DIR
+    preparing.mkdir()
+    manifest = {"version": 1, "phase": "preparing", "targets": []}
+    records = []
+    published = False
+    try:
+        _transaction_write_bytes(preparing / "manifest.json", _json_bytes(manifest))
+        validated_preparing = _preparing_transaction_directory(project, required=True)
+        assert validated_preparing is not None
+        if _read_json(
+            _literal_existing_file(validated_preparing / "manifest.json")
+        ) != manifest:
+            raise ValueError("confirmation preparing manifest validation failed")
+        os.replace(validated_preparing, directory)
+        directory = _transaction_directory(project, required=True)
+        assert directory is not None
+        published = True
+        ordered_targets = sorted(
+            targets, key=lambda relative: (relative == "confirm_ui/result.json", relative)
+        )
+        for index, relative in enumerate(ordered_targets, start=1):
+            target = _transaction_target(project, relative)
+            original_name = None
+            if os.path.lexists(target):
+                original_name = f"original/{index:04d}.bin"
+                _transaction_write_bytes(
+                    directory / original_name,
+                    _literal_existing_file(target).read_bytes(),
+                )
+            staged_name = None
+            if targets[relative] is not None:
+                staged_name = f"staged/{index:04d}.bin"
+                _transaction_write_bytes(directory / staged_name, targets[relative])
+            records.append({
+                "relative": relative,
+                "original": original_name,
+                "staged": staged_name,
+            })
+        manifest = {"version": 1, "phase": "prepared", "targets": records}
+        _transaction_write_bytes(directory / "manifest.json", _json_bytes(manifest))
+        return manifest
+    except Exception:
+        if published:
+            _remove_transaction(project)
+        else:
+            _remove_preparing_transaction(project)
+        raise
+
+
+def _commit_composition_transaction(
+    project: Path, manifest: dict[str, Any]
+) -> None:
+    directory = _transaction_directory(project, required=True)
+    assert directory is not None
+    manifest["phase"] = "committing"
+    _transaction_write_bytes(directory / "manifest.json", _json_bytes(manifest))
+    try:
+        for item in manifest["targets"]:
+            target = _transaction_target(project, item["relative"])
+            if item["staged"] is None:
+                if os.path.lexists(target):
+                    _literal_existing_file(target).unlink()
+                continue
+            staged = _literal_existing_file(directory / Path(item["staged"]))
+            _transaction_replace(staged, target)
+        manifest["phase"] = "committed"
+        _transaction_write_bytes(directory / "manifest.json", _json_bytes(manifest))
+    except Exception:
+        try:
+            _restore_transaction(project, manifest)
+        except Exception as recovery_error:
+            raise RuntimeError(
+                "confirmation commit failed and durable recovery remains pending"
+            ) from recovery_error
+        raise
+    _remove_transaction(project)
+
+
+def _v6_final_submission(
+    project: Path, global_contract: dict[str, Any], payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Freeze the visual contract and complete page composition in one revision."""
     with _v6_confirmation_lock(project):
+        recovered_commit = _recover_composition_transaction(project)
         result_path = project / CONFIRM_DIR / RESULT
         if result_path.is_file():
-            raise ValueError("V6 final confirmation may be submitted exactly once")
-        current = {}
-        current_revision = current.get("revision", 0)
-        if type(current_revision) is not int or current_revision < 0:
-            raise ValueError("authoritative confirmation revision is invalid")
-        supplied_revision = payload.get("revision")
-        if type(supplied_revision) is not int or supplied_revision != current_revision:
-            raise ValueError("stale confirmation revision; reload the final page before submitting")
-        prior_frozen_pages = {
-            item.get("page_number"): item for item in current.get("confirmed_pages", [])
-            if isinstance(item, dict) and type(item.get("page_number")) is int
-        }
+            existing = _read_json(_literal_existing_file(result_path))
+            if recovered_commit and (
+                existing.get("submission_id") == payload.get("submission_id")
+                and existing.get("global_visual_contract") == global_contract
+                and existing.get("confirmed_pages") == payload.get("confirmed_pages")
+            ):
+                return existing
+            raise RuntimeError("V6 final confirmation is sealed and may be submitted exactly once")
         state = load_v6_state(project)
+        if (
+            state.get("confirmed_ui_revision") is not None
+            or state.get("confirmed_ui_digest") is not None
+            or state.get("style_confirmation", {}).get("status") == "confirmed"
+        ):
+            raise RuntimeError("visual contract and composition are sealed and cannot be replaced")
+        if payload.get("revision") != 0:
+            raise RuntimeError("stale confirmation revision")
+
+        proposed = _read_json(project / "02_v6" / "page_composition.json")
+        validate_composition(proposed)
         pages = payload.get("confirmed_pages")
-        if not isinstance(pages, list) or len(pages) != len(state["pages"]):
-            raise ValueError("confirmed_pages must contain one complete record for every page")
-        numbers = [item.get("page_number") for item in pages if isinstance(item, dict)]
-        if numbers != list(range(1, len(state["pages"]) + 1)):
-            raise ValueError("confirmed_pages must preserve the locked V6 page order")
-
-        revision = current_revision + 1
-        frozen_pages: list[dict[str, Any]] = []
-        for submitted in pages:
-            page_number = submitted["page_number"]
-            if set(submitted) != set(_V6_PAGE_EDITABLE_FIELDS):
-                raise ValueError("confirmed page records may contain only editable Image2 material fields")
-            material_path = project / "02_v6" / "page_materials" / f"page_{page_number:03d}.json"
-            material = _read_json(material_path)
-            updated = dict(material)
-            for field in _V6_PAGE_EDITABLE_FIELDS:
-                if field not in {"page_number", "reference_decisions"}:
-                    updated[field] = _clean(submitted[field])
-            base_references = {
-            item.get("reference_id"): dict(item) for item in material.get("reference_images", [])
-            if isinstance(item, dict) and isinstance(item.get("reference_id"), str)
-            }
-            controlled_references = []
-            reviewed_reference_ids = set()
-            fixed_reference_decisions = []
-            for reference in submitted["reference_images"]:
-                if not isinstance(reference, dict) or set(reference) != {
-                "reference_id", "purpose", "allow_crop", "allow_restyle", "status", "decision",
-                }:
-                    raise ValueError("reference controls must identify an existing safe reference")
-                original = base_references.get(reference.get("reference_id"))
-                if original is None:
-                    raise ValueError("reference controls cannot add a new local image")
-                if reference["reference_id"] in reviewed_reference_ids:
-                    raise ValueError("reference controls cannot duplicate a local image")
-                if reference["decision"] not in {"keep", "remove"}:
-                    raise ValueError("every acquired reference requires an explicit keep or remove decision")
-                if not isinstance(reference["purpose"], str) or type(reference["allow_crop"]) is not bool or type(reference["allow_restyle"]) is not bool:
-                    raise ValueError("reference purpose, crop, and restyle controls are invalid")
-                reviewed_reference_ids.add(reference["reference_id"])
-                original.update({
-                "purpose": reference["purpose"],
-                "allow_crop": reference["allow_crop"],
-                "allow_restyle": reference["allow_restyle"],
-                })
-                fixed_reference_decisions.append({
-                    "reference_id": reference["reference_id"], "decision": reference["decision"],
-                })
-                if reference["decision"] == "keep":
-                    controlled_references.append(original)
-            if reviewed_reference_ids != set(base_references):
-                raise ValueError("every acquired reference requires an explicit keep or remove decision")
-            decisions = submitted["reference_decisions"]
-            receipt_path = project / "02_v6" / "reference_materials" / f"page_{page_number:03d}.json"
-            acquisitions = _read_json(receipt_path).get("reference_acquisitions", []) if receipt_path.is_file() else []
-            prior_decisions = prior_frozen_pages.get(page_number, {}).get("reference_decisions", [])
-            prior_decision_map = {
-                item.get("request_id"): item.get("decision") for item in prior_decisions
-                if isinstance(item, dict) and item.get("decision") in {"accept", "reject"}
-            }
-            found = {item.get("request_id"): item for item in acquisitions if isinstance(item, dict) and item.get("status") == "found" and item.get("request_id") not in prior_decision_map}
-            decision_map = {}
-            for decision in decisions:
-                if not isinstance(decision, dict) or set(decision) != {"request_id", "decision"} or decision.get("decision") not in {"accept", "reject"}:
-                    raise ValueError("found reference decisions must be explicit accept or reject values")
-                request_id = decision.get("request_id")
-                if request_id in prior_decision_map:
-                    if decision.get("decision") != prior_decision_map[request_id]:
-                        raise ValueError("previously frozen reference decisions cannot be changed")
-                    continue
-                if request_id not in found or request_id in decision_map:
-                    raise ValueError("found reference decision is unknown or duplicated")
-                decision_map[request_id] = decision["decision"]
-            if set(decision_map) != set(found):
-                raise ValueError("every found reference candidate requires an explicit decision")
-            frozen_decisions = fixed_reference_decisions
-            for request_id, acquisition in found.items():
-                decision = decision_map[request_id]
-                if decision == "accept":
-                    controlled_references.append(_found_candidate_reference(project, acquisition))
-                else:
-                    updated["degradations"].append({"code": "reference_rejected", "detail": f"Reference request {request_id} was rejected by the reviewer."})
-                frozen_decisions.append({"request_id": request_id, "decision": decision})
-            updated["reference_images"] = controlled_references
-            if len(updated["reference_images"]) > 16:
-                raise ValueError("a page may not contain more than 16 reference images")
-            if _estimate_v6_final_prompt_chars(global_contract, updated) > _V6_PROMPT_LIMIT:
-                raise ValueError("final Image2 prompt estimate exceeds 32,000 characters")
-            validate_page_materials(updated, confirmed=False)
-            frozen = {field: updated[field] for field in _V6_PAGE_EDITABLE_FIELDS if field != "reference_decisions"}
-            frozen["reference_decisions"] = frozen_decisions
-            frozen_pages.append(frozen)
-
+        if pages is None:
+            frozen = freeze_composition(proposed, proposed["pages"])
+        else:
+            if not isinstance(pages, list) or not pages:
+                raise ValueError("confirmed_pages must contain at least one page")
+            if sum(page.get("page_role") == "closing" for page in pages if isinstance(page, dict)) > 1:
+                raise ValueError("composition cannot contain two closing pages")
+            frozen = _freeze_confirmed_composition(proposed, pages)
+        frozen_pages = frozen["pages"]
+        director_confirmation = _director_confirmation(project, payload)
         result = {
-            "status": "confirmed", "revision": revision,
+            "status": "confirmed",
+            "revision": 1,
+            "submission_id": payload["submission_id"],
             "confirmed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "production_profile": global_contract["production_profile"],
-            "global_visual_contract": global_contract, "confirmed_pages": frozen_pages,
+            "global_visual_contract": _clean(global_contract),
+            "director_confirmation": director_confirmation,
+            "confirmed_pages": frozen_pages,
         }
-        _write_json(result_path, result)
+        targets = _composition_transaction_targets(
+            project, state, proposed["pages"], frozen, result
+        )
+        manifest = _prepare_composition_transaction(project, targets)
+        _commit_composition_transaction(project, manifest)
         return result
 
 
@@ -958,7 +1357,12 @@ def _recommendation_view(project: Path, recommendations: dict[str, Any]) -> dict
         view["stage"] = "final"
         view["fixed_region"] = _fixed_region_view()
         if (project / "workflow_v6.json").is_file():
-            view.update({"page_requirement_summary": [], "comments_are_page_authority": True})
+            composition = _read_json(project / "02_v6" / "page_composition.json")
+            view.update({
+                "page_requirement_summary": [],
+                "comments_are_page_authority": True,
+                "composition": _composition_view(project, composition),
+            })
         else:
             summary_path = project / PAGE_REQUIREMENT_SUMMARY_PATH
             if not summary_path.is_file():
@@ -1548,9 +1952,12 @@ def _wait(project: Path, stage: str, timeout: int) -> int:
                                 raise ValueError(
                                     "V6 initial visual seal requires pre_confirmation materials state"
                                 )
+                            visual_contract = live.get("global_visual_contract", live)
                             state["style_confirmation"] = {
                                 "status": "confirmed",
-                                "contract": {field: _clean(live[field]) for field in VISUAL_FIELDS},
+                                "contract": {
+                                    field: _clean(visual_contract[field]) for field in VISUAL_FIELDS
+                                },
                             }
                             state["confirmed_ui_revision"] = revision
                             state["confirmed_ui_digest"] = digest

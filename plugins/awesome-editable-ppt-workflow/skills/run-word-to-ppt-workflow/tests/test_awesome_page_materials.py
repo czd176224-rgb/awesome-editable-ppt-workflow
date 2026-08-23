@@ -293,7 +293,11 @@ def test_schema_accepts_collected_materials(tmp_path: Path):
     from awesome_page_materials import collect_page_materials
 
     schema = json.loads((ROOT / "schemas" / "awesome_page_materials_v1.schema.json").read_text(encoding="utf-8"))
-    Draft202012Validator(schema).validate(collect_page_materials(_project(tmp_path), 1))
+    materials = collect_page_materials(_project(tmp_path), 1)
+    Draft202012Validator(schema).validate(materials)
+    materials["visual_contract"].pop("regional_characteristics")
+    materials["visual_contract"].pop("visual_description")
+    Draft202012Validator(schema).validate(materials)
 
 
 def test_cli_publishes_canonical_utf8_atomically_and_truthfully_advances_state(
@@ -680,7 +684,7 @@ def test_comment_title_equal_to_body_never_removes_body(tmp_path: Path, monkeypa
     assert collect_page_materials(project, 1)["complete_word_content"][0]["text"] == "DUPLICATE"
 
 
-def test_table_first_identified_title_has_no_source_identity_and_preserves_all_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_table_before_first_paragraph_stays_body_and_paragraph_becomes_title(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     import workflow_v6_source
     from awesome_page_materials import collect_page_materials
     from docx import Document
@@ -700,8 +704,8 @@ def test_table_first_identified_title_has_no_source_identity_and_preserves_all_b
     workflow_v6_source.initialize_v6_project(word, logo, project)
     manifest = json.loads((project / "02_v6/paginated_word_source.json").read_text(encoding="utf-8"))
     page = manifest["pages"][0]
-    assert page["fixed_page_title"] == "Strategy Plan"
-    assert page["fixed_page_title_source_block_id"] is None
+    assert page["fixed_page_title"] == "BODY MUST SURVIVE"
+    assert page["fixed_page_title_source_block_id"] == page["blocks"][1]["source_block_id"]
     state = load(project)
     visual_parent = tmp_path / "visual"
     visual_parent.mkdir()
@@ -712,8 +716,8 @@ def test_table_first_identified_title_has_no_source_identity_and_preserves_all_b
     state["page_materials_status"] = "pending"
     save(project, state)
     materials = collect_page_materials(project, 1)
-    assert [block["type"] for block in materials["complete_word_content"]] == ["table", "paragraph"]
-    assert materials["complete_word_content"][1]["text"] == "BODY MUST SURVIVE"
+    assert [block["type"] for block in materials["complete_word_content"]] == ["table"]
+    assert materials["complete_word_content"][0]["rows"] == [["Strategy Plan"]]
 
 
 def test_explicit_paragraph_title_identity_removes_only_that_block_with_duplicates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

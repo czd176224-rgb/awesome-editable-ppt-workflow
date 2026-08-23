@@ -194,6 +194,30 @@ def test_production_reconstruction_entry_rejects_literal_project_junction_before
     assert not (real_project / "05_v6" / "reconstruction_requests").exists()
 
 
+def test_pipeline_dispatch_rejects_composition_directory_junction(tmp_path: Path) -> None:
+    from workflow_v6_pipeline import PipelineConfiguration, PipelineDependencies, run_pages
+
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "outside-composition"
+    outside.mkdir()
+    (outside / "page_composition.json").write_text("{}", encoding="utf-8")
+    _junction(project / "02_v6", outside)
+    calls: list[int] = []
+
+    with pytest.raises((OSError, ValueError)):
+        run_pages(
+            project, [1],
+            dependencies=PipelineDependencies(
+                open_workspace=lambda root, page: calls.append(page),
+                evidence_recorder=lambda workspace: object(), candidate_loop=lambda workspace, **kwargs: {},
+            ),
+            configuration=PipelineConfiguration(page_workers=1, initial_page_concurrency=1, maximum_page_concurrency=1),
+        )
+
+    assert calls == []
+
+
 def test_keyring_rejects_plugin_secrets_junction_without_outside_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

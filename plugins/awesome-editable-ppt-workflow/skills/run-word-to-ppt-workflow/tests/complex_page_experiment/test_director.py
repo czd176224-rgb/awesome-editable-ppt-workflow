@@ -46,6 +46,20 @@ DIRECTOR_SCHEMA = (
     / "schemas"
     / "consulting_page_director_v2.schema.json"
 )
+TASKBOOK_VALUES = (
+    "董事会追加投资审议",
+    "黄石项目投资团队",
+    "基金投资决策委员会",
+    "已阅读项目初步尽调",
+    "决定是否追加投资及先决条件",
+    "现金流、估值、回报变化和新增风险",
+    "重复的公司基础介绍",
+)
+TASKBOOK_BOUNDARY = (
+    "This taskbook is a user-confirmed presentation constraint, not factual source material. "
+    "It may change emphasis, hierarchy, reading path, evidence framing, and takeaway selection "
+    "only; it must not add, omit, rewrite, or move Word content."
+)
 
 
 _TEST_VIEWS: dict[Path, CompletePageMaterialView] = {}
@@ -56,6 +70,7 @@ def _top_level_prompt_sections(prompt: str) -> dict[str, str]:
         "WORD BODY AND MATERIAL AUTHORITY",
         "HARD BOUNDARIES",
         "GENERAL VISUAL DIRECTOR PRINCIPLES",
+        "CONFIRMED PRESENTATION TASKBOOK",
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
         "STRUCTURED OUTPUT REQUIREMENTS",
     )
@@ -465,7 +480,8 @@ def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path
     assert "source-exact formal name from the Word body" in prompt
     assert "neutral non-trademark marker" not in prompt
     assert "3:2" not in prompt
-    assert hashlib.sha256(DIRECTOR_SCHEMA.read_bytes()).hexdigest() == (
+    schema_bytes = DIRECTOR_SCHEMA.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    assert hashlib.sha256(schema_bytes).hexdigest() == (
         "9d63ed6ea05379a3afc480eae4fedf700091d5ab92d352c69d2ade9da6ad1860"
     )
     assert artifact.selected_reference_ids == ("word-image:word-photo",)
@@ -504,6 +520,7 @@ def test_director_request_injects_one_reference_between_authority_and_materials_
         "WORD BODY AND MATERIAL AUTHORITY",
         "HARD BOUNDARIES",
         "GENERAL VISUAL DIRECTOR PRINCIPLES",
+        "CONFIRMED PRESENTATION TASKBOOK",
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
         "STRUCTURED OUTPUT REQUIREMENTS",
     ]
@@ -521,6 +538,57 @@ def test_director_request_injects_one_reference_between_authority_and_materials_
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES"
     ]
     assert call["output_schema"] == json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
+
+
+def test_director_request_uses_only_confirmed_taskbook_without_template_metadata(tmp_path: Path):
+    call, sections = _captured_director_request(tmp_path)
+    taskbook = sections["CONFIRMED PRESENTATION TASKBOOK"]
+
+    assert all(value in taskbook for value in TASKBOOK_VALUES)
+    assert TASKBOOK_BOUNDARY in taskbook
+    assert "business_proposition" in taskbook
+    assert "reading_path_and_density" in taskbook
+    assert "takeaway_statement" in taskbook
+    assert "supporting_visual_policy" in taskbook
+    prompt = str(call["prompt"])
+    for forbidden in ("investment-committee", "template_version", "taskbook_digest", '"defaults"'):
+        assert forbidden not in prompt
+
+
+def test_correction_taskbook_uses_same_boundary_without_template_metadata(tmp_path: Path):
+    workspace = _workspace(tmp_path)
+    view = _material_view(workspace)
+    director = direct_page(
+        workspace, view, timeout=60,
+        invoke=lambda *args, **kwargs: _result(_director_value(view)),
+    )
+    candidate = workspace.project_copy / "candidate-taskbook.png"
+    candidate.write_bytes(b"candidate-taskbook")
+    problem = "The takeaway is unclear."
+    value = {
+        "schema_version": "awesome-page-correction-v2",
+        "page_number": workspace.page_number,
+        "strategy": "edit_previous",
+        "problem_addressed": [problem],
+        "preserve": ["Preserve source-exact facts."],
+        "selected_reference_ids": ["word-image:word-photo"],
+        "prompt_sections": _prompt_sections(suffix=" with a clearer takeaway"),
+    }
+    calls: list[dict[str, object]] = []
+
+    def invoke(project: Path, **kwargs):
+        calls.append({"project": project, **kwargs})
+        return _result(value)
+
+    decide_correction(
+        workspace, view, director, previous_candidate=candidate,
+        problems=[problem], timeout=60, invoke=invoke,
+    )
+    prompt = str(calls[0]["prompt"])
+    assert all(value in prompt for value in TASKBOOK_VALUES)
+    assert TASKBOOK_BOUNDARY in prompt
+    for forbidden in ("investment-committee", "template_version", "taskbook_digest", '"defaults"'):
+        assert forbidden not in prompt
 
 
 def test_director_request_does_not_authorize_omitting_secondary_explanation(

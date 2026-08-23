@@ -14,24 +14,12 @@ from page_requirement_summary import (
     verify_page_requirement_summary,
 )
 from project_artifact_path import project_artifact_path
+from director_templates import public_templates, recommend_director
 
 
 CATALOG_PATH = Path(__file__).resolve().parent / "confirm_ui" / "static" / "catalogs.json"
 RECOMMENDATIONS_PATH = Path("confirm_ui") / "recommendations.json"
 CANVAS_ID = "ppt169"
-
-_SIGNAL_TERMS = {
-    "policy-project-brief": (
-        "政策", "项目", "政府", "国资", "进展", "阶段", "规划", "实施", "会议", "汇报",
-    ),
-    "brand-narrative-business": (
-        "品牌", "发布", "传播", "活动", "用户", "市场", "合作", "赛事", "故事", "体验",
-    ),
-    "evidence-investment-bp": (
-        "技术", "研发", "实验", "专利", "产品", "融资", "投资", "数据", "平台", "客户",
-    ),
-}
-
 
 def _read_json(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -82,66 +70,24 @@ def _body_signal_text(contracts: list[dict[str, Any]]) -> str:
     return "\n".join(chunks).lower()
 
 
-def _recommended_template_index(contracts: list[dict[str, Any]], templates: list[dict[str, Any]]) -> int:
-    text = _body_signal_text(contracts)
-    scores = {
-        template["id"]: sum(text.count(term.lower()) for term in _SIGNAL_TERMS[template["id"]])
-        for template in templates
-    }
-    return max(range(len(templates)), key=lambda index: (scores[templates[index]["id"]], -index))
-
-
-def _template_direction(template: dict[str, Any]) -> dict[str, Any]:
-    substyles = template.get("substyles")
-    substyle = substyles[0] if isinstance(substyles, list) and substyles else None
-    defaults = substyle["defaults"] if substyle is not None else template.get("defaults")
-    if not isinstance(defaults, dict):
-        raise ValueError(f"template {template.get('id')} must provide visual defaults")
-    required = {
-        "visual_style", "color", "icons", "typography", "image_rendering", "style_axes",
-        "layout_preferences", "information_density", "background_system", "image_role",
-        "evidence_strength", "composition_tendency", "brand_device",
-    }
-    missing = sorted(required.difference(defaults))
-    if missing:
-        raise ValueError(f"template {template.get('id')} is missing defaults: {', '.join(missing)}")
-    direction = {
-        "name_zh": substyle.get("name") if substyle is not None else template.get("name"),
-        "note_zh": substyle.get("impact") if substyle is not None else template.get("impact"),
-        "template_selection": {
-            "id": template["id"],
-            "label": template["name"],
-            "version": "1.0",
-            "substyle_id": substyle.get("id") if substyle is not None else None,
-            "override_fields": [],
-        },
-    }
-    direction.update(defaults)
-    return direction
-
-
 def _recommendations(contracts: list[dict[str, Any]]) -> dict[str, Any]:
-    catalog = _read_json(CATALOG_PATH)
-    templates = catalog.get("template_presets")
-    if not isinstance(templates, list) or len(templates) < 3:
-        raise ValueError("the bundled style catalog must provide at least three templates")
-    templates = templates[:3]
-    if any(not isinstance(template, dict) or template.get("id") not in _SIGNAL_TERMS for template in templates):
-        raise ValueError("the bundled style catalog has unsupported template identifiers")
-    selected = _recommended_template_index(contracts, templates)
+    templates = public_templates()
+    recommendation = recommend_director(_body_signal_text(contracts))
+    selected = next(
+        index for index, template in enumerate(templates)
+        if template["id"] == recommendation["recommended_template_id"]
+    )
     return {
         "stage": "final",
         "lang": "zh",
+        **recommendation,
+        "templates": templates,
         "recommend": {
             "direction": selected,
             "canvas": CANVAS_ID,
             "regional_style": {"enabled": False},
             "additional_requirements": "",
             "production_profile": "balanced",
-        },
-        "design_directions": {
-            "selected": selected,
-            "candidates": [_template_direction(template) for template in templates],
         },
     }
 

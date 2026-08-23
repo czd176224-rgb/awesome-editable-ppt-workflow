@@ -35,8 +35,7 @@
       "additionalProperties": false,
       "required": [
         "primary_color", "secondary_color", "background_color", "cjk_font",
-        "latin_font", "title_size_pt", "body_size_pt", "caption_size_pt",
-        "regional_characteristics", "visual_description"
+        "latin_font", "title_size_pt", "body_size_pt", "caption_size_pt"
       ],
       "properties": {
         "primary_color": {"type": "string"},

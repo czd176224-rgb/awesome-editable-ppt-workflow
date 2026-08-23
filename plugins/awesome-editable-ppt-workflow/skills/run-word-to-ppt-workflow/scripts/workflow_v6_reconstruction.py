@@ -22,12 +22,35 @@ from pptx.opc.packuri import PackURI
 from fixed_frame import apply_fixed_frame, inspect_fixed_frame
 from fixed_region_contract import fixed_frame_execution
 from workflow_v6_contract import geometry_contract, transition_page, validate_project
+from workflow_v6_composition import load_composition_authority
 from workflow_v6_state import mutation_lock, save
 import workflow_v6_secure_io as secure_io
 
 
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _RELATIONSHIP_ATTRIBUTES = {f"{{{_R}}}embed", f"{{{_R}}}id", f"{{{_R}}}link"}
+
+
+def _require_current_fixed_frame(slide) -> None:
+    names = [shape.name for shape in slide.shapes if shape.name.startswith("fixed-frame-")]
+    if sorted(names) != sorted((
+        "fixed-frame-title", "fixed-frame-logo", "fixed-frame-footer", "fixed-frame-page-number",
+    )):
+        raise ValueError("assembled V6 fixed-layer inventory is incorrect")
+
+
+def _require_special_page_shapes(slide, role: str, visible_page_number: bool) -> None:
+    names = [shape.name for shape in slide.shapes]
+    if any(name.startswith("fixed-frame-") for name in names):
+        raise ValueError("assembled V6 special page contains a content fixed frame")
+    if f"special-{role}-title" not in names and not any(
+        name.startswith("special-source-") for name in names
+    ):
+        raise ValueError("assembled V6 special-page title is missing")
+    if ("special-page-number" in names) != visible_page_number:
+        raise ValueError("assembled V6 special-page number policy is incorrect")
+    if role in {"cover", "closing"} and names.count("special-logo") != 1:
+        raise ValueError("assembled V6 special-page logo is missing")
 
 
 def _copy_image_relationship(relationship, destination_slide) -> str:
@@ -365,6 +388,15 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
     secure_io.reject_reparse_chain(Path(project))
     root = Path(project).resolve()
     state = _load_reconstruction_state(root)
+    composition = load_composition_authority(root)
+    if composition is None:
+        page_contracts = [
+            {"page_role": "content", "visible_page_number": True} for _page in state["pages"]
+        ]
+    else:
+        page_contracts = composition["pages"]
+    if len(page_contracts) != len(state["pages"]):
+        raise ValueError("assembled V6 composition page count is incorrect")
     if any(page["state"] != "page_complete" for page in state["pages"]):
         raise ValueError("every V6 page must be complete before assembly")
     pages = [
@@ -385,11 +417,12 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
         reopened = Presentation(temporary)
         if len(reopened.slides) != len(pages):
             raise ValueError("assembled V6 slide count is incorrect")
-        if any(
-            len([shape for shape in slide.shapes if shape.name.startswith("fixed-frame-")]) != 4
-            for slide in reopened.slides
-        ):
-            raise ValueError("assembled V6 fixed-layer inventory is incorrect")
+        for slide, contract in zip(reopened.slides, page_contracts):
+            role = contract["page_role"]
+            if role in {"content", "appendix"}:
+                _require_current_fixed_frame(slide)
+            else:
+                _require_special_page_shapes(slide, role, contract["visible_page_number"])
         if any(
             not any(shape.has_text_frame or shape.has_table for shape in slide.shapes)
             for slide in reopened.slides

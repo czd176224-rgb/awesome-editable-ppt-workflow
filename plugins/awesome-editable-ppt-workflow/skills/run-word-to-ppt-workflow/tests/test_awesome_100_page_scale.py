@@ -37,6 +37,19 @@ ISOLATED_FAILURE_PAGE = 47
 INTERRUPTED_RECOVERY_PAGE = 1
 
 
+def _mark_legacy_pipeline_project(project: Path, page_count: int) -> None:
+    target = project / "confirm_ui"
+    target.mkdir()
+    target.joinpath("result.json").write_text(json.dumps({
+        "status": "confirmed", "revision": 1, "confirmed_at": "2026-08-23T00:00:00+08:00",
+        "production_profile": "balanced", "global_visual_contract": {},
+        "confirmed_pages": [
+            {"page_number": number, "effective_body": f"Legacy page {number}"}
+            for number in range(1, page_count + 1)
+        ],
+    }), encoding="utf-8")
+
+
 class TooManyRequests(Exception):
     status_code = 429
 
@@ -328,6 +341,7 @@ def test_returned_failed_outcome_is_not_a_success_or_recovery_signal(
 
     project = (tmp_path / "terminal-failure").resolve()
     project.mkdir()
+    _mark_legacy_pipeline_project(project, 3)
     assembled: list[dict[int, LoopOutcome]] = []
     reconstructed: list[int] = []
     rounds: list[Any] = []
@@ -405,6 +419,7 @@ def test_coordinator_accounts_for_two_futures_completed_in_one_wait_batch(
 
     project = (tmp_path / "simultaneous-batch").resolve()
     project.mkdir()
+    _mark_legacy_pipeline_project(project, 2)
     finish_barrier = threading.Barrier(2)
     directors = threading.Barrier(2)
     providers = threading.Barrier(2)
@@ -506,6 +521,7 @@ def test_production_run_pages_scales_100_pages_with_bounded_recovery(
 
     project = (tmp_path / "scale-project").resolve()
     project.mkdir()
+    _mark_legacy_pipeline_project(project, 100)
     workload = DeterministicScaleWorkload(project)
     scheduler_history: list[int] = []
     gate_history: list[int] = []

@@ -15,6 +15,7 @@ if str(SCRIPTS) not in sys.path:
 
 from workflow_v6_contract import canonical_sha256, new_page, new_project  # noqa: E402
 from workflow_v6_state import create  # noqa: E402
+from director_taskbook import taskbook_digest  # noqa: E402
 
 
 def _source_record(project: Path, relative: str) -> dict[str, object]:
@@ -61,6 +62,21 @@ def awesome_four_page_project(tmp_path: Path) -> Path:
         pages=pages,
     )
     state["style_confirmation"] = {"status": "confirmed", "contract": visual}
+    taskbook = {
+        "use_scenario": "董事会追加投资审议",
+        "presenter": "黄石项目投资团队",
+        "primary_audience": "基金投资决策委员会",
+        "audience_prior_knowledge": "已阅读项目初步尽调",
+        "desired_outcome": "决定是否追加投资及先决条件",
+        "emphasis": "现金流、估值、回报变化和新增风险",
+        "deemphasis": "重复的公司基础介绍",
+    }
+    state["director_confirmation"] = {
+        "template_id": "investment-committee",
+        "template_version": "1.0",
+        "taskbook": taskbook,
+        "taskbook_digest": taskbook_digest(taskbook),
+    }
     state["confirmed_ui_revision"] = 3
     state["confirmed_ui_digest"] = canonical_sha256(visual)
     state["page_materials_status"] = "confirmed"

@@ -109,6 +109,13 @@ def _project(tmp_path: Path, page_count: int = 2) -> Path:
             {"type": "paragraph", "text": "正文", "source_block_id": f"body-{number}", "source_block_index": (number - 1) * 2 + 1, "source_order": 2, "relationship_ids": [], "comment_ids": []},
         ]} for number in range(1, page_count + 1)
     ]}, ensure_ascii=False), encoding="utf-8")
+    (source_dir / "page_composition.json").write_text(json.dumps({
+        "artifact_version": "page-composition-v1", "page_count": page_count, "warnings": [],
+        "pages": [
+            {"output_page_number": number, "source_page_id": number, "page_role": "content", "role_source": "explicit", "chapter_title": "", "fixed_page_title": f"标题{number}", "source_page_number": number, "material_source_block_ids": [f"title-{number}", f"body-{number}"], "visible_page_number": True}
+            for number in range(1, page_count + 1)
+        ],
+    }, ensure_ascii=False), encoding="utf-8")
     (source_dir / "source_assets.json").write_text('{"assets":[]}', encoding="utf-8")
     for number in range(1, page_count + 1):
         publish_page_materials(root, number, root / "02_v6" / "awesome_page_materials" / f"page_{number:03d}.json")
@@ -143,6 +150,64 @@ def test_finalize_and_assemble_add_fixed_layers_without_office_or_visual_qa(tmp_
     assert report["office_render_required"] is False
     assert report["post_reconstruction_visual_qa"] is False
     assert all(page["state"] == "page_complete" for page in load(project)["pages"])
+
+
+def test_current_confirmed_project_missing_composition_fails_closed_at_assembly(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "body.pptx"
+    _body(body, "current body")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+    (project / "02_v6/page_composition.json").unlink()
+
+    with pytest.raises(ValueError, match="composition"):
+        assemble_v6_deck(project)
+
+
+def test_exact_legacy_content_only_confirmation_can_assemble_without_composition(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "legacy-body.pptx"
+    _body(body, "legacy body")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+    (project / "02_v6/page_composition.json").unlink()
+    (project / "confirm_ui").mkdir(exist_ok=True)
+    (project / "confirm_ui/result.json").write_text(json.dumps({
+        "status": "confirmed", "revision": 1,
+        "confirmed_at": "2026-08-23T00:00:00+08:00",
+        "production_profile": "balanced", "global_visual_contract": {},
+        "confirmed_pages": [{"page_number": 1, "effective_body": "legacy body"}],
+    }), encoding="utf-8")
+
+    report = assemble_v6_deck(project)
+
+    assert report["page_count"] == 1
+
+
+def test_assembly_accepts_role_specific_special_shapes_with_content_fixed_frame(tmp_path: Path):
+    # Break caught: assembly requires the four content fixed-frame objects on a native cover.
+    from workflow_v6_special_pages import render_special_page
+
+    project = _project(tmp_path, 2)
+    composition = {
+        "artifact_version": "page-composition-v1", "page_count": 2, "warnings": [],
+        "pages": [
+            {"output_page_number": 1, "source_page_id": 1, "page_role": "cover", "role_source": "explicit", "chapter_title": "", "fixed_page_title": "标题1", "source_page_number": 1, "material_source_block_ids": ["title-1", "body-1"], "visible_page_number": False},
+            {"output_page_number": 2, "source_page_id": 2, "page_role": "content", "role_source": "explicit", "chapter_title": "", "fixed_page_title": "标题2", "source_page_number": 2, "material_source_block_ids": ["title-2", "body-2"], "visible_page_number": True},
+        ],
+    }
+    (project / "02_v6" / "page_composition.json").write_text(
+        json.dumps(composition, ensure_ascii=False), encoding="utf-8",
+    )
+    render_special_page(project, 1)
+    body = tmp_path / "body-2.pptx"
+    _body(body, "可编辑正文2")
+    finalize_reconstructed_page(project, page_number=2, reconstructed_body=body)
+
+    report = assemble_v6_deck(project)
+    deck = Presentation(project / report["output"])
+
+    assert len(deck.slides) == 2
+    assert any(shape.name.startswith("special-") for shape in deck.slides[0].shapes)
+    assert len([shape for shape in deck.slides[1].shapes if shape.name.startswith("fixed-frame-")]) == 4
 
 
 def test_finalize_allows_verified_same_accepted_page_repair(tmp_path: Path):

@@ -2,186 +2,41 @@
   "canvas": [
     {"id": "ppt169", "name": "16:9 宽屏", "note": "固定画布；正文生成区域与固定图层位置不可调整"}
   ],
-  "delivery_purpose": [
-    {"id": "text", "name": "自主阅读", "note": "页面承载完整信息"},
-    {"id": "balanced", "name": "平衡汇报", "note": "页面与讲解共同承载信息"},
-    {"id": "presentation", "name": "现场演讲", "note": "突出观点与视觉证据"}
-  ],
-  "mode": [
-    {"id": "pyramid", "name": "结论先行"},
-    {"id": "narrative", "name": "叙事推进"},
-    {"id": "modular", "name": "模块并列"}
-  ],
-  "information_density": [
-    {"id": "low", "name": "低密度"},
-    {"id": "balanced", "name": "平衡密度"},
-    {"id": "high", "name": "高密度"}
-  ],
-  "visual_style": [
-    {"id": "swiss-minimal", "name": "国际咨询极简", "preview": "swiss-minimal.svg"},
-    {"id": "editorial", "name": "编辑式商务", "preview": "editorial.svg"},
-    {"id": "data-journalism", "name": "数据研究报告", "preview": "data-journalism.svg"},
-    {"id": "blueprint", "name": "结构蓝图", "preview": "blueprint.svg"},
-    {"id": "dark-tech", "name": "深色高管汇报", "preview": "dark-tech.svg"},
-    {"id": "ink-wash", "name": "现代水墨", "preview": "ink-wash.svg"},
-    {"id": "photo-editorial", "name": "摄影编辑风", "preview": "photo-editorial.svg"},
-    {"id": "soft-rounded", "name": "柔和现代商务", "preview": "soft-rounded.svg"}
-  ],
-  "icons": [
-    {"id": "tabler-outline", "name": "Tabler 线性"},
-    {"id": "phosphor-duotone", "name": "Phosphor 双色"},
-    {"id": "chunk-filled", "name": "几何实心"}
-  ],
-  "formula_policy": [
-    {"id": "mixed", "name": "兼顾可编辑性与视觉一致"},
-    {"id": "editable", "name": "优先原生可编辑公式"},
-    {"id": "rendered", "name": "优先稳定渲染"}
-  ],
-  "generation_mode": [
-    {"id": "continuous", "name": "连续生成并统一校验"},
-    {"id": "split", "name": "分批生成并逐批校验"}
-  ],
-  "image_quality": [
-    {"id": "auto", "name": "自动"},
-    {"id": "low", "name": "快速"},
-    {"id": "medium", "name": "均衡"},
-    {"id": "high", "name": "高质量"}
-  ],
   "template_presets": [
     {
-      "id": "policy-project-brief",
-      "name": "政策与项目进度简报",
-      "tagline": "正式、清晰、证据导向",
-      "best_for": "政府、协会、国资、法律服务、产业项目和阶段性进展汇报",
-      "impact": "白底深蓝体系，以编辑式排版、项目证据、表格和轻量时间轴组织高密度内容。",
-      "defaults": {
-        "visual_style": "editorial",
-        "color": {"name_zh":"政策项目蓝红","palette":{"background":"#FFFFFF","secondary_bg":"#F2F5F8","primary":"#17365D","accent":"#C7352B","secondary_accent":"#2F6FB0","body_text":"#111111","section_title":"#17365D","key_number":"#C7352B","table_header":"#17365D","border":"#D8E0E8"}},
-        "icons": "auto-by-logic",
-        "typography": {"name_zh":"正式双语无衬线","heading":{"cjk":"Microsoft YaHei","latin":"Arial","css":"sans-serif"},"body":{"cjk":"Microsoft YaHei","latin":"Arial","css":"sans-serif"},"body_size":24,"type_scale_pt":{"page_title":28,"section_title":16,"body":12,"caption":9}},
-        "image_rendering": {"name_zh":"真实证据图片","rendering":"photographic","visual_zh":"真实活动、项目与政策材料，克制裁切","mood_zh":"正式、可信"},
-        "style_axes": {"formal":90,"modern":25,"minimal":65},
-        "layout_preferences": ["editorial","split","table","timeline","modular"],
-        "information_density": "high",
-        "background_system": "light",
-        "image_role": {"role":"evidence","proportion":"medium-low"},
-        "evidence_strength": "data-case",
-        "composition_tendency": "formal-consulting",
-        "brand_device": "light"
-      }
+      "id": "company-business-introduction",
+      "name": "公司及业务推介材料",
+      "description": "帮助受众快速理解公司、业务价值与合作理由。",
+      "director_summary": "以清晰价值主张串联公司能力、业务结构、成果证据与合作空间。",
+      "defaults": {"primary_color": "#17365D", "secondary_color": "#2F6FB0", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 30, "body_size_pt": 14, "caption_size_pt": 9}
     },
     {
-      "id": "brand-narrative-business",
-      "name": "品牌叙事型综合商务汇报",
-      "tagline": "黑白交替、摄影主导、强标题",
-      "best_for": "品牌发布、赛事活动、平台介绍、市场传播与合作推介",
-      "impact": "白底信息页与黑底高潮页交替，以真实摄影、强结论标题和少量核心数字推动叙事。",
-      "defaults": {
-        "visual_style": "photo-editorial",
-        "color": {"name_zh":"品牌黑白红","palette":{"background":"#F7F7F7","secondary_bg":"#0E0E0E","primary":"#161616","accent":"#CD202A","secondary_accent":"#999999","body_text":"#161616","section_title":"#CD202A","key_number":"#CD202A","table_header":"#161616","border":"#CBCBCB"}},
-        "icons": "none",
-        "typography": {"name_zh":"品牌编辑双语字体","heading":{"cjk":"Source Han Sans SC","latin":"Arial","css":"sans-serif"},"body":{"cjk":"Source Han Sans SC","latin":"Arial","css":"sans-serif"},"body_size":28,"type_scale_pt":{"page_title":34,"section_title":20,"body":15,"caption":10}},
-        "image_rendering": {"name_zh":"纪实摄影叙事","rendering":"photographic","visual_zh":"真实人物、赛事、活动与场景大图，允许全幅裁切","mood_zh":"鲜明、有张力"},
-        "style_axes": {"formal":55,"modern":85,"minimal":60},
-        "layout_preferences": ["editorial","conclusion-first","split","data-led","modular"],
-        "information_density": "balanced",
-        "background_system": "mixed",
-        "image_role": {"role":"narrative","proportion":"high"},
-        "evidence_strength": "data-case",
-        "composition_tendency": "brand-editorial",
-        "brand_device": "strong"
-      }
+      "id": "investment-committee",
+      "name": "投决会材料",
+      "description": "围绕投资判断、回报、风险与决策条件组织证据。",
+      "director_summary": "以明确投资判断为主线，呈现关键事实、估值回报、风险边界和待决事项。",
+      "defaults": {"primary_color": "#13263A", "secondary_color": "#B58A2A", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 28, "body_size_pt": 13, "caption_size_pt": 9}
     },
     {
-      "id": "evidence-investment-bp",
-      "name": "技术证据型投资 BP",
-      "tagline": "投资判断、技术证据、商业含义",
-      "best_for": "科技企业融资、技术路演、产品平台和商业计划书",
-      "impact": "每页围绕一个投资判断，优先呈现实物、实验、数据、专利、论文、客户和融资证据。",
-      "substyles": [
-        {
-          "id": "dark-tech",
-          "name": "深色科技",
-          "tagline": "黑蓝基底、亮蓝结构、黄色重点",
-          "impact": "适合突出技术平台、架构、产业地图、产品体系和融资愿景。",
-          "defaults": {
-            "visual_style": "dark-tech",
-            "color": {"name_zh":"深色科技蓝黄","palette":{"background":"#000000","secondary_bg":"#0D2137","primary":"#FFFFFF","accent":"#40A8FF","secondary_accent":"#1A3C5E","body_text":"#F2F2F2","section_title":"#40A8FF","key_number":"#FFFF00","table_header":"#1A3C5E","border":"#40A8FF"}},
-            "icons": "auto-by-logic",
-            "typography": {"name_zh":"科技双语无衬线","heading":{"cjk":"Microsoft YaHei","latin":"Arial","css":"sans-serif"},"body":{"cjk":"Microsoft YaHei","latin":"Arial","css":"sans-serif"},"body_size":26,"type_scale_pt":{"page_title":30,"section_title":18,"body":13,"caption":9}},
-            "image_rendering": {"name_zh":"暗色科技实证","rendering":"technology","visual_zh":"暗色实拍、产品图、架构图与克制科技光效","mood_zh":"前沿、可信"},
-            "style_axes": {"formal":70,"modern":80,"minimal":50},
-            "layout_preferences": ["conclusion-first","data-led","matrix","table","editorial"],
-            "information_density": "high",
-            "background_system": "dark",
-            "image_role": {"role":"product-evidence","proportion":"medium"},
-            "evidence_strength": "strict",
-            "composition_tendency": "technical-rd",
-            "brand_device": "medium"
-          }
-        },
-        {
-          "id": "white-rd",
-          "name": "白底研发",
-          "tagline": "白底黑灰、红黄强调、科研证据",
-          "impact": "适合论文、公式、实验数据、实物照片、产品参数和技术路线。",
-          "defaults": {
-            "visual_style": "data-journalism",
-            "color": {"name_zh":"研发白红黄","palette":{"background":"#FFFFFF","secondary_bg":"#F1F0EE","primary":"#000000","accent":"#FF2C00","secondary_accent":"#FFE300","body_text":"#404040","section_title":"#000000","key_number":"#FF2C00","table_header":"#595959","border":"#BFBFBF"}},
-            "icons": "none",
-            "typography": {"name_zh":"研发双语无衬线","heading":{"cjk":"Microsoft YaHei","latin":"Arial","css":"sans-serif"},"body":{"cjk":"Microsoft YaHei","latin":"Arial","css":"sans-serif"},"body_size":28,"type_scale_pt":{"page_title":30,"section_title":18,"body":14,"caption":10}},
-            "image_rendering": {"name_zh":"科研证据表达","rendering":"data-visual","visual_zh":"产品实物、实验照片、论文图表、公式与技术流程","mood_zh":"严谨、务实"},
-            "style_axes": {"formal":75,"modern":65,"minimal":65},
-            "layout_preferences": ["conclusion-first","split","table","data-led","matrix"],
-            "information_density": "high",
-            "background_system": "light-with-dark-highlights",
-            "image_role": {"role":"technical-evidence","proportion":"medium"},
-            "evidence_strength": "strict",
-            "composition_tendency": "technical-rd",
-            "brand_device": "light"
-          }
-        }
-      ]
+      "id": "project-initiation",
+      "name": "立项会材料",
+      "description": "说明立项依据、初步判断、待验证事项与下一步工作。",
+      "director_summary": "围绕是否值得投入下一阶段资源，区分已有事实、初步判断和后续验证任务。",
+      "defaults": {"primary_color": "#244A73", "secondary_color": "#D07A2D", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 28, "body_size_pt": 13, "caption_size_pt": 9}
+    },
+    {
+      "id": "corporate-planning",
+      "name": "公司规划报告",
+      "description": "把战略目标、重点任务、实施路径与衡量方式连成体系。",
+      "director_summary": "由现状判断推导目标和选择，再落到行动、责任、节奏与结果衡量。",
+      "defaults": {"primary_color": "#1E4D45", "secondary_color": "#C58B3A", "background_color": "#FAFBF8", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 30, "body_size_pt": 14, "caption_size_pt": 9}
+    },
+    {
+      "id": "investment-project-bp",
+      "name": "投资项目 BP",
+      "description": "面向投资人建立项目价值、增长逻辑与融资用途的完整认知。",
+      "director_summary": "以项目机会和增长逻辑为主线，用产品、市场、团队、财务与融资证据支撑价值判断。",
+      "defaults": {"primary_color": "#101820", "secondary_color": "#E85D2A", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 30, "body_size_pt": 14, "caption_size_pt": 9}
     }
-  ],
-  "background_system": [
-    {"id":"light","name":"全部浅色","note":"稳重、连续，适合正式汇报"},
-    {"id":"dark","name":"全部深色","note":"科技感强，适合产品与技术展示"},
-    {"id":"mixed","name":"黑白交替","note":"信息页与高潮页形成强节奏"},
-    {"id":"light-with-dark-highlights","name":"浅色为主，深色高潮页","note":"阅读效率与产品冲击兼顾"}
-  ],
-  "image_role": [
-    {"id":"text-structure","name":"文字结构优先","note":"图像只在确有必要时出现"},
-    {"id":"evidence","name":"真实证据图片优先","note":"活动、项目、政策与现场材料"},
-    {"id":"technical-evidence","name":"科研证据优先","note":"实验、论文、公式、技术图表"},
-    {"id":"product-evidence","name":"产品展示优先","note":"产品实物、系统界面与应用场景"},
-    {"id":"narrative","name":"大图叙事优先","note":"真实摄影承担主要视觉表达"},
-    {"id":"balanced","name":"图文均衡","note":"根据页面逻辑灵活分配"}
-  ],
-  "image_proportion": [
-    {"id":"low","name":"低"},{"id":"medium-low","name":"中低"},{"id":"medium","name":"中"},{"id":"high","name":"高"}
-  ],
-  "image_usage_policy": [
-    {"id":"content-driven","name":"按页面内容决定（推荐）","note":"不强制每页有照片；只有批注或本页可用材料支持时才使用图像"},
-    {"id":"visual-preference","name":"偏视觉化表达","note":"允许克制概念插画，但不虚构新闻、会议、人物、企业或Logo照片"},
-    {"id":"source-only","name":"仅使用已有材料","note":"仅使用Word图片、可用附件和批注搜索材料，不新生成照片型素材"}
-  ],
-  "evidence_strength": [
-    {"id":"business","name":"普通商务","note":"观点与说明为主"},
-    {"id":"data-case","name":"数据和案例优先","note":"优先呈现原文已有的数据与案例"},
-    {"id":"strict","name":"严格证据型","note":"优先呈现实物、实验、专利、论文和来源"}
-  ],
-  "composition_tendency": [
-    {"id":"auto","name":"按内容自动","note":"Image2根据本页逻辑选择构图"},
-    {"id":"formal-consulting","name":"正式咨询排版","note":"编辑式、分栏、表格和矩阵"},
-    {"id":"brand-editorial","name":"品牌杂志排版","note":"强标题、大图与节奏变化"},
-    {"id":"technical-rd","name":"技术研发排版","note":"技术流程、数据、实物和证据"},
-    {"id":"product-launch","name":"产品发布排版","note":"产品主体与卖点形成视觉中心"}
-  ],
-  "brand_device": [
-    {"id":"none","name":"无品牌装置","note":"只保留内容视觉"},
-      {"id":"light","name":"轻量","note":"品牌标记、细线与页码"},
-    {"id":"medium","name":"中等","note":"固定页眉、品牌线条与页脚"},
-    {"id":"strong","name":"强烈","note":"品牌纹理、背景字与特征图形"}
   ]
 }
