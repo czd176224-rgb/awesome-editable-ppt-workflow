@@ -20,7 +20,12 @@ from complex_page_experiment.review import (
     review_candidate_once,
     validate_published_review_authority,
 )
-from test_director import _director_value, _result
+from test_director import (
+    TASKBOOK_BOUNDARY,
+    TASKBOOK_VALUES,
+    _director_value,
+    _result,
+)
 from test_provider import _real_worker_runner, provider_fixture
 
 
@@ -274,10 +279,32 @@ def test_review_sends_candidate_first_complete_authority_and_selected_mapping(
     assert "Authoritative body 1" in prompt
     assert "Keep this original direction exactly.  " in prompt
     assert json.dumps(view.value, ensure_ascii=False, sort_keys=True) in prompt
-    assert json.dumps(director.value, ensure_ascii=False, sort_keys=True) in prompt
+    assert json.dumps(director.value, ensure_ascii=False, sort_keys=True) not in prompt
     assert director.actual_prompt in prompt
     assert "accept reasonable Image2 randomness" in prompt
     assert recorder.has_call(kind="visual_review", attempt=1) is True
+
+
+def test_review_taskbook_is_independent_authority_without_template_or_director_metadata(
+    review_fixture,
+):
+    workspace, view, director, candidate, recorder = review_fixture
+    calls: list[dict[str, object]] = []
+
+    def invoke(project: Path, **kwargs):
+        calls.append({"project": project, **kwargs})
+        return _review_result()
+
+    review_candidate_once(
+        workspace, view, director, candidate, preflight_candidate(candidate),
+        timeout=30, recorder=recorder, invoke=invoke,
+    )
+    prompt = str(calls[0]["prompt"])
+    assert all(value in prompt for value in TASKBOOK_VALUES)
+    assert TASKBOOK_BOUNDARY in prompt
+    assert json.dumps(director.value, ensure_ascii=False, sort_keys=True) not in prompt
+    for forbidden in ("investment-committee", "template_version", "taskbook_digest", '"defaults"'):
+        assert forbidden not in prompt
 
 
 def test_review_allows_only_actionable_serious_correction_prompt_classes(

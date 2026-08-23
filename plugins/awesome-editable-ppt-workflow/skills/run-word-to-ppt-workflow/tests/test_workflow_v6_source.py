@@ -10,6 +10,7 @@ from docx.opc.constants import RELATIONSHIP_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from PIL import Image
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,8 +18,47 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from workflow_v6_source import compile_effective_page, initialize_v6_project  # noqa: E402
+from extract_docx_pages import extract_auto  # noqa: E402
+from workflow_v6_source import V6_PAGE_MARKER, compile_effective_page, initialize_v6_project  # noqa: E402
 import workflow_v6_source  # noqa: E402
+import style_recommendations  # noqa: E402
+
+
+EXPECTED_DIRECTOR_TEMPLATE_IDS = [
+    "company-business-introduction",
+    "investment-committee",
+    "project-initiation",
+    "corporate-planning",
+    "investment-project-bp",
+]
+
+
+@pytest.mark.parametrize(
+    ("source_text", "expected_id"),
+    [
+        ("本次提交投委会审议，重点说明估值、投资回报与退出安排。", "investment-committee"),
+        ("本次立项申请将说明初步尽调范围、立项依据与后续工作。", "project-initiation"),
+        ("公司未来三年规划聚焦战略目标、重点任务与实施路径。", "corporate-planning"),
+    ],
+)
+def test_director_recommendation_uses_five_scenario_templates(source_text: str, expected_id: str):
+    recommendation = style_recommendations._recommendations([
+        {"source_text": source_text, "page_purpose": "", "asset_bindings": []}
+    ])
+
+    assert recommendation["recommended_template_id"] == expected_id
+    assert recommendation["recommendation_reason"]
+    assert recommendation["recommendation_confidence"] in {"low", "medium", "high"}
+    assert [item["id"] for item in recommendation["templates"]] == EXPECTED_DIRECTOR_TEMPLATE_IDS
+    assert set(recommendation["director_taskbook"]) == {
+        "use_scenario",
+        "presenter",
+        "primary_audience",
+        "audience_prior_knowledge",
+        "desired_outcome",
+        "emphasis",
+        "deemphasis",
+    }
 
 
 def _add_hyperlink(paragraph, url: str, text: str) -> None:
@@ -31,6 +71,91 @@ def _add_hyperlink(paragraph, url: str, text: str) -> None:
     run.append(value)
     hyperlink.append(run)
     paragraph._p.append(hyperlink)
+
+
+def test_explicit_markers_accept_supported_forms_and_preserve_source_ids(tmp_path):
+    document = Document()
+    markers = [
+        "第4页",
+        "第 33 页",
+        "第36页 · STORY LINE",
+        "第26页 PPT",
+        "PPT第02页",
+        "PPT第44页 | PART 5｜实施路径与合作共识",
+    ]
+    for index, marker in enumerate(markers, start=1):
+        document.add_paragraph(marker)
+        document.add_paragraph(f"正文{index}")
+    source = tmp_path / "markers.docx"
+    document.save(source)
+
+    payload = extract_auto(source, marker_pattern=V6_PAGE_MARKER)
+
+    assert payload["pagination_mode"] == "explicit_text_markers"
+    assert payload["page_count"] == 6
+    assert [page["page_number"] for page in payload["pages"]] == [1, 2, 3, 4, 5, 6]
+    assert [page["source_page_id"] for page in payload["pages"]] == [4, 33, 36, 26, 2, 44]
+
+
+def test_duplicate_source_page_ids_warn_but_do_not_block(tmp_path):
+    document = Document()
+    for marker in ("第4页", "PPT第4页"):
+        document.add_paragraph(marker)
+        document.add_paragraph("正文")
+    source = tmp_path / "duplicates.docx"
+    document.save(source)
+
+    payload = extract_auto(source, marker_pattern=V6_PAGE_MARKER)
+
+    assert payload["page_count"] == 2
+    assert payload["pagination_warnings"] == [{
+        "code": "duplicate_source_page_id",
+        "source_page_id": 4,
+        "output_pages": [1, 2],
+    }]
+
+
+def test_initialize_uses_appearance_order_when_source_ids_are_9_3_9(tmp_path: Path):
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    document = Document()
+    for index, source_id in enumerate((9, 3, 9), start=1):
+        document.add_paragraph(f"PPT第{source_id:02d}页")
+        document.add_paragraph(f"正文{index}")
+    document.save(word)
+    logo.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>',
+        encoding="utf-8",
+    )
+
+    state = initialize_v6_project(word, logo, project)
+    composition = json.loads(
+        (project / "02_v6/page_composition.json").read_text(encoding="utf-8")
+    )
+
+    assert [page["output_page_number"] for page in composition["pages"]] == [1, 2, 3]
+    assert [page["source_page_id"] for page in composition["pages"]] == [9, 3, 9]
+    assert [page["page_number"] for page in state["pages"]] == [1, 2, 3]
+
+
+def test_content_before_first_marker_is_prepended_and_warned(tmp_path):
+    document = Document()
+    document.add_paragraph("前置说明")
+    document.add_paragraph("第9页")
+    document.add_paragraph("正文")
+    source = tmp_path / "leading-content.docx"
+    document.save(source)
+
+    payload = extract_auto(source, marker_pattern=V6_PAGE_MARKER)
+
+    assert [block["text"] for block in payload["pages"][0]["blocks"]] == ["前置说明", "正文"]
+    assert [block["source_order"] for block in payload["pages"][0]["blocks"]] == [1, 2]
+    assert payload["pagination_warnings"] == [{
+        "code": "content_before_first_marker",
+        "output_page": 1,
+        "block_count": 1,
+    }]
 
 
 def test_comments_override_word_and_unavailable_attachment_invalidates_only_reference():
@@ -155,7 +280,7 @@ def test_initialize_v6_project_compiles_comment_resolution_into_confirmed_materi
     assert "Use attachment attachment-01" not in json.dumps(materials)
 
 
-def test_long_first_paragraph_is_not_promoted_to_a_fixed_title(tmp_path: Path):
+def test_long_first_paragraph_after_marker_is_title_authority(tmp_path: Path):
     word = tmp_path / "input.docx"
     logo = tmp_path / "logo.svg"
     project = tmp_path / "project"
@@ -167,12 +292,78 @@ def test_long_first_paragraph_is_not_promoted_to_a_fixed_title(tmp_path: Path):
     logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
 
     state = initialize_v6_project(word, logo, project)
+    source = json.loads((project / "02_v6/page_sources/page_001.json").read_text(encoding="utf-8"))
     effective = json.loads((project / "02_v6/effective_pages/page_001.json").read_text(encoding="utf-8"))
 
-    assert state["pages"][0]["title"] != paragraph
-    assert len(state["pages"][0]["title"]) <= 28
-    assert effective["body_render_content"] == paragraph
+    assert state["pages"][0]["title"] == paragraph
+    assert source["fixed_page_title_source_block_id"] == "word-block-000001"
+    assert effective["body_render_content"] == ""
     assert effective["word_original"] == paragraph
+
+
+def test_explicit_body_title_instruction_is_authority_and_not_body(tmp_path: Path):
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    document = Document()
+    document.add_paragraph("第1页")
+    document.add_paragraph("标题：黄石产业并购服务体系建设方案")
+    document.add_paragraph("正文第一段")
+    document.add_paragraph("正文第二段")
+    document.save(word)
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    initialize_v6_project(word, logo, project)
+    source = json.loads((project / "02_v6/page_sources/page_001.json").read_text(encoding="utf-8"))
+
+    assert source["fixed_page_title"] == "黄石产业并购服务体系建设方案"
+    assert source["fixed_page_title_source_block_id"] == "word-block-000001"
+    assert source["body_render_content"] == "正文第一段\n\n正文第二段"
+
+
+def test_first_word_paragraph_precedes_later_heading_styles(tmp_path: Path):
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    document = Document()
+    document.add_paragraph("第1页")
+    document.add_paragraph("页面提示语")
+    document.add_paragraph("黄石产业并购服务体系建设方案", style="Heading 1")
+    document.add_paragraph("正文内容")
+    document.save(word)
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    payload = extract_auto(word, marker_pattern=V6_PAGE_MARKER)
+    initialize_v6_project(word, logo, project)
+    source = json.loads((project / "02_v6/page_sources/page_001.json").read_text(encoding="utf-8"))
+    composition = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
+
+    assert payload["pages"][0]["blocks"][1]["paragraph_style"] == "Heading 1"
+    assert source["fixed_page_title"] == "页面提示语"
+    assert source["fixed_page_title_source_block_id"] == "word-block-000001"
+    assert source["body_render_content"] == "黄石产业并购服务体系建设方案\n\n正文内容"
+    assert composition["pages"][0]["fixed_page_title"] == "页面提示语"
+
+
+def test_page_role_control_is_not_title_authority(tmp_path: Path):
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    document = Document()
+    document.add_paragraph("第1页")
+    document.add_paragraph("PPT页型：封面")
+    document.add_paragraph("黄石产业项目建议")
+    document.add_paragraph("呈报对象：黄石市")
+    document.save(word)
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    initialize_v6_project(word, logo, project)
+    source = json.loads((project / "02_v6/page_sources/page_001.json").read_text(encoding="utf-8"))
+    composition = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
+
+    assert source["fixed_page_title"] == "黄石产业项目建议"
+    assert source["body_render_content"] == "呈报对象：黄石市"
+    assert composition["pages"][0]["fixed_page_title"] == "黄石产业项目建议"
 
 
 def test_initialize_v6_project_preserves_embedded_image_integrity_and_paths(tmp_path: Path):
@@ -232,8 +423,8 @@ def test_initialize_v6_project_wires_source_chart_records_as_text_facts_only(tmp
         "pagination_mode": "marker", "pages": [{
             "page_number": 1,
             "blocks": [
-                {"type": "paragraph", "text": "Chart page", "source_block_index": 0},
-                {"type": "paragraph", "text": "Narrative", "source_block_index": 1},
+                {"type": "paragraph", "text": "Chart page", "source_block_index": 0, "source_block_id": "word-block-000000"},
+                {"type": "paragraph", "text": "Narrative", "source_block_index": 1, "source_block_id": "word-block-000001"},
             ],
             "page_comments": [],
         }],
@@ -285,7 +476,7 @@ def test_initialize_v6_project_uses_text_derivative_for_binary_attachment(tmp_pa
         "pagination_mode": "marker", "pages": [{
             "page_number": 1,
             "blocks": [
-                {"type": "paragraph", "text": "Attachment evidence", "source_block_index": 0},
+                {"type": "paragraph", "text": "Attachment evidence", "source_block_index": 0, "source_block_id": "word-block-000000"},
             ],
             "page_comments": [{
                 "comment_id": "rows", "text": "Use attachment workbook rows 2 fields Revenue.",

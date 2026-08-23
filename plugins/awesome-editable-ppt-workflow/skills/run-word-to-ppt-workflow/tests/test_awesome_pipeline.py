@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,145 @@ def _project(root: Path, pages: int = 2) -> Path:
             pages=[new_page(number, title=f"page {number}") for number in range(1, pages + 1)],
         ),
     )
+    source = root / "02_v6"
+    source.mkdir()
+    source.joinpath("page_composition.json").write_text(json.dumps({
+        "artifact_version": "page-composition-v1", "page_count": pages, "warnings": [],
+        "pages": [
+            {"output_page_number": number, "source_page_id": number, "page_role": "content", "role_source": "explicit", "chapter_title": "", "fixed_page_title": f"page {number}", "source_page_number": number, "material_source_block_ids": [f"block-{number}"], "visible_page_number": True}
+            for number in range(1, pages + 1)
+        ],
+    }), encoding="utf-8")
     return root
+
+
+def test_native_special_page_bypasses_creative_stages_and_assembles_with_content(tmp_path: Path) -> None:
+    # Break caught: a cover invokes director/Image2/reviewer or is omitted from final assembly.
+    from workflow_v6_pipeline import PipelineConfiguration, PipelineDependencies, run_pages
+
+    project = _project(tmp_path, pages=2)
+    (project / "02_v6" / "page_composition.json").write_text(json.dumps({
+        "artifact_version": "page-composition-v1", "page_count": 2, "warnings": [],
+        "pages": [
+            {"output_page_number": 1, "source_page_id": 1, "page_role": "cover", "role_source": "explicit", "chapter_title": "", "fixed_page_title": "Cover", "source_page_number": 1, "material_source_block_ids": ["b1"], "visible_page_number": False},
+            {"output_page_number": 2, "source_page_id": 2, "page_role": "content", "role_source": "explicit", "chapter_title": "", "fixed_page_title": "Content", "source_page_number": 2, "material_source_block_ids": ["b2"], "visible_page_number": True},
+        ],
+    }), encoding="utf-8")
+    calls = {"workspace": [], "director": [], "provider": [], "reviewer": [], "native": []}
+    assembled: list[dict[int, object]] = []
+
+    def loop(workspace, *, director_invoke, provider_runner, reviewer_invoke, **_kwargs):
+        page = workspace["page"]
+        director_invoke(page)
+        provider_runner([str(page)], 1)
+        reviewer_invoke(page)
+        return SimpleNamespace(status="accepted", accepted={"page": page}, attempts=(), failure_problems=(), correction_count=0)
+
+    report = run_pages(
+        project, [1, 2],
+        dependencies=PipelineDependencies(
+            open_workspace=lambda root, page: calls["workspace"].append(page) or {"project": root, "page": page},
+            evidence_recorder=lambda workspace: object(),
+            candidate_loop=loop,
+            director_invoke=lambda page: calls["director"].append(page),
+            provider_runner=lambda request, timeout: calls["provider"].append(int(request[0])),
+            reviewer_invoke=lambda page: calls["reviewer"].append(page),
+            native_page_renderer=lambda root, page: calls["native"].append(page) or {"page_role": "cover", "page_pptx": "06_v6/pages/page_001/page.pptx"},
+            assemble_project=lambda root, outcomes: assembled.append(outcomes),
+        ),
+        configuration=PipelineConfiguration(page_workers=2, initial_page_concurrency=2, maximum_page_concurrency=2),
+    )
+
+    assert calls == {"workspace": [2], "director": [2], "provider": [2], "reviewer": [2], "native": [1]}
+    assert report.completed_pages == (1, 2)
+    assert report.page_outcomes[1].status == "page_complete"
+    assert report.to_dict()["page_outcomes"]["1"]["status"] == "page_complete"
+    assert set(assembled[0]) == {1, 2}
+
+
+def test_pipeline_dispatch_reads_composition_through_secure_project_io(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Break caught: dispatch follows a replaced composition pathname with Path.read_text().
+    import workflow_v6_pipeline as pipeline
+    import workflow_v6_secure_io as secure_io
+
+    project = _project(tmp_path, pages=1)
+    (project / "02_v6/page_composition.json").write_bytes(b"placeholder")
+    composition = json.dumps({
+        "artifact_version": "page-composition-v1", "page_count": 1, "warnings": [],
+        "pages": [{"output_page_number": 1, "source_page_id": 1, "page_role": "content", "role_source": "explicit", "chapter_title": "", "fixed_page_title": "Content", "source_page_number": 1, "material_source_block_ids": ["b1"], "visible_page_number": True}],
+    }).encode()
+    seen: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(secure_io, "reject_reparse_chain", lambda path: seen.append((Path(path), Path("."))))
+    monkeypatch.setattr(secure_io, "read_bytes", lambda root, relative: seen.append((Path(root), Path(relative))) or composition)
+    monkeypatch.setattr(Path, "read_text", lambda *_args, **_kwargs: pytest.fail("authority path must not be reopened"))
+
+    report = pipeline.run_pages(
+        project, [1],
+        dependencies=pipeline.PipelineDependencies(
+            open_workspace=lambda root, page: {"page": page}, evidence_recorder=lambda workspace: object(),
+            candidate_loop=lambda workspace, **kwargs: {"accepted": workspace["page"]},
+        ),
+        configuration=pipeline.PipelineConfiguration(page_workers=1, initial_page_concurrency=1, maximum_page_concurrency=1),
+    )
+
+    assert report.completed_pages == (1,)
+    assert (project.resolve(), Path("02_v6/page_composition.json")) in seen
+
+
+def test_current_confirmed_project_missing_composition_fails_closed(tmp_path: Path) -> None:
+    # Break caught: lost frozen composition silently routes a current cover through Image2.
+    from workflow_v6_pipeline import PipelineConfiguration, PipelineDependencies, run_pages
+    from workflow_v6_state import load, save
+
+    project = _project(tmp_path, pages=1)
+    state = load(project)
+    state["style_confirmation"] = {"status": "confirmed", "contract": {"primary_color": "#17365D"}}
+    state["confirmed_ui_revision"] = 1
+    state["confirmed_ui_digest"] = "a" * 64
+    state["page_materials_status"] = "pending"
+    save(project, state)
+    (project / "02_v6/page_composition.json").unlink()
+    calls: list[int] = []
+
+    with pytest.raises(ValueError, match="composition"):
+        run_pages(
+            project, [1],
+            dependencies=PipelineDependencies(
+                open_workspace=lambda root, page: calls.append(page), evidence_recorder=lambda workspace: object(),
+                candidate_loop=lambda workspace, **kwargs: {},
+            ),
+            configuration=PipelineConfiguration(page_workers=1, initial_page_concurrency=1, maximum_page_concurrency=1),
+        )
+
+    assert calls == []
+
+
+def test_explicit_legacy_confirmation_without_composition_remains_content_only(tmp_path: Path) -> None:
+    # Break caught: fail-closed current authority accidentally removes the prior confirmed V6 pipeline.
+    from workflow_v6_pipeline import PipelineConfiguration, PipelineDependencies, run_pages
+
+    project = tmp_path / "legacy"
+    (project / "confirm_ui").mkdir(parents=True)
+    (project / "confirm_ui/result.json").write_text(json.dumps({
+        "status": "confirmed", "revision": 1, "confirmed_at": "2026-08-23T00:00:00+08:00",
+        "production_profile": "balanced", "global_visual_contract": {},
+        "confirmed_pages": [{"page_number": 1, "effective_body": "Legacy body"}],
+    }), encoding="utf-8")
+    calls: list[int] = []
+
+    report = run_pages(
+        project, [1],
+        dependencies=PipelineDependencies(
+            open_workspace=lambda root, page: calls.append(page) or {"page": page},
+            evidence_recorder=lambda workspace: object(), candidate_loop=lambda workspace, **kwargs: {"accepted": 1},
+        ),
+        configuration=PipelineConfiguration(page_workers=1, initial_page_concurrency=1, maximum_page_concurrency=1),
+    )
+
+    assert report.completed_pages == (1,)
+    assert calls == [1]
 
 
 def test_run_pages_overlaps_independent_pages_and_reports_actual_stage_peak(tmp_path: Path) -> None:

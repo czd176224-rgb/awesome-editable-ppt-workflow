@@ -8,66 +8,81 @@
 
   var VISUAL_FIELDS = [
     "primary_color", "secondary_color", "background_color", "cjk_font", "latin_font",
-    "title_size_pt", "body_size_pt", "caption_size_pt", "regional_characteristics",
-    "visual_description"
+    "title_size_pt", "body_size_pt", "caption_size_pt"
+  ];
+  var TASKBOOK_FIELDS = [
+    "use_scenario", "presenter", "primary_audience", "audience_prior_knowledge",
+    "desired_outcome", "emphasis", "deemphasis"
   ];
   var NUMBER_FIELDS = new Set(["title_size_pt", "body_size_pt", "caption_size_pt"]);
-  var LABELS = {
-    primary_color: "主色", secondary_color: "辅助色", background_color: "背景色",
-    cjk_font: "中文字体", latin_font: "西文字体", title_size_pt: "标题字号",
-    body_size_pt: "正文字号", caption_size_pt: "图注字号",
-    regional_characteristics: "地区特征", visual_description: "视觉描述"
-  };
 
   function copy(value) { return JSON.parse(JSON.stringify(value)); }
   function templateById(templates, templateId) {
     return templates.find(function (item) { return item.id === templateId; }) || templates[0];
   }
-  function exactValues(defaults) {
+  function exactFields(source, fields) {
     var values = {};
-    VISUAL_FIELDS.forEach(function (field) { values[field] = copy(defaults[field]); });
+    fields.forEach(function (field) { values[field] = copy(source[field]); });
     return values;
   }
-  function createState(templates, templateId, revision) {
+  function createState(templates, templateId, revision, taskbook, reason, confidence) {
     if (!Array.isArray(templates) || templates.length === 0) throw new Error("templates are required");
     var selected = templateById(templates, templateId);
-    return {step: 1, templates: copy(templates), selectedTemplateId: selected.id, values: exactValues(selected.defaults), baseRevision: revision || 0};
+    return {
+      step: 1,
+      templates: copy(templates),
+      selectedTemplateId: selected.id,
+      values: exactFields(selected.defaults, VISUAL_FIELDS),
+      taskbook: exactFields(taskbook || selected.director_taskbook, TASKBOOK_FIELDS),
+      baseRevision: revision || 0,
+      recommendationReason: String(reason || ""),
+      recommendationConfidence: String(confidence || "low")
+    };
   }
   function applyTemplate(state, templateId) {
     if (state.step !== 1) throw new Error("templates can only be changed in step 1");
     var next = copy(state);
     var selected = templateById(next.templates, templateId);
     next.selectedTemplateId = selected.id;
-    next.values = exactValues(selected.defaults);
+    next.values = exactFields(selected.defaults, VISUAL_FIELDS);
+    next.taskbook = exactFields(selected.director_taskbook, TASKBOOK_FIELDS);
     return next;
   }
-  function isEditable(state) { return state.step === 2; }
   function updateField(state, field, value) {
-    if (!isEditable(state)) throw new Error("review is read-only");
+    if (state.step !== 2) throw new Error("visual fields can only be changed in step 2");
     if (VISUAL_FIELDS.indexOf(field) === -1) throw new Error("unsupported visual field");
     var next = copy(state);
     next.values[field] = NUMBER_FIELDS.has(field) ? Number(value) : String(value);
     return next;
   }
-  function goNext(state) {
-    if (state.step >= 3) return copy(state);
+  function updateTaskbook(state, field, value) {
+    if (state.step !== 3) throw new Error("taskbook fields can only be changed in step 3");
+    if (TASKBOOK_FIELDS.indexOf(field) === -1) throw new Error("unsupported taskbook field");
     var next = copy(state);
-    next.step += 1;
+    next.taskbook[field] = String(value);
+    return next;
+  }
+  function goNext(state) {
+    var next = copy(state);
+    if (next.step < 3) next.step += 1;
     return next;
   }
   function goBack(state) {
-    if (state.step <= 1) return copy(state);
     var next = copy(state);
-    next.step -= 1;
+    if (next.step > 1) next.step -= 1;
     return next;
   }
   function buildSubmission(state, submissionId) {
-    if (state.step !== 3) throw new Error("submission requires the read-only review step");
-    var payload = {submission_id: submissionId, revision: Number(state.baseRevision) + 1};
+    if (state.step !== 3) throw new Error("submission requires step 3");
+    var payload = {
+      submission_id: submissionId,
+      revision: Number(state.baseRevision),
+      selected_director_template_id: state.selectedTemplateId,
+      director_taskbook: exactFields(state.taskbook, TASKBOOK_FIELDS)
+    };
     VISUAL_FIELDS.forEach(function (field) { payload[field] = copy(state.values[field]); });
     return payload;
   }
-
   function requestJson(url, options) {
     return fetch(url, options).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (data) {
@@ -84,20 +99,22 @@
     var panels = Array.from(document.querySelectorAll("[data-step]"));
     var indicators = Array.from(document.querySelectorAll("[data-step-target]"));
     var templatesNode = document.getElementById("templates");
-    var form = document.getElementById("visual-form");
-    var review = document.getElementById("review");
+    var visualForm = document.getElementById("visual-form");
+    var taskbookForm = document.getElementById("taskbook-form");
+    var recommendation = document.getElementById("recommendation");
     var error = document.getElementById("error");
     var done = document.getElementById("done");
     var state = null;
 
     function showError(message) { error.textContent = message || ""; error.hidden = !message; }
-    function readForm() {
-      VISUAL_FIELDS.forEach(function (field) {
-        state = updateField(state, field, form.elements[field].value);
-      });
+    function fill(form, source, fields) {
+      fields.forEach(function (field) { form.elements[field].value = source[field]; });
     }
-    function fillForm() {
-      VISUAL_FIELDS.forEach(function (field) { form.elements[field].value = state.values[field]; });
+    function readVisual() {
+      VISUAL_FIELDS.forEach(function (field) { state = updateField(state, field, visualForm.elements[field].value); });
+    }
+    function readTaskbook() {
+      TASKBOOK_FIELDS.forEach(function (field) { state = updateTaskbook(state, field, taskbookForm.elements[field].value); });
     }
     function renderTemplates() {
       templatesNode.replaceChildren();
@@ -108,62 +125,82 @@
         button.style.setProperty("--primary", template.defaults.primary_color);
         button.style.setProperty("--secondary", template.defaults.secondary_color);
         button.style.setProperty("--background", template.defaults.background_color);
-        var title = document.createElement("strong"); title.textContent = template.name;
-        var note = document.createElement("small"); note.textContent = template.description;
-        button.append(title, note);
-        button.addEventListener("click", function () { state = applyTemplate(state, template.id); fillForm(); render(); });
+        var name = document.createElement("strong");
+        name.textContent = template.name;
+        var description = document.createElement("small");
+        description.textContent = template.description;
+        button.append(name, description);
+        button.addEventListener("click", function () {
+          state = applyTemplate(state, template.id);
+          fill(visualForm, state.values, VISUAL_FIELDS);
+          fill(taskbookForm, state.taskbook, TASKBOOK_FIELDS);
+          render();
+        });
         templatesNode.appendChild(button);
-      });
-    }
-    function renderReview() {
-      review.replaceChildren();
-      VISUAL_FIELDS.forEach(function (field) {
-        var row = document.createElement("div");
-        var key = document.createElement("dt"); key.textContent = LABELS[field];
-        var value = document.createElement("dd"); value.textContent = state.values[field] || "未指定";
-        row.append(key, value); review.appendChild(row);
       });
     }
     function render() {
       panels.forEach(function (panel) { panel.hidden = Number(panel.dataset.step) !== state.step; });
-      indicators.forEach(function (button) {
-        var target = Number(button.dataset.stepTarget);
-        button.classList.toggle("active", target === state.step);
-        button.classList.toggle("complete", target < state.step);
+      indicators.forEach(function (item) {
+        var step = Number(item.dataset.stepTarget);
+        item.classList.toggle("active", step === state.step);
+        item.classList.toggle("complete", step < state.step);
       });
+      recommendation.textContent = "系统推荐（" + state.recommendationConfidence + "）：" + state.recommendationReason;
       renderTemplates();
-      if (state.step === 2) fillForm();
-      if (state.step === 3) renderReview();
     }
     document.addEventListener("click", function (event) {
-      var button = event.target.closest("[data-action]");
-      if (!button || !state) return;
+      var action = event.target.closest("[data-action]");
+      if (!action || !state) return;
       showError("");
       try {
-        if (button.dataset.action === "back") state = goBack(state);
-        if (button.dataset.action === "next") {
-          if (state.step === 2) { if (!form.reportValidity()) return; readForm(); }
+        if (action.dataset.action === "back") state = goBack(state);
+        if (action.dataset.action === "next") {
+          if (state.step === 2) {
+            if (!visualForm.reportValidity()) return;
+            readVisual();
+          }
           state = goNext(state);
         }
-        if (button.dataset.action === "submit") {
-          button.disabled = true;
-          requestJson("/api/confirm", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(buildSubmission(state, submissionId()))})
-            .then(function () { panels.forEach(function (panel) { panel.hidden = true; }); done.hidden = false; })
-            .catch(function (failure) { button.disabled = false; showError(failure.message); });
+        if (action.dataset.action === "submit") {
+          if (!taskbookForm.reportValidity()) return;
+          readTaskbook();
+          action.disabled = true;
+          requestJson("/api/confirm", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(buildSubmission(state, submissionId()))
+          }).then(function () {
+            panels.forEach(function (panel) { panel.hidden = true; });
+            done.hidden = false;
+          }).catch(function (reason) {
+            action.disabled = false;
+            showError(reason.message);
+          });
           return;
         }
         render();
-      } catch (failure) { showError(failure.message); }
+      } catch (reason) { showError(reason.message); }
     });
     requestJson("/api/recommendations").then(function (data) {
-      state = createState(data.templates, data.recommended_template_id, data.revision);
-      fillForm(); render();
-    }).catch(function (failure) { showError(failure.message); });
+      state = createState(
+        data.templates, data.recommended_template_id, data.revision,
+        data.director_taskbook, data.recommendation_reason, data.recommendation_confidence
+      );
+      fill(visualForm, state.values, VISUAL_FIELDS);
+      fill(taskbookForm, state.taskbook, TASKBOOK_FIELDS);
+      render();
+    }).catch(function (reason) { showError(reason.message); });
   }
-
   return {
-    VISUAL_FIELDS: VISUAL_FIELDS.slice(), createState: createState, applyTemplate: applyTemplate,
-    updateField: updateField, isEditable: isEditable, goNext: goNext, goBack: goBack,
-    buildSubmission: buildSubmission, mount: mount
+    VISUAL_FIELDS: VISUAL_FIELDS,
+    TASKBOOK_FIELDS: TASKBOOK_FIELDS,
+    createState: createState,
+    applyTemplate: applyTemplate,
+    updateField: updateField,
+    updateTaskbook: updateTaskbook,
+    goNext: goNext,
+    goBack: goBack,
+    buildSubmission: buildSubmission,
+    mount: mount
   };
 }));

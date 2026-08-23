@@ -52,7 +52,9 @@ def smoke(editppt: Path, output: Path) -> dict:
     )
     confirmation = {
         "submission_id": "portable-smoke-0001",
-        "revision": 1,
+        "revision": recommendations["revision"],
+        "selected_director_template_id": recommendations["recommended_template_id"],
+        "director_taskbook": recommendations["director_taskbook"],
         **template["defaults"],
     }
     response = client.post("/api/confirm", json=confirmation)

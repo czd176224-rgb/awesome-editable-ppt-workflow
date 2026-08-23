@@ -39,6 +39,33 @@ def test_v6_contract_is_adaptive_and_uses_fixed_geometry():
     assert project["geometry"]["slide_aspect"] == "16:9"
     assert project["geometry"]["body_aspect"] == "17:8"
     assert project["geometry"]["body_pixels"] == {"width": 1904, "height": 896}
+    assert project["director_confirmation"] is None
+
+
+def test_v6_director_confirmation_requires_server_digest():
+    project = _project()
+    taskbook = {
+        "use_scenario": "投决会审议",
+        "presenter": "项目投资团队",
+        "primary_audience": "投资决策委员会",
+        "audience_prior_knowledge": "已了解项目基本情况",
+        "desired_outcome": "决定是否投资",
+        "emphasis": "估值、回报与风险",
+        "deemphasis": "重复背景",
+    }
+    from director_taskbook import taskbook_digest
+
+    project["director_confirmation"] = {
+        "template_id": "investment-committee",
+        "template_version": "1.0",
+        "taskbook": taskbook,
+        "taskbook_digest": taskbook_digest(taskbook),
+    }
+    validate_project(project)
+
+    project["director_confirmation"]["taskbook_digest"] = "0" * 64
+    with pytest.raises(ValueError, match="taskbook digest"):
+        validate_project(project)
 
 
 def test_active_v6_entrypoints_do_not_claim_generate_only():

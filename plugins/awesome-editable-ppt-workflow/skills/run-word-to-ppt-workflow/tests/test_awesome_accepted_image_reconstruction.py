@@ -100,9 +100,9 @@ def test_reconstruction_request_accepts_current_candidate_acceptance_receipt(tmp
     assert request["sealed_image_edits"] == []
 
 
-def test_finalize_and_assemble_continue_after_pre_acceptance_authorities_exit(tmp_path: Path):
+def test_finalize_and_assemble_continue_after_transient_pre_acceptance_authorities_exit(tmp_path: Path):
     project = _project(tmp_path, 1)
-    for name in ("01_ui", "02_v6", "03_v6"):
+    for name in ("01_ui", "03_v6"):
         shutil.rmtree(project / name, ignore_errors=True)
 
     request = build_reconstruction_request(project, page_number=1)

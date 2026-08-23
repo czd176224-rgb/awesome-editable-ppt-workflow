@@ -1,32 +1,30 @@
 <!doctype html>
-<html lang="zh-CN" data-ui="awesome-three-step-confirm">
+<html lang="zh-CN" data-ui="awesome-three-step-director-confirm">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>确认演示文稿视觉风格</title>
+  <title>确认演示文稿导演任务书</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <main class="shell">
     <header class="page-header">
       <p class="eyebrow">AWESOME EDITABLE PPT</p>
-      <h1>确认视觉风格</h1>
-      <p>三步完成。模板只用于填写初始值，最终只保存你确认的视觉设置。</p>
+      <h1>确认整篇演示文稿导演任务书</h1>
+      <p>一次确认演示类型、全局视觉和本次场景，Word 始终是每页内容的权威来源。</p>
     </header>
-
     <nav class="steps" aria-label="确认进度">
-      <button type="button" data-step-target="1"><span>1</span>选择模板</button>
-      <button type="button" data-step-target="2"><span>2</span>调整设置</button>
-      <button type="button" data-step-target="3"><span>3</span>最终确认</button>
+      <button type="button" data-step-target="1"><span>1</span>导演类型</button>
+      <button type="button" data-step-target="2"><span>2</span>全局视觉</button>
+      <button type="button" data-step-target="3"><span>3</span>导演任务书</button>
     </nav>
-
     <p id="error" class="error" role="alert" hidden></p>
 
     <section class="panel" data-step="1">
       <div class="panel-heading">
         <p class="eyebrow">STEP 1</p>
-        <h2>选择一个起点</h2>
-        <p>选择会更新下一步的默认值，但模板名称不会写入最终合同。</p>
+        <h2>选择整篇演示文稿的导演类型</h2>
+        <p id="recommendation"></p>
       </div>
       <div id="templates" class="template-grid"></div>
       <footer class="actions"><span></span><button type="button" class="primary" data-action="next">下一步</button></footer>
@@ -35,8 +33,8 @@
     <section class="panel" data-step="2" hidden>
       <div class="panel-heading">
         <p class="eyebrow">STEP 2</p>
-        <h2>调整视觉设置</h2>
-        <p>所有可保存的字段都在这里，没有页面材料或运行参数。</p>
+        <h2>确认全局视觉</h2>
+        <p>这里只确认整篇通用的颜色、字体和字号。</p>
       </div>
       <form id="visual-form" class="settings-grid">
         <label>主色<input name="primary_color" type="color" required></label>
@@ -46,26 +44,32 @@
         <label>西文字体<input name="latin_font" type="text" maxlength="120" required></label>
         <label>标题字号（pt）<input name="title_size_pt" type="number" min="12" max="72" step="1" required></label>
         <label>正文字号（pt）<input name="body_size_pt" type="number" min="8" max="32" step="1" required></label>
-        <label>图注字号（pt）<input name="caption_size_pt" type="number" min="8" max="24" step="1" required></label>
-        <label class="wide">地区特征（可选）<textarea name="regional_characteristics" maxlength="500" rows="2"></textarea></label>
-        <label class="wide">简短视觉描述<textarea name="visual_description" maxlength="500" rows="3" required></textarea></label>
+        <label>注释字号（pt）<input name="caption_size_pt" type="number" min="8" max="24" step="1" required></label>
       </form>
-      <footer class="actions"><button type="button" data-action="back">返回</button><button type="button" class="primary" data-action="next">预览</button></footer>
+      <footer class="actions"><button type="button" data-action="back">返回</button><button type="button" class="primary" data-action="next">下一步</button></footer>
     </section>
 
-    <section class="panel" data-step="3" data-read-only="true" hidden>
+    <section class="panel" data-step="3" hidden>
       <div class="panel-heading">
         <p class="eyebrow">STEP 3</p>
-        <h2>最终确认</h2>
-        <p>此页只读。需要修改时可以返回上一步。</p>
+        <h2>确认本次导演任务书</h2>
+        <p>这些信息只约束表达重点与受众理解，不会改写或删除 Word 原文。</p>
       </div>
-      <dl id="review" class="review-grid"></dl>
-      <footer class="actions"><button type="button" data-action="back">返回修改</button><button type="button" class="primary" data-action="submit">确认并保存</button></footer>
+      <form id="taskbook-form" class="taskbook-grid">
+        <label>本次具体使用场景<textarea name="use_scenario" maxlength="2000" rows="2" required></textarea></label>
+        <label>汇报方<textarea name="presenter" maxlength="2000" rows="2" required></textarea></label>
+        <label>主要受众<textarea name="primary_audience" maxlength="2000" rows="2" required></textarea></label>
+        <label>受众已有认知<textarea name="audience_prior_knowledge" maxlength="2000" rows="2" required></textarea></label>
+        <label>本次希望形成的理解、讨论或决定<textarea name="desired_outcome" maxlength="2000" rows="3" required></textarea></label>
+        <label>需要重点呈现的 Word 已有内容<textarea name="emphasis" maxlength="2000" rows="3" required></textarea></label>
+        <label>不希望展开或不适合披露的内容<textarea name="deemphasis" maxlength="2000" rows="3" required></textarea></label>
+      </form>
+      <footer class="actions"><button type="button" data-action="back">返回</button><button type="button" class="primary" data-action="submit">确认并生成</button></footer>
     </section>
 
     <section id="done" class="panel done" hidden>
-      <h2>视觉设置已确认</h2>
-      <p>可以返回工作流继续生成演示文稿。</p>
+      <h2>导演任务书已确认</h2>
+      <p>工作流将按 Word 原文和已确认的整篇导演上下文继续生成。</p>
     </section>
   </main>
   <script src="/static/app.js" defer></script>

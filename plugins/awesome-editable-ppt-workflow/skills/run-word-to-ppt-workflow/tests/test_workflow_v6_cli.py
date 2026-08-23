@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from docx import Document
 from PIL import Image
 
 
@@ -84,6 +85,39 @@ def test_v6_cli_exposes_run_pages_as_the_multi_page_command():
         "run-pages", "--project", "project", "--pages", "1", "--timeout", "300",
     ])
     assert overridden.timeout == 300
+
+
+def test_init_cli_reports_all_44_logical_marker_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Break caught: CLI init reports physical Word pages instead of logical marker pages.
+    word = tmp_path / "44-markers.docx"
+    document = Document()
+    source_ids = [number if number not in {8, 19, 30, 41} else number + 100 for number in range(1, 45)]
+    for logical_number, source_id in enumerate(source_ids, start=1):
+        document.add_paragraph(f"第 {source_id} 页")
+        document.add_paragraph(f"标题 {logical_number}")
+        document.add_paragraph(f"正文 {logical_number}")
+        if logical_number % 3 == 0 and logical_number != 44:
+            document.add_page_break()
+    document.save(word)
+    logo = tmp_path / "logo.svg"
+    logo.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><rect width="100" height="20"/></svg>',
+        encoding="utf-8",
+    )
+    project = tmp_path / "project"
+    monkeypatch.setattr(sys, "argv", [
+        "workflow_v6_cli.py", "init", "--word", str(word), "--logo", str(logo),
+        "--project", str(project),
+    ])
+
+    assert workflow_v6_cli.main() == 0
+
+    status = json.loads(capsys.readouterr().out)
+    extraction = json.loads((project / "02_v6/paginated_word_source.json").read_text(encoding="utf-8"))
+    assert [page["page_number"] for page in status["pages"]] == list(range(1, 45))
+    assert [page["source_page_id"] for page in extraction["pages"]] == source_ids
 
 
 def test_prepare_page_materials_completes_project_real_assets_before_publication(

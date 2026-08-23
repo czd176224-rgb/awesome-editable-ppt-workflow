@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openai.com/schemas/awesome-editable-ppt-workflow/director-taskbook-v1.json",
+  "title": "DirectorTaskbookV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "use_scenario",
+    "presenter",
+    "primary_audience",
+    "audience_prior_knowledge",
+    "desired_outcome",
+    "emphasis",
+    "deemphasis"
+  ],
+  "properties": {
+    "use_scenario": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "presenter": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "primary_audience": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "audience_prior_knowledge": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "desired_outcome": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "emphasis": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "deemphasis": {"type": "string", "minLength": 1, "maxLength": 2000}
+  }
+}

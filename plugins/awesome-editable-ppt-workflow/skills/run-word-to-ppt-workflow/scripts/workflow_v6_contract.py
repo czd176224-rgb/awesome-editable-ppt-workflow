@@ -12,6 +12,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from fixed_region_contract import BODY_BOX_CM, CONTRACT_VERSION, SLIDE_SIZE_CM
+from director_taskbook import taskbook_digest, validate_taskbook
+from director_templates import DIRECTOR_TEMPLATES
 
 
 PLUGIN_ID = "awesome-editable-ppt-workflow"
@@ -168,6 +170,7 @@ def new_project(
         "word_source": copy.deepcopy(dict(word_source)),
         "logo_source": copy.deepcopy(dict(logo_source)),
         "style_confirmation": {"status": "pending", "contract": None},
+        "director_confirmation": None,
         "confirmed_ui_revision": None,
         "confirmed_ui_digest": None,
         "page_materials_status": "pre_confirmation",
@@ -246,6 +249,7 @@ def validate_project(project: Mapping[str, Any]) -> None:
         "logo_source",
         "source_identity",
         "style_confirmation",
+        "director_confirmation",
         "confirmed_ui_revision",
         "confirmed_ui_digest",
         "page_materials_status",
@@ -289,6 +293,22 @@ def validate_project(project: Mapping[str, Any]) -> None:
         raise ValueError("V6 style status is invalid")
     if style["status"] == "confirmed" and not isinstance(style["contract"], Mapping):
         raise ValueError("confirmed V6 style requires a contract")
+    director = project["director_confirmation"]
+    if director is not None:
+        if not isinstance(director, Mapping) or set(director) != {
+            "template_id", "template_version", "taskbook", "taskbook_digest",
+        }:
+            raise ValueError("V6 director confirmation is invalid")
+        if director["template_id"] not in {item["id"] for item in DIRECTOR_TEMPLATES}:
+            raise ValueError("V6 director template is invalid")
+        if director["template_version"] != "1.0":
+            raise ValueError("V6 director template version is invalid")
+        try:
+            taskbook = validate_taskbook(director["taskbook"])
+        except ValueError as exc:
+            raise ValueError("V6 director taskbook is invalid") from exc
+        if director["taskbook_digest"] != taskbook_digest(taskbook):
+            raise ValueError("V6 director taskbook digest is invalid")
     revision = project["confirmed_ui_revision"]
     digest = project["confirmed_ui_digest"]
     materials_status = project["page_materials_status"]

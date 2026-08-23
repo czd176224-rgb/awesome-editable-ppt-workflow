@@ -20,6 +20,7 @@ import workflow_v6_image
 from codex_subscription_runtime import CodexStructuredResult, invoke_structured
 from provider_keyring import signing_key, verification_key
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
+from director_taskbook import confirmed_taskbook_prompt
 
 from . import provider as experiment_provider
 from .director import (
@@ -502,10 +503,10 @@ def _validate_review_snapshot(
 
 def _review_prompt(
     material_view: CompletePageMaterialView,
-    director: DirectorArtifact,
     candidate: CandidateArtifact,
     actual_prompt: str,
     image_ids: tuple[str, ...],
+    taskbook: str,
 ) -> str:
     selected = tuple(candidate.selected_reference_ids)
     selected_set = set(selected)
@@ -549,8 +550,8 @@ def _review_prompt(
         + "\n".join(selected_lines)
         + "\n\nCOMPLETE ORIGINAL PAGE MATERIAL VIEW (not a summary)\n"
         + _canonical_text(material_view.value)
-        + "\n\nPAGE DIRECTOR MACHINE AND CREATIVE PROSE AUTHORITY\n"
-        + _canonical_text(director.value)
+        + "\n\nCONFIRMED PRESENTATION TASKBOOK\n"
+        + taskbook
         + "\n\nACTUAL GPT IMAGE 2 PROMPT (exact decoded UTF-8 bytes)\n"
         + "<<<ACTUAL-PROMPT>>>\n"
         + actual_prompt
@@ -777,7 +778,8 @@ def review_candidate_once(
     if final_preflight != current_preflight or not final_preflight.passed:
         raise ValueError("candidate changed after technical preflight")
     prompt = _review_prompt(
-        material_view, director, candidate, actual_prompt, image_ids
+        material_view, candidate, actual_prompt, image_ids,
+        confirmed_taskbook_prompt(workspace.project_copy),
     )
     images = _publish_review_snapshot(workspace, material_view, candidate, image_ids)
     start = time.monotonic()

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from threading import Condition, Lock, RLock, Semaphore
 from typing import Any
@@ -18,6 +19,9 @@ from workflow_v6_reconstruction_worker import (
     assemble_reconstructed_project,
     reconstruct_accepted_page,
 )
+from workflow_v6_composition import load_composition_authority
+from workflow_v6_special_pages import SPECIAL_ROLES, render_special_page
+import workflow_v6_secure_io as secure_io
 
 
 def _default_recorder(workspace: Any) -> EvidenceRecorder:
@@ -75,6 +79,7 @@ class PipelineDependencies:
     reviewer_invoke: Callable[..., Any] | None = None
     reconstruct_page: Callable[[Any, Any], Any] | None = None
     assemble_project: Callable[[Path, dict[int, Any]], Any] | None = None
+    native_page_renderer: Callable[[Path, int], Any] | None = None
 
 
 def production_pipeline_dependencies() -> PipelineDependencies:
@@ -82,7 +87,14 @@ def production_pipeline_dependencies() -> PipelineDependencies:
     return PipelineDependencies(
         reconstruct_page=reconstruct_accepted_page,
         assemble_project=assemble_reconstructed_project,
+        native_page_renderer=render_special_page,
     )
+
+
+@dataclass(frozen=True)
+class NativePageOutcome:
+    status: str
+    receipt: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -119,7 +131,7 @@ def _outcome_summary(outcome: Any) -> dict[str, Any]:
             "failure_problem_count": len(getattr(outcome, "failure_problems")),
             "status": getattr(outcome, "status"),
         }
-    return {"status": "completed"}
+    return {"status": getattr(outcome, "status", "completed")}
 
 
 def _terminal_failure_summary(outcome: Any) -> str | None:
@@ -299,7 +311,8 @@ def run_pages(
 ) -> PipelineReport:
     """Run independent live page loops in a bounded window without a project lock."""
     dependencies = dependencies or production_pipeline_dependencies()
-    root = Path(project).resolve()
+    secure_io.reject_reparse_chain(Path(project))
+    root = Path(project).resolve(strict=True)
     pages = _page_numbers(page_numbers)
     if not pages:
         return PipelineReport((), {}, {}, {name: 0 for name in ("director", "image2", "review", "reconstruction", "assembly")}, 0)
@@ -314,8 +327,22 @@ def run_pages(
     gate = ProjectGenerationGate(root, profile=configuration.provider_profile)
     completed: dict[int, Any] = {}
     failures: dict[int, str] = {}
+    composition = load_composition_authority(root)
+    roles = (
+        {page["output_page_number"]: page["page_role"] for page in composition["pages"]}
+        if composition is not None else {}
+    )
 
     def run_one(page_number: int) -> _PageExecution:
+        if roles.get(page_number) in SPECIAL_ROLES:
+            if dependencies.native_page_renderer is None:
+                return _PageExecution(None, RuntimeError("native special page renderer is unavailable"), (), 0)
+            try:
+                with limits.bounded("reconstruction"):
+                    receipt = dependencies.native_page_renderer(root, page_number)
+                return _PageExecution(NativePageOutcome("page_complete", receipt), None, (), 0)
+            except Exception as exc:
+                return _PageExecution(None, exc, (), 0)
         workspace = dependencies.open_workspace(root, page_number)
         recorder = dependencies.evidence_recorder(workspace)
         provider_success_generations: list[int] = []
@@ -454,8 +481,8 @@ def run_pages(
             page_number: outcome
             for page_number, outcome in sorted(completed.items())
             if (
-                getattr(outcome, "status", None) == "accepted"
-                and getattr(outcome, "accepted", None) is not None
+                (getattr(outcome, "status", None) == "accepted" and getattr(outcome, "accepted", None) is not None)
+                or getattr(outcome, "status", None) == "page_complete"
             )
         }
         with limits.bounded("assembly"):

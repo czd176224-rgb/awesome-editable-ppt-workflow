@@ -112,8 +112,11 @@ def _source_block(block: Paragraph | Table, source_block_index: int, source_orde
         level = 0
         if num_properties is not None and num_properties.ilvl is not None:
             level = int(num_properties.ilvl.val)
-        return {**common, "type": "list", "text": block.text, "list_kind": list_kind, "level": level}
-    return {**common, "type": "paragraph", "text": block.text}
+        return {
+            **common, "type": "list", "text": block.text, "list_kind": list_kind,
+            "level": level, "paragraph_style": style_name,
+        }
+    return {**common, "type": "paragraph", "text": block.text, "paragraph_style": style_name}
 
 
 def relationship_ids(block: Paragraph | Table) -> list[str]:
@@ -139,34 +142,66 @@ def extract(input_path: Path, marker_pattern: str) -> dict:
     comments = _comment_catalog(document)
     pages: list[dict] = []
     current: dict | None = None
-    seen: set[int] = set()
+    leading_blocks: list[dict] = []
+    warnings: list[dict] = []
     for source_block_index, block in enumerate(iter_blocks(document)):
         if isinstance(block, Paragraph):
             match = marker.match(block.text.strip())
             if match:
-                page_number = int(match.group(1))
-                if page_number in seen:
-                    raise ValueError(f"Duplicate page marker: {page_number}")
-                seen.add(page_number)
-                current = {"page_number": page_number, "blocks": [], "must_keep": [], "page_purpose": "待人工填写"}
+                source_page_id = int(match.group(1))
+                page_number = len(pages) + 1
+                page_blocks = list(leading_blocks) if not pages else []
+                current = {
+                    "page_number": page_number,
+                    "source_page_id": source_page_id,
+                    "marker_text": block.text.strip(),
+                    "blocks": page_blocks,
+                    "must_keep": [],
+                    "page_purpose": "待人工填写",
+                }
                 pages.append(current)
                 current["marker_source_block_id"] = f"word-block-{source_block_index:06d}"
+                if leading_blocks:
+                    warnings.append({
+                        "code": "content_before_first_marker",
+                        "output_page": 1,
+                        "block_count": len(leading_blocks),
+                    })
+                    leading_blocks.clear()
             elif current is not None:
                 if block.text or relationship_ids(block) or comment_ids(block):
                     current["blocks"].append(_source_block(block, source_block_index, len(current["blocks"]) + 1))
+            elif block.text or relationship_ids(block) or comment_ids(block):
+                leading_blocks.append(_source_block(block, source_block_index, len(leading_blocks) + 1))
         elif isinstance(block, Table) and current is not None:
             current["blocks"].append(_source_block(block, source_block_index, len(current["blocks"]) + 1))
+        elif isinstance(block, Table):
+            leading_blocks.append(_source_block(block, source_block_index, len(leading_blocks) + 1))
     if not pages:
         raise ValueError("No page markers found. Expected markers such as '第1页'.")
-    expected = list(range(1, len(pages) + 1))
-    actual = [page["page_number"] for page in pages]
-    if actual != expected:
-        raise ValueError(f"Page markers must be ordered and consecutive. Expected {expected}, got {actual}")
+    output_pages_by_source_id: dict[int, list[int]] = {}
     for page in pages:
+        for source_order, block in enumerate(page["blocks"], start=1):
+            block["source_order"] = source_order
+        output_pages_by_source_id.setdefault(page["source_page_id"], []).append(page["page_number"])
         if not page["blocks"]:
             raise ValueError(f"Page {page['page_number']} is empty")
+    for source_page_id in sorted(output_pages_by_source_id):
+        output_pages = output_pages_by_source_id[source_page_id]
+        if len(output_pages) > 1:
+            warnings.append({
+                "code": "duplicate_source_page_id",
+                "source_page_id": source_page_id,
+                "output_pages": output_pages,
+            })
     _bind_page_comments(pages, comments)
-    return {"schema_version": "1.0", "source_file": input_path.name, "page_count": len(pages), "pages": pages}
+    return {
+        "schema_version": "1.0",
+        "source_file": input_path.name,
+        "page_count": len(pages),
+        "pages": pages,
+        "pagination_warnings": warnings,
+    }
 
 
 def _render_pdf_with_word(input_path: Path, output_pdf: Path) -> bool:

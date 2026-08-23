@@ -119,7 +119,12 @@ def collect_page_materials(project_root: Path, page_number: int) -> dict[str, An
     if not isinstance(identified_title, str) or not identified_title:
         raise ValueError("paginated Word page has no fixed title identification")
     fixed_title = identified_title
-    word_images, attachment_inputs = _asset_inputs(project, assets, page_number)
+    source_asset_page_number = page.get("source_asset_page_number", page_number)
+    word_images, attachment_inputs = _asset_inputs(
+        project,
+        assets,
+        source_asset_page_number if type(source_asset_page_number) is int else -1,
+    )
     result = {
         "page_number": page_number,
         "fixed_page_title": fixed_title,

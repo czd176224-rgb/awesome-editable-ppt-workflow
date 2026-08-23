@@ -19,6 +19,7 @@ if str(IMAGE_PROVIDER_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(IMAGE_PROVIDER_SCRIPTS))
 from provider_keyring import signing_key, verification_key
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
+from director_taskbook import confirmed_taskbook_prompt
 
 from .consulting_prompt import compile_consulting_six_part_prompt
 
@@ -297,7 +298,7 @@ def _visual_director_reference() -> str:
     if not data or len(data) > 16_384:
         raise ValueError("visual director reference size is invalid")
     try:
-        text = data.decode("utf-8").strip()
+        text = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").strip()
     except UnicodeDecodeError as exc:
         raise ValueError("visual director reference is not valid UTF-8") from exc
     if not text:
@@ -445,6 +446,7 @@ def direct_page(
     """Run one page-level multimodal director turn in role awesome-page-director."""
     image_ids = _validate_material_view(workspace, material_view)
     visual_reference = _visual_director_reference()
+    taskbook = confirmed_taskbook_prompt(workspace.project_copy)
     prompt = (
         "WORD BODY AND MATERIAL AUTHORITY\n"
         "Word body text is the primary authority for page facts, theme, and narrative. "
@@ -458,6 +460,8 @@ def direct_page(
         f"body must exclude the fixed title, logo, footer, and page number. {_CENTER_17_8_SAFE_REGION}\n\n"
         "GENERAL VISUAL DIRECTOR PRINCIPLES\n"
         f"{visual_reference}\n\n"
+        "CONFIRMED PRESENTATION TASKBOOK\n"
+        f"{taskbook}\n\n"
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES\n"
         "IMAGE INPUT MAP (input order is authoritative)\n"
         f"{_mapping_text(image_ids)}\n\n"
@@ -584,6 +588,7 @@ def decide_correction(
         raise ValueError("correction requires explicit review problems")
     candidate = _candidate_under_project(workspace, previous_candidate)
     image_ids = _validate_material_view(workspace, material_view)
+    taskbook = confirmed_taskbook_prompt(workspace.project_copy)
     prior_candidate: Path | None = None
     if (previous_decision is None) != (previous_request_candidate is None):
         raise ValueError(
@@ -616,6 +621,8 @@ def decide_correction(
         "visually primary and keep its exact name only as a small identity caption.\n\n"
         "EXPLICIT REVIEW PROBLEMS\n"
         f"{_canonical_text(problem_list)}\n\n"
+        "CONFIRMED PRESENTATION TASKBOOK\n"
+        f"{taskbook}\n\n"
         "IMAGE INPUT MAP\n"
         f"{_mapping_text(image_ids)}\n"
         f"Image-{candidate_number} = previous-candidate (not a source material ID)\n\n"

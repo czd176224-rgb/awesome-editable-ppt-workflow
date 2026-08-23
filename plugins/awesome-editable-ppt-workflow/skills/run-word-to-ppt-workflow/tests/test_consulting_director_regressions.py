@@ -92,3 +92,15 @@ def test_visual_qa_keeps_private_pages_local_and_records_only_nonsensitive_resul
     assert "Store the private note outside the repository" in text
     assert "source project is read-only" in text
     assert "C:/" not in text and "C:\\" not in text
+
+
+def test_director_template_context_uses_one_taskbook_helper_without_reviewing_director_output() -> None:
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    director = (scripts / "complex_page_experiment/director.py").read_text(encoding="utf-8")
+    review = (scripts / "complex_page_experiment/review.py").read_text(encoding="utf-8")
+
+    assert director.count("confirmed_taskbook_prompt(") == 2
+    assert review.count("confirmed_taskbook_prompt(") == 1
+    assert "CONFIRMED PRESENTATION TASKBOOK" in director
+    assert "CONFIRMED PRESENTATION TASKBOOK" in review
+    assert "_canonical_text(director.value)" not in review
