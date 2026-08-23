@@ -115,8 +115,8 @@ def test_first_install_writes_receipt_and_same_version_is_rejected_without_cli_m
     assert first.returncode == 0, first.stdout + first.stderr
     state = json.loads(receipt.read_text(encoding="utf-8-sig"))
     assert state["schemaVersion"] == "editable-ppt-install-receipt-v1"
-    assert state["releaseTag"] == "v1.1.0"
-    assert any("marketplace add" in line and "--ref v1.1.0" in line for line in log_lines(environment))
+    assert state["releaseTag"] == "v1.2.0"
+    assert any("marketplace add" in line and "--ref v1.2.0" in line for line in log_lines(environment))
     before = log_lines(environment)
 
     repeated = run_installer(release, receipt, environment)
@@ -135,7 +135,7 @@ def test_update_accepts_only_higher_immutable_tag_and_repair_is_explicit(install
     before_repair = len(log_lines(environment))
     repaired = run_installer(release, receipt, environment, "-Repair")
     assert repaired.returncode == 0, repaired.stdout + repaired.stderr
-    assert any("--ref v1.1.0" in line for line in log_lines(environment)[before_repair:])
+    assert any("--ref v1.2.0" in line for line in log_lines(environment)[before_repair:])
 
     set_version(release, "2.6.2")
     updated = run_update(release, receipt, environment)
@@ -162,7 +162,7 @@ def test_failed_target_registration_restores_previous_ref_and_receipt(installer_
     assert receipt.read_bytes() == old_receipt
     tail = log_lines(environment)
     assert any("marketplace add" in line and "--ref v2.6.2" in line for line in tail)
-    assert any("marketplace add" in line and "--ref v1.1.0" in line for line in tail)
+    assert any("marketplace add" in line and "--ref v1.2.0" in line for line in tail)
 
 
 @pytest.mark.parametrize(
@@ -190,7 +190,7 @@ def test_failed_old_teardown_restores_exact_previous_ref_and_preserves_receipt(
     assert failed.returncode != 0
     assert receipt.read_bytes() == old_receipt
     lines = log_lines(environment)[before:]
-    assert any("marketplace add" in line and "--ref v1.1.0" in line for line in lines)
+    assert any("marketplace add" in line and "--ref v1.2.0" in line for line in lines)
     assert any(line == f"plugin add {plugin}@{marketplace}" for line in lines)
 
 
@@ -209,7 +209,7 @@ def test_rollback_failure_leaves_recovery_required_transaction(installer_fixture
     transaction = Path(f"{receipt}.transaction.json")
     recovery = json.loads(transaction.read_text(encoding="utf-8-sig"))
     assert recovery["status"] == "recovery-required"
-    assert recovery["previous"]["releaseTag"] == "v1.1.0"
+    assert recovery["previous"]["releaseTag"] == "v1.2.0"
 
 
 def run_uninstall(release: Path, receipt: Path, environment: dict[str, str]) -> subprocess.CompletedProcess:

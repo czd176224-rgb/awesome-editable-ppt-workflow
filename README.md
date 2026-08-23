@@ -1,4 +1,4 @@
-# Awesome Editable PPT Workflow 1.1.0
+# Awesome Editable PPT Workflow 1.2.0
 
 Public Codex plugin for converting a paginated Word document plus an SVG Logo into an object-level editable 16:9 PowerPoint.
 
@@ -7,6 +7,10 @@ Public Codex plugin for converting a paginated Word document plus an SVG Logo in
 The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `consulting-page-director-v2-six-part-image2`.
 
 - One Word page becomes one slide. The body is 1904x896 (17:8).
+- Non-contiguous Word page labels such as `第4页`、`第33页`、`第26页` remain in the user's order.
+- The first visible Word paragraph is the slide-title authority; later headings stay in the body.
+- Cover, TOC, section, closing and appendix pages use native editable layouts and preserve every frozen source block.
+- One three-step UI confirms a whole-deck director preset, the visual contract and a seven-field presentation taskbook. Word remains the factual and page-content authority.
 - One consulting page director turns each body into a coherent business argument with explanatory copy, an analytical backbone, evidence-to-interpretation-to-conclusion flow, and an explicit takeaway.
 - The sealed Image2 prompt has exactly six consulting-report sections. The compiler owns the canvas, fixed-layer exclusions, semantic color roles, accent limits, and formal-report prohibitions.
 - The single final UI submission is the sole material/reference authority. Every staged reference requires explicit keep/remove; the backend cannot reinterpret it afterward.
@@ -20,11 +24,24 @@ The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is 
 
 ## Install
 
-Download the immutable `v1.1.0` Windows release ZIP:
+Download the immutable `v1.2.0` Windows release ZIP:
 
-`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.1.0/awesome-editable-ppt-workflow-1.1.0-windows.zip`
+`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.0/awesome-editable-ppt-workflow-1.2.0-windows.zip`
 
 Download the adjacent `SHA256SUMS.txt`, verify locally with `Get-FileHash`, extract the ZIP and run `install.ps1`. Restart Codex after installation or upgrade.
+
+## Word page controls
+
+Keep the user-authored pagination. To make a special page explicit, add one standalone paragraph or Word comment inside that page:
+
+- `PPT页型：封面`
+- `PPT页型：目录`
+- `PPT页型：章节`
+- `PPT页型：正文`
+- `PPT页型：尾页`
+- `PPT页型：附录`
+
+The control is removed from visible slide content. If no control is present, the workflow uses only conservative source-text recognition; it does not invent a special page or move Word material.
 
 Repository development and release instructions are in [docs/RELEASE.md](docs/RELEASE.md).
 Structural and privacy-safe visual regression instructions are in [docs/CONSULTING_DIRECTOR_VISUAL_QA.md](docs/CONSULTING_DIRECTOR_VISUAL_QA.md).

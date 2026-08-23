@@ -83,9 +83,9 @@ def test_current_release_metadata_and_user_contract_are_consistent():
     package = json.loads(read("package-info.json"))
     plugin = json.loads(read("plugins/awesome-editable-ppt-workflow/.codex-plugin/plugin.json"))
     marketplace = json.loads(read(".agents/plugins/marketplace.json"))
-    assert package["pluginVersion"] == plugin["version"] == "1.1.0"
-    assert package["releaseTag"] == "v1.1.0"
-    assert marketplace["interface"]["displayName"] == "Awesome Editable PPT Workflow 1.1.0"
+    assert package["pluginVersion"] == plugin["version"] == "1.2.0"
+    assert package["releaseTag"] == "v1.2.0"
+    assert marketplace["interface"]["displayName"] == "Awesome Editable PPT Workflow 1.2.0"
     assert package["promptContractVersion"] == "consulting-page-director-v2-six-part-image2"
     assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert package["designAcceptancePolicy"] == "single-independent-review-with-at-most-two-corrections"

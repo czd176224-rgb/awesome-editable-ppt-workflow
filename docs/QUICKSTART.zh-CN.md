@@ -1,7 +1,26 @@
-# Awesome Editable PPT Workflow 1.1.0 蹇€熷紑濮?
-涓嬭浇涓嶅彲鍙樼殑 `v1.1.0` Windows Release ZIP锛?
-`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.1.0/awesome-editable-ppt-workflow-1.1.0-windows.zip`
+# Awesome Editable PPT Workflow 1.2.0 快速开始
 
-鍚屾椂涓嬭浇 `SHA256SUMS.txt`锛岀敤 PowerShell `Get-FileHash` 鏍搁獙鍚庤В鍘嬪苟杩愯 `install.ps1`锛屽啀閲嶅惎 Codex銆?
-涓婁紶涓€浠藉凡鍒嗛〉鐨?`.docx` 鍜屼竴浠?`.svg` Logo銆傚彧闇€瀹屾垚涓€娆℃渶缁?UI 鎻愪氦锛氱‘璁ゆ暣浣撻鏍笺€佹瘡椤垫鏂囥€侀檮浠舵彁鍙栫粨鏋溿€佸叿浣撶敓鍥捐姹傦紝骞跺姣忓紶鍊欓€夊弬鑰冨浘鏄庣‘淇濈暀鎴栫Щ闄ゃ€?
-娌℃湁纭鍙傝€冨浘鏃朵娇鐢?Image2 `generate`锛涙湁 1鈥?6 寮犵‘璁ゅ弬鑰冨浘鏃朵娇鐢?`edit`銆傞殢鍚庢墽琛岃交閲?QA銆佸璞＄骇鍙紪杈戦噸寤猴紝鏈€鍚庢坊鍔犲浐瀹氭爣棰樸€佸師濮?SVG Logo銆侀〉鑴氬拰椤电爜銆?
+下载不可变的 `v1.2.0` Windows Release ZIP：
+
+`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.0/awesome-editable-ppt-workflow-1.2.0-windows.zip`
+
+同时下载 `SHA256SUMS.txt`，使用 PowerShell `Get-FileHash` 核验后解压并运行 `install.ps1`，然后重启 Codex。
+
+使用时提交一份已分页的 `.docx` 和一份 `.svg` Logo。UI 只确认一次：
+
+1. 选择系统推荐的整篇页面导演；
+2. 确认主题色、辅助色、背景色、字体和字号；
+3. 确认本次场景任务书。
+
+Word 始终是页数、顺序、标题、正文和事实的权威。插件不会增加、删减、改写或移动 Word 材料。
+
+如需明确特殊页，可在对应 Word 页加入一个独立段落或批注：
+
+- `PPT页型：封面`
+- `PPT页型：目录`
+- `PPT页型：章节`
+- `PPT页型：正文`
+- `PPT页型：尾页`
+- `PPT页型：附录`
+
+控制行不会显示在 PPT 中。没有控制行时，插件只做保守识别，不会凭空生成特殊页。
