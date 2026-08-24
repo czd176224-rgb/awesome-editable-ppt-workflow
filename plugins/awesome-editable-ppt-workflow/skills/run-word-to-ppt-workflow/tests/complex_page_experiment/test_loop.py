@@ -92,6 +92,14 @@ def _invoke_sequence(view, *, strategy="regenerate_from_materials"):
     return invoke
 
 
+def _director_only(view):
+    def invoke(_project, **kwargs):
+        assert kwargs["role"] == "awesome-page-director"
+        return _result(_director_value(view))
+
+    return invoke
+
+
 def _run(provider_fixture, monkeypatch, reviews, *, max_corrections=2,
          material_factory=None, director_invoke=None):
     workspace, view, recorder, _refs = provider_fixture
@@ -127,15 +135,23 @@ def test_first_valid_candidate_accepts_without_default_extra_candidates(
     assert summary["call_totals"]["correction_decision"] == 0
 
 
-@pytest.mark.parametrize("strategy", ["edit_previous", "regenerate_from_materials"])
-def test_semantic_problem_uses_direct_correction_then_accepts(
-    provider_fixture, monkeypatch, strategy
+@pytest.mark.parametrize(
+    "category",
+    [
+        "fixed_layer_violation",
+        "misleading_fabrication",
+        "ai_heavy_reporting_style",
+        "semantic_color_misuse",
+    ],
+)
+def test_mechanical_review_problem_skips_correction_model_then_accepts(
+    provider_fixture, monkeypatch, category
 ):
     workspace, view, recorder, outcome = _run(
         provider_fixture,
         monkeypatch,
-        [_review_result("correct"), _review_result("accept")],
-        director_invoke=_invoke_sequence(provider_fixture[1], strategy=strategy),
+        [_review_result("correct", category=category), _review_result("accept")],
+        director_invoke=_director_only(provider_fixture[1]),
     )
 
     assert outcome.status == "accepted"
@@ -145,14 +161,42 @@ def test_semantic_problem_uses_direct_correction_then_accepts(
         workspace.project_copy / "04_v6/experiments" / workspace.experiment_id /
         "request_attempt_2.json"
     ).read_text(encoding="utf-8"))
-    assert second["strategy"] == strategy
-    if strategy == "regenerate_from_materials":
-        assert second["request"]["correction_candidate_input"] is None
+    assert second["strategy"] == "edit_previous"
+    assert second["request"]["correction_candidate_input"] is not None
     assert outcome.attempts[0].request_identity != outcome.attempts[1].request_identity
     summary = recorder.finalize()
     assert summary["call_totals"]["image2"] == 2
     assert summary["call_totals"]["visual_review"] == 2
     assert summary["call_totals"]["correction_decision"] == 1
+    correction = next(
+        call for call in summary["calls"] if call["kind"] == "correction_decision"
+    )
+    assert correction["model"] == "deterministic-local"
+    assert correction["duration_seconds"] == 0.0
+    assert correction["metadata"]["quota_bearing"] is False
+
+
+def test_ambiguous_review_problem_keeps_correction_model_fallback(
+    provider_fixture, monkeypatch
+):
+    workspace, _view, recorder, outcome = _run(
+        provider_fixture,
+        monkeypatch,
+        [_review_result("correct", category="consulting_argument_failure"),
+         _review_result("accept")],
+        director_invoke=_invoke_sequence(
+            provider_fixture[1], strategy="regenerate_from_materials"
+        ),
+    )
+
+    assert outcome.status == "accepted"
+    second = json.loads((
+        workspace.project_copy / "04_v6/experiments" / workspace.experiment_id /
+        "request_attempt_2.json"
+    ).read_text(encoding="utf-8"))
+    assert second["strategy"] == "regenerate_from_materials"
+    assert second["request"]["correction_candidate_input"] is None
+    assert recorder.finalize()["call_totals"]["correction_decision"] == 1
 
 
 def test_technical_failure_consumes_slot_regenerates_without_review(

@@ -39,6 +39,12 @@ from .workspace import ExperimentWorkspace, verify_source_unchanged
 SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "complex_page_acceptance_v1.schema.json"
 EXPERIMENT_RECEIPT = "accepted_image.json"
 FAILED_RECEIPT = "failed_outcome.json"
+_MECHANICAL_REVIEW_CATEGORIES = frozenset({
+    "fixed_layer_violation",
+    "misleading_fabrication",
+    "ai_heavy_reporting_style",
+    "semantic_color_misuse",
+})
 
 
 def _canonical_receipt(workspace: ExperimentWorkspace) -> PurePosixPath:
@@ -509,6 +515,40 @@ def _record_correction(recorder: EvidenceRecorder, decision: CorrectionDecision,
     recorder.record_call(kind="correction_decision", attempt=attempt, model=decision.model, effort=decision.effort, operation=decision.strategy, duration_seconds=decision.duration_seconds, status="ok", metadata={"problem_count": len(decision.problem_addressed), "selected_reference_count": len(decision.selected_reference_ids)})
 
 
+def _record_mechanical_correction(
+    recorder: EvidenceRecorder, review: VisualReview, attempt: int,
+) -> None:
+    recorder.record_call(
+        kind="correction_decision",
+        attempt=attempt,
+        model="deterministic-local",
+        effort=None,
+        operation="edit_previous",
+        duration_seconds=0.0,
+        status="ok",
+        metadata={"problem_count": len(review.problems), "quota_bearing": False},
+    )
+
+
+def _mechanical_correction(
+    review: VisualReview,
+    director: DirectorArtifact,
+    *,
+    next_attempt: int,
+) -> tuple[str, tuple[str, ...], Literal["edit_previous"]] | None:
+    categories = {problem.category for problem in review.problem_records}
+    if not categories or not categories <= _MECHANICAL_REVIEW_CATEGORIES:
+        return None
+    fixes = "; ".join(review.problems)
+    prompt = (
+        f"{director.actual_prompt}\n\n"
+        f"Independent-review correction attempt {next_attempt}: edit the previous candidate "
+        f"and fix only these defects: {fixes}. Preserve every unaffected visual relationship. "
+        "Do not add, paraphrase, or expand any visible source text."
+    )
+    return prompt, director.selected_reference_ids, "edit_previous"
+
+
 def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, recorder: EvidenceRecorder, material_view_factory: Callable[[ExperimentWorkspace], CompletePageMaterialView], director_invoke: Callable[..., CodexStructuredResult], reviewer_invoke: Callable[..., CodexStructuredResult], provider_runner: Callable[[list[str], int], None], max_corrections: int) -> LoopOutcome:
     """Generate one candidate by default and at most two problem-specific corrections."""
     verify_source_unchanged(workspace)
@@ -572,10 +612,17 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
                         correction_count=corrections, recorder=recorder,
                     )
                 verify_source_unchanged(workspace)
-                decision = decide_correction(workspace, material_view, director, previous_candidate=candidate.path, problems=last_problems, timeout=timeout, invoke=director_invoke, previous_decision=previous_decision, previous_request_candidate=previous_decision_candidate)
-                _record_correction(recorder, decision, attempt)
-                previous_decision, previous_decision_candidate = decision, candidate.path
-                prompt, selected, strategy = decision.actual_prompt, decision.selected_reference_ids, decision.strategy
+                mechanical = _mechanical_correction(
+                    review, director, next_attempt=attempt + 1,
+                )
+                if mechanical is not None:
+                    prompt, selected, strategy = mechanical
+                    _record_mechanical_correction(recorder, review, attempt)
+                else:
+                    decision = decide_correction(workspace, material_view, director, previous_candidate=candidate.path, problems=last_problems, timeout=timeout, invoke=director_invoke, previous_decision=previous_decision, previous_request_candidate=previous_decision_candidate)
+                    _record_correction(recorder, decision, attempt)
+                    previous_decision, previous_decision_candidate = decision, candidate.path
+                    prompt, selected, strategy = decision.actual_prompt, decision.selected_reference_ids, decision.strategy
             else:
                 last_problems = preflight.problems
                 if corrections >= max_corrections:
