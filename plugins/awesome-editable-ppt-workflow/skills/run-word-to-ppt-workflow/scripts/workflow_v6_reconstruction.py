@@ -310,6 +310,10 @@ def _validate_reconstructed_text_repairs(
     root: Path, page_number: int, deck: Presentation,
 ) -> None:
     receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
+    # Legacy/native direct-finalization paths predate accepted-image receipts.
+    # They carry no sealed repair authority, so there is nothing to enforce.
+    if not receipt_path.exists():
+        return
     receipt = _read_json(receipt_path)
     repairs = receipt.get("reconstruction_repairs", [])
     if not isinstance(repairs, list):
