@@ -14,8 +14,19 @@ from PIL import Image
 
 from codex_subscription_runtime import CodexStructuredResult
 from complex_page_experiment import build_complete_page_material_view
-from complex_page_experiment.loop import load_accepted_image_seal, run_candidate_loop
-from complex_page_experiment.review import preflight_candidate, review_candidate_once
+from complex_page_experiment.director import DirectorArtifact
+from complex_page_experiment.loop import (
+    _mechanical_correction,
+    _repair_value,
+    load_accepted_image_seal,
+    run_candidate_loop,
+)
+from complex_page_experiment.review import (
+    ReviewProblem,
+    VisualReview,
+    preflight_candidate,
+    review_candidate_once,
+)
 from provider_keyring import signing_key
 from test_director import _director_value, _result
 from test_provider import _real_worker_runner, provider_fixture  # noqa: F401
@@ -100,6 +111,59 @@ def _director_only(view):
     return invoke
 
 
+HUANGSHI_PROBLEM_PAGES = (
+    (3, (("misleading_fabrication", "删除来源未提供的能力扩写，仅保留来源明确授权的四项能力名称。"),), True),
+    (25, (("misleading_fabrication", "将可见错字“清出表现挂钩”修正为源文“退出表现挂钩”，其余构图保持不变。"),), True),
+    (9, (("fixed_layer_violation", "删除正文图顶部与固定页标题重复的标题，保留正文构图。"),), True),
+    (10, (("semantic_color_misuse", "删除未经确认的绿色语义，将结构恢复为黑灰和少量确认红色。"),), True),
+    (35, (
+        ("unusable_17_8_composition", "完整呈现五类成果并恢复四周留白。"),
+        ("consulting_argument_failure", "补齐职责界定到成果承接的完整论证路径。"),
+    ), False),
+)
+
+
+@pytest.mark.parametrize("page_number,problems,mechanical", HUANGSHI_PROBLEM_PAGES)
+def test_huangshi_problem_pages_keep_the_quality_routing_boundary(
+    page_number, problems, mechanical
+):
+    director = DirectorArtifact(
+        value={}, actual_prompt=f"page {page_number} source prompt",
+        selected_reference_ids=(), quality="high", model="director",
+        effort="high", duration_seconds=1.0, model_provider="test", usage={},
+        runtime_trace={}, thread_id="thread", turn_id="turn",
+    )
+    review = VisualReview(
+        decision="correct", problems=tuple(detail for _category, detail in problems),
+        model="reviewer", effort="high", duration_seconds=1.0,
+        problem_records=tuple(ReviewProblem(category, detail) for category, detail in problems),
+    )
+
+    correction = _mechanical_correction(review, director, next_attempt=2)
+
+    assert (correction is not None) is mechanical
+    if correction is not None:
+        prompt, selected, strategy = correction
+        assert strategy == "edit_previous"
+        assert selected == ()
+        assert all(detail in prompt for _category, detail in problems)
+        assert "Do not add, paraphrase, or expand any visible source text" in prompt
+
+
+def test_huangshi_page_25_typo_becomes_an_exact_reconstruction_repair():
+    problem = ReviewProblem(
+        "misleading_fabrication",
+        "第三行可见文字错误，请将“清出”明确修正为“退出”，其余构图与内容保持不变。",
+    )
+
+    assert _repair_value(problem) == {
+        "category": "misleading_fabrication",
+        "detail": problem.detail,
+        "find": "清出",
+        "replace": "退出",
+    }
+
+
 def _run(provider_fixture, monkeypatch, reviews, *, max_corrections=2,
          material_factory=None, director_invoke=None):
     workspace, view, recorder, _refs = provider_fixture
@@ -174,6 +238,10 @@ def test_mechanical_review_problem_skips_correction_model_then_accepts(
     assert correction["model"] == "deterministic-local"
     assert correction["duration_seconds"] == 0.0
     assert correction["metadata"]["quota_bearing"] is False
+    accepted = json.loads(outcome.accepted.receipt_path.read_text(encoding="utf-8"))
+    assert accepted["reconstruction_repairs"] == [
+        {"category": category, "detail": "candidate is clearly off topic"}
+    ]
 
 
 def test_ambiguous_review_problem_keeps_correction_model_fallback(

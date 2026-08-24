@@ -11,8 +11,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ID = "awesome-editable-ppt-workflow"
-PLUGIN_VERSION = "1.2.0"
-RELEASE_TAG = "v1.2.0"
+PLUGIN_VERSION = "1.2.1"
+RELEASE_TAG = "v1.2.1"
 WORKFLOW_CONTRACT = "awesome-word-ppt-workflow-v1"
 PLUGIN_ROOT = REPO_ROOT / "plugins" / PLUGIN_ID
 
@@ -40,7 +40,7 @@ def test_installation_and_documentation_use_the_awesome_identity():
     assert "plugins\\awesome-editable-ppt-workflow" in uninstall
     runtime_installer = (PLUGIN_ROOT / "scripts" / "install_runtime.ps1").read_text(encoding="utf-8")
     assert "awesome-editable-ppt-workflow-fixed-canvas-cm-v2" in runtime_installer
-    assert "Awesome Editable PPT Workflow 1.2.0" in readme
+    assert "Awesome Editable PPT Workflow 1.2.1" in readme
 
 
 def test_runtime_diagnostic_accepts_the_new_product_without_old_installed_plugin():
@@ -106,7 +106,7 @@ def test_new_project_records_the_awesome_identity_and_rejects_legacy_state(tmp_p
         "from workflow_v6_contract import new_page, new_project, validate_project",
         "project = new_project(word_source={'path':'word.docx'}, logo_source={'path':'logo.svg'}, pages=[new_page(1, title='One')])",
         "assert project['plugin_id'] == 'awesome-editable-ppt-workflow'",
-        "assert project['plugin_version'] == '1.2.0'",
+        "assert project['plugin_version'] == '1.2.1'",
         "assert project['workflow_contract'] == 'awesome-word-ppt-workflow-v1'",
         "legacy = dict(project); legacy.pop('plugin_id')",
         "try: validate_project(legacy)\nexcept ValueError as error: print(error)\nelse: raise AssertionError('legacy project accepted')",

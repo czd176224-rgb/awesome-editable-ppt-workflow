@@ -112,11 +112,23 @@ def _prepare_run(project: Path, reconstruction_request: dict[str, Any], page_num
     _run_script(PROMPT_BUILDER, run_dir, "--page", "page_001", "--out", prompt_file)
     runtime_command = f'"{_python()}" "{RUNTIME / "main.py"}"'
     prompt = prompt_file.read_text(encoding="utf-8")
+    repairs = reconstruction_request.get("sealed_text_repairs", [])
+    repair_instructions = ""
+    if repairs:
+        repair_instructions = (
+            "SEALED TEXT REPAIRS FROM INDEPENDENT REVIEW:\n"
+            + "\n".join(
+                f"- [{item['category']}] {item['detail']}" for item in repairs
+            )
+            + "\nApply these repairs in editable native text objects. Do not preserve rejected "
+            "wording in editable text. Preserve all unaffected composition.\n\n"
+        )
     prompt_file.write_text(
         "EDITPPT COMMAND FOR THIS PAGE WORKER:\n"
         f"{runtime_command}\n"
         "Use this exact command prefix everywhere the instructions show `editppt`; "
         "do not rely on a separately installed CLI.\n\n"
+        + repair_instructions
         + prompt,
         encoding="utf-8",
     )

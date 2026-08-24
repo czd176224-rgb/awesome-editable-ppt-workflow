@@ -132,6 +132,51 @@ def test_v6_reconstruction_request_has_no_exact_material_or_post_visual_qa(tmp_p
     assert request["requirements"]["exact_reference_material_custody"] is False
     assert request["requirements"]["post_reconstruction_visual_qa"] is False
     assert request["sealed_image_edits"] == []
+    assert request["sealed_text_repairs"] == []
+
+
+def test_reconstruction_request_carries_signed_text_repairs(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    receipt_path = project / "04_v6/images/page_001.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["reconstruction_repairs"] = [
+        {
+            "category": "misleading_fabrication",
+            "detail": "将错字“清出”修正为“退出”，其余构图保持不变。",
+        }
+    ]
+    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+
+    request = build_reconstruction_request(project, page_number=1)
+
+    assert request["sealed_text_repairs"] == receipt["reconstruction_repairs"]
+
+
+def test_finalize_requires_exact_native_text_repair(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    receipt_path = project / "04_v6/images/page_001.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["reconstruction_repairs"] = [
+        {
+            "category": "misleading_fabrication",
+            "detail": "将错字“清出”修正为“退出”，其余构图保持不变。",
+            "find": "清出",
+            "replace": "退出",
+        }
+    ]
+    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+    wrong = tmp_path / "wrong.pptx"
+    _body(wrong, "清出表现挂钩")
+
+    with pytest.raises(ValueError, match="did not apply a sealed repair"):
+        finalize_reconstructed_page(project, page_number=1, reconstructed_body=wrong)
+
+    correct = tmp_path / "correct.pptx"
+    _body(correct, "退出表现挂钩")
+    report = finalize_reconstructed_page(
+        project, page_number=1, reconstructed_body=correct,
+    )
+    assert report["fixed_frame"]["passed"] is True
 
 
 def test_finalize_and_assemble_add_fixed_layers_without_office_or_visual_qa(tmp_path: Path):

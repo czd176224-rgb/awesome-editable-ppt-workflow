@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -30,7 +31,7 @@ from .provider import (
     run_provider_attempt,
 )
 from .review import (
-    VisualReview, load_signed_review_authority, preflight_candidate,
+    ReviewProblem, VisualReview, load_signed_review_authority, preflight_candidate,
     review_candidate_once, validate_published_review_authority,
 )
 from .workspace import ExperimentWorkspace, verify_source_unchanged
@@ -45,6 +46,11 @@ _MECHANICAL_REVIEW_CATEGORIES = frozenset({
     "ai_heavy_reporting_style",
     "semantic_color_misuse",
 })
+_EXACT_TEXT_REPAIR = re.compile(
+    r"将[^“\"]{0,24}[“\"](?P<find>[^”\"]{1,100})[”\"]"
+    r"[^。；]{0,48}?(?:修正|改为|更正)[^“\"]{0,12}[“\"]"
+    r"(?P<replace>[^”\"]{1,100})[”\"]"
+)
 
 
 def _canonical_receipt(workspace: ExperimentWorkspace) -> PurePosixPath:
@@ -407,7 +413,15 @@ def _history_digest(workspace: ExperimentWorkspace, attempts: Sequence[Candidate
     return _digest(_canonical({"history": history}))
 
 
-def _acceptance_value(workspace: ExperimentWorkspace, material_view: CompletePageMaterialView, candidate: CandidateArtifact, review: VisualReview, director: DirectorArtifact, attempts: Sequence[CandidateArtifact], recorder: EvidenceRecorder) -> dict[str, object]:
+def _repair_value(problem: ReviewProblem) -> dict[str, str]:
+    value = {"category": problem.category, "detail": problem.detail}
+    match = _EXACT_TEXT_REPAIR.search(problem.detail)
+    if match and match.group("find") != match.group("replace"):
+        value.update(find=match.group("find"), replace=match.group("replace"))
+    return value
+
+
+def _acceptance_value(workspace: ExperimentWorkspace, material_view: CompletePageMaterialView, candidate: CandidateArtifact, review: VisualReview, director: DirectorArtifact, attempts: Sequence[CandidateArtifact], recorder: EvidenceRecorder, reconstruction_repairs: Sequence[ReviewProblem]) -> dict[str, object]:
     if review.decision != "accept" or review.problems or sum(item == candidate for item in attempts) != 1:
         raise ValueError("only one exactly selected accepted candidate may be sealed")
     archive = _attempt_archive(workspace, candidate)
@@ -437,6 +451,10 @@ def _acceptance_value(workspace: ExperimentWorkspace, material_view: CompletePag
         "candidate_history_sha256": _history_digest(workspace, attempts, prompt=False),
         "prompt_history_sha256": _history_digest(workspace, attempts, prompt=True),
         "selected_real_reference_ids": list(candidate.selected_reference_ids),
+        "reconstruction_repairs": [
+            _repair_value(item)
+            for item in reconstruction_repairs
+        ],
         "accepted_review": {"decision": "accept", "problems": [], "model": review.model, "effort": review.effort, "duration_seconds": review.duration_seconds,
                             "authority_path": review.authority_path.relative_to(workspace.project_copy).as_posix(),
                             "authority_sha256": review.authority_sha256},
@@ -489,9 +507,9 @@ def _transition_copied_page(workspace: ExperimentWorkspace, candidate_value: Map
         save(workspace.project_copy, state)
 
 
-def seal_accepted_image(workspace: ExperimentWorkspace, *, material_view: CompletePageMaterialView, candidate: CandidateArtifact, review: VisualReview, director: DirectorArtifact, attempts: Sequence[CandidateArtifact], recorder: EvidenceRecorder) -> AcceptedImageSeal:
+def seal_accepted_image(workspace: ExperimentWorkspace, *, material_view: CompletePageMaterialView, candidate: CandidateArtifact, review: VisualReview, director: DirectorArtifact, attempts: Sequence[CandidateArtifact], recorder: EvidenceRecorder, reconstruction_repairs: Sequence[ReviewProblem] = ()) -> AcceptedImageSeal:
     """Publish and verify the sole signed accepted-image authority."""
-    value = _acceptance_value(workspace, material_view, candidate, review, director, attempts, recorder)
+    value = _acceptance_value(workspace, material_view, candidate, review, director, attempts, recorder, reconstruction_repairs)
     payload = _canonical(value)
     experiment_relative = _experiment_relative(workspace)
     experiment_path = _publish_same_or_new(workspace.project_copy, experiment_relative, payload)
@@ -574,6 +592,7 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
     attempts: list[CandidateArtifact] = []
     corrections = 0
     last_problems: tuple[str, ...] = ()
+    reconstruction_repairs: list[ReviewProblem] = []
     try:
         material_view = material_view_factory(workspace)
         verify_source_unchanged(workspace)
@@ -603,7 +622,7 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
                 verify_source_unchanged(workspace)
                 review = review_candidate_once(workspace, material_view, director, candidate, preflight, timeout=timeout, recorder=recorder, invoke=reviewer_invoke)
                 if review.decision == "accept":
-                    seal = seal_accepted_image(workspace, material_view=material_view, candidate=candidate, review=review, director=director, attempts=attempts, recorder=recorder)
+                    seal = seal_accepted_image(workspace, material_view=material_view, candidate=candidate, review=review, director=director, attempts=attempts, recorder=recorder, reconstruction_repairs=reconstruction_repairs)
                     return LoopOutcome("accepted", tuple(attempts), seal, (), corrections)
                 last_problems = review.problems
                 if corrections >= max_corrections:
@@ -618,6 +637,9 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
                 if mechanical is not None:
                     prompt, selected, strategy = mechanical
                     _record_mechanical_correction(recorder, review, attempt)
+                    for problem in review.problem_records:
+                        if problem not in reconstruction_repairs:
+                            reconstruction_repairs.append(problem)
                 else:
                     decision = decide_correction(workspace, material_view, director, previous_candidate=candidate.path, problems=last_problems, timeout=timeout, invoke=director_invoke, previous_decision=previous_decision, previous_request_candidate=previous_decision_candidate)
                     _record_correction(recorder, decision, attempt)

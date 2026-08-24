@@ -250,6 +250,16 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
         raise ValueError("V6 accepted body is not a readable PNG") from exc
     if image_format != "PNG" or image_size != (1904, 896):
         raise ValueError("V6 accepted body must be a 1904x896 PNG")
+    repairs = receipt.get("reconstruction_repairs", [])
+    if not isinstance(repairs, list) or any(
+        not isinstance(item, Mapping)
+        or not isinstance(item.get("category"), str)
+        or not item["category"].strip()
+        or not isinstance(item.get("detail"), str)
+        or not item["detail"].strip()
+        for item in repairs
+    ):
+        raise ValueError("V6 accepted text repair authority is invalid")
     request = {
         "artifact_version": "reconstruction-request-v6",
         "workflow_contract_version": "awesome-word-ppt-workflow-v1",
@@ -266,6 +276,7 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
             "pixels": {"width": 1904, "height": 896},
         },
         "sealed_image_edits": [],
+        "sealed_text_repairs": [dict(item) for item in repairs],
         "geometry": geometry_contract(),
         "requirements": {
             "object_level_editable": True,
@@ -280,6 +291,46 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
     return request
 
 
+def _editable_slide_text(deck: Presentation) -> str:
+    values: list[str] = []
+    for shape in deck.slides[0].shapes:
+        if getattr(shape, "has_text_frame", False) and shape.text.strip():
+            values.append(shape.text)
+        if getattr(shape, "has_table", False):
+            values.extend(
+                cell.text
+                for row in shape.table.rows
+                for cell in row.cells
+                if cell.text.strip()
+            )
+    return "\n".join(values)
+
+
+def _validate_reconstructed_text_repairs(
+    root: Path, page_number: int, deck: Presentation,
+) -> None:
+    receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
+    receipt = _read_json(receipt_path)
+    repairs = receipt.get("reconstruction_repairs", [])
+    if not isinstance(repairs, list):
+        raise ValueError("V6 accepted text repair authority is invalid")
+    text = _editable_slide_text(deck)
+    for repair in repairs:
+        if not isinstance(repair, Mapping):
+            raise ValueError("V6 accepted text repair authority is invalid")
+        find = repair.get("find")
+        replace = repair.get("replace")
+        if find is None and replace is None:
+            continue
+        if (
+            not isinstance(find, str)
+            or not isinstance(replace, str)
+            or find in text
+            or replace not in text
+        ):
+            raise ValueError("V6 reconstructed native text did not apply a sealed repair")
+
+
 def finalize_reconstructed_page(
     project: Path, *, page_number: int, reconstructed_body: Path
 ) -> dict[str, Any]:
@@ -292,6 +343,7 @@ def finalize_reconstructed_page(
     opened = Presentation(reconstructed_body)
     if len(opened.slides) != 1:
         raise ValueError("V6 reconstructed body must contain exactly one slide")
+    _validate_reconstructed_text_repairs(root, page_number, opened)
     page_index = page_number - 1
     page = state["pages"][page_index]
     if page["state"] not in {"accepted", "reconstructing", "page_complete"}:
