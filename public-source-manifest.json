@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v2-source-text-custody",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "indexTreeSha256": "0b7bdfa8d7e7069cabacccd58b00d16daa05ce37e82c95d5820bde35b2eeceef",
+  "indexTreeSha256": "4d2ee7ce7ac0de73fe2f3be907630f8702d9b64509b8a5641f45c9bf84f53e6a",
   "files": {
     ".agents/plugins/marketplace.json": "f6e5474e26fad9f87edfe48a6396162f5c8163b015594153eaf7766367893f48",
     ".gitattributes": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
@@ -180,7 +180,7 @@
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_prompt_contract.py": "5e99ca8d02d082707a256ab2689d22866d174c64367e9744dcbc12ae48d6ac9a",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_qa.py": "dff1fd5a20df94c3e4bd40f3a3d305abee51d188d373fafb9c6683a2a8d2154a",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction_worker.py": "1a97a341f49525536e2ab2e1b02d5930bbd784f560e4d3fbc78e6f1cb4d684c4",
-    "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction.py": "2a2334e611239d0a7b7656f89fed9ea88cee3303d92912ea6108f1885e4b71f9",
+    "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction.py": "1bfe600baa4cafee530fb0f478146c22a1372d1b991b09d45493b0b4a6e02f62",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_secure_io.py": "492917c118dcbb4986d9ad5b97bfcb494850dff66a2156f1f3a324f4d8a556e5",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_source.py": "3433e455547392217d7ad6240a6fc50510d1eca441d9bcc06331f02c131fe563",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_special_pages.py": "3541efca699ff313c91fe85c44ef394224199ff487f1936f6fe459a811ce40cb",
