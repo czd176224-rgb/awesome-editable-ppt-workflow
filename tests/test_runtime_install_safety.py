@@ -155,6 +155,19 @@ def test_portable_installer_injects_current_workflow_and_runs_real_v6_object_bui
     assert '"submission_id": "portable-smoke-0001"' in e2e
 
 
+def test_runtime_installer_writes_unicode_pth_files_to_real_site_packages():
+    """The injected runtime path must survive venv roots and non-ASCII install locations."""
+    source = INSTALLER.read_text(encoding="utf-8")
+
+    assert 'site.getsitepackages()[-1]' in source
+    assert 'site.getsitepackages()[0]' not in source
+    assert 'New-Object System.Text.UTF8Encoding($false)' in source
+    assert '[System.IO.File]::WriteAllText($WorkflowPthStage' in source
+    assert '[System.IO.File]::WriteAllText($EditableDetectorPthStage' in source
+    assert 'Set-Content -LiteralPath $WorkflowPthStage' not in source
+    assert 'Set-Content -LiteralPath $EditableDetectorPthStage' not in source
+
+
 def test_runtime_installer_does_not_require_retired_project_template():
     """The installed V6 runtime contains executable assets, not the retired starter tree."""
     source = INSTALLER.read_text(encoding="utf-8")
@@ -228,9 +241,9 @@ def test_workflow_and_editable_smokes_use_distinct_interpreters_and_bounded_path
 
     assert workflow_python != editable_python
     assert workflow_site != editable_site
-    assert '$EditableSitePackages = (& $EditablePython -c "import site; print(site.getsitepackages()[0])").Trim()' in source
+    assert '$EditableSitePackages = (& $EditablePython -c "import site; print(site.getsitepackages()[-1])").Trim()' in source
     assert '$DetectorModules = @("background_text_detector.py")' in source
-    assert 'Set-Content -LiteralPath $EditableDetectorPthStage -Value $CurrentDetectorRuntime' in source
+    assert '[System.IO.File]::WriteAllText($EditableDetectorPthStage, "$CurrentDetectorRuntime`n", $Utf8NoBom)' in source
     assert 'Set-Content -LiteralPath $EditableWorkflowPthStage -Value $CurrentWorkflowScripts' not in source
     assert workflow.returncode == 0, workflow.stdout + workflow.stderr
     assert workflow.stdout.strip() == "awesome-v6-workflow-boundary=ok"
