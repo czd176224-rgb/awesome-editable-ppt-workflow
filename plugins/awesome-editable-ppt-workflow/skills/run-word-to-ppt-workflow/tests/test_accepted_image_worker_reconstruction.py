@@ -94,6 +94,30 @@ def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_cal
     assert load(project)["pages"][0]["state"] == "page_complete"
 
 
+def test_page_worker_prompt_enforces_sealed_text_repairs(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    receipt_path = project / "04_v6/images/page_001.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["reconstruction_repairs"] = [
+        {
+            "category": "misleading_fabrication",
+            "detail": "将错字“清出”修正为“退出”，其余构图保持不变。",
+        }
+    ]
+    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+    calls: list = []
+
+    reconstruct_accepted_page(
+        _workspace(project),
+        _accepted_outcome(project),
+        page_worker=_successful_worker(calls, text="退出"),
+    )
+
+    prompt = calls[0].prompt_file.read_text(encoding="utf-8")
+    assert "SEALED TEXT REPAIRS" in prompt
+    assert "将错字“清出”修正为“退出”" in prompt
+
+
 def test_unreadable_text_uses_paddle_once_then_same_page_worker(tmp_path: Path):
     project = _project(tmp_path, 1)
     worker_calls: list = []

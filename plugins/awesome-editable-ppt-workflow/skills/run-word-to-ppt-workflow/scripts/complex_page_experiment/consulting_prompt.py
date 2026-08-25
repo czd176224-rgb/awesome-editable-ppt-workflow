@@ -60,6 +60,13 @@ _ARGUMENT_CONSTRAINT = (
     "connects evidence, interpretation, and conclusion, ending with an explicit takeaway."
 )
 
+_VISIBLE_TEXT_CUSTODY = (
+    "business_proposition, explanatory_lead, and takeaway_statement are planning instructions, "
+    "not visible slide copy. Every visible word or label must use exact contiguous spans from "
+    "complete_word_content. Do not paraphrase, summarize, expand, or invent "
+    "visible wording."
+)
+
 _ARCHITECTURE_CONSTRAINT = (
     "Choose one content-driven analytical backbone and make every module participate in the "
     "same reading path; do not substitute disconnected cards or one decorative panorama for "
@@ -203,7 +210,11 @@ def compile_consulting_six_part_prompt(
         (sections["task_and_canvas"], _background_constraint(material_view), _TASK_CONSTRAINT)
     )
     sections["core_proposition_and_content"] = _join(
-        (sections["core_proposition_and_content"], _ARGUMENT_CONSTRAINT)
+        (
+            sections["core_proposition_and_content"],
+            _ARGUMENT_CONSTRAINT,
+            _VISIBLE_TEXT_CUSTODY,
+        )
     )
     sections["consulting_information_architecture"] = _join(
         (sections["consulting_information_architecture"], _ARCHITECTURE_CONSTRAINT)

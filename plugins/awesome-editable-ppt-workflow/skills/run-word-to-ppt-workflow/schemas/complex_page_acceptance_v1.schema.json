@@ -49,6 +49,29 @@
     "candidate_history_sha256": {"$ref": "#/$defs/sha"},
     "prompt_history_sha256": {"$ref": "#/$defs/sha"},
     "selected_real_reference_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "reconstruction_repairs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "detail"],
+        "dependentRequired": {"find": ["replace"], "replace": ["find"]},
+        "properties": {
+          "category": {
+            "enum": [
+              "technical_output", "fixed_layer_violation", "clear_subject_departure",
+              "misleading_fabrication", "severe_identity_distortion", "core_comment_absent",
+              "unusable_17_8_composition", "consulting_argument_failure",
+              "ai_heavy_reporting_style", "semantic_color_misuse"
+            ]
+          },
+          "detail": {"type": "string", "minLength": 1},
+          "find": {"type": "string", "minLength": 1, "maxLength": 100},
+          "replace": {"type": "string", "minLength": 1, "maxLength": 100}
+        }
+      }
+    },
     "accepted_review": {
       "type": "object", "additionalProperties": false,
       "required": ["decision", "problems", "model", "effort", "duration_seconds", "authority_path", "authority_sha256"],

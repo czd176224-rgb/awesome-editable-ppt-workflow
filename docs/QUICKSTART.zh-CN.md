@@ -1,8 +1,8 @@
-# Awesome Editable PPT Workflow 1.2.0 快速开始
+# Awesome Editable PPT Workflow 1.2.1 快速开始
 
-下载不可变的 `v1.2.0` Windows Release ZIP：
+下载不可变的 `v1.2.1` Windows Release ZIP：
 
-`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.0/awesome-editable-ppt-workflow-1.2.0-windows.zip`
+`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.1/awesome-editable-ppt-workflow-1.2.1-windows.zip`
 
 同时下载 `SHA256SUMS.txt`，使用 PowerShell `Get-FileHash` 核验后解压并运行 `install.ps1`，然后重启 Codex。
 

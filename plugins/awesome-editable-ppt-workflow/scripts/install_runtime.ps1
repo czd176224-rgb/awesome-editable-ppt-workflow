@@ -198,15 +198,16 @@ if (-not (Test-Path -LiteralPath (Join-Path $CurrentImageSkillRoot "scripts\code
     }
     Move-Item -LiteralPath $ImageSkillStage -Destination $CurrentImageSkillRoot
 }
-$WorkflowSitePackages = (& $WorkflowPython -c "import site; print(site.getsitepackages()[0])").Trim()
+$WorkflowSitePackages = (& $WorkflowPython -c "import site; print(site.getsitepackages()[-1])").Trim()
 if ($LASTEXITCODE -ne 0 -or -not $WorkflowSitePackages) {
     throw "Unable to locate workflow site-packages for workflow injection."
 }
 $WorkflowPth = Join-Path $WorkflowSitePackages "word_to_editable_ppt_current_workflow.pth"
 $WorkflowPthStage = "$WorkflowPth.$PID.tmp"
-Set-Content -LiteralPath $WorkflowPthStage -Value $CurrentWorkflowScripts -Encoding ascii
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($WorkflowPthStage, "$CurrentWorkflowScripts`n", $Utf8NoBom)
 Move-Item -LiteralPath $WorkflowPthStage -Destination $WorkflowPth -Force
-$EditableSitePackages = (& $EditablePython -c "import site; print(site.getsitepackages()[0])").Trim()
+$EditableSitePackages = (& $EditablePython -c "import site; print(site.getsitepackages()[-1])").Trim()
 if ($LASTEXITCODE -ne 0 -or -not $EditableSitePackages) {
     throw "Unable to locate editable-PPT site-packages for detector injection."
 }
@@ -214,7 +215,7 @@ $LegacyEditableWorkflowPth = Join-Path $EditableSitePackages "word_to_editable_p
 Remove-Item -LiteralPath $LegacyEditableWorkflowPth -Force -ErrorAction SilentlyContinue
 $EditableDetectorPth = Join-Path $EditableSitePackages "awesome_background_text_detector_runtime.pth"
 $EditableDetectorPthStage = "$EditableDetectorPth.$PID.tmp"
-Set-Content -LiteralPath $EditableDetectorPthStage -Value $CurrentDetectorRuntime -Encoding ascii
+[System.IO.File]::WriteAllText($EditableDetectorPthStage, "$CurrentDetectorRuntime`n", $Utf8NoBom)
 Move-Item -LiteralPath $EditableDetectorPthStage -Destination $EditableDetectorPth -Force
 Invoke-WithClearedPythonPath {
     $PreviousEditPptPython = $env:EDITPPT_PYTHON

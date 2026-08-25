@@ -14,8 +14,19 @@ from PIL import Image
 
 from codex_subscription_runtime import CodexStructuredResult
 from complex_page_experiment import build_complete_page_material_view
-from complex_page_experiment.loop import load_accepted_image_seal, run_candidate_loop
-from complex_page_experiment.review import preflight_candidate, review_candidate_once
+from complex_page_experiment.director import DirectorArtifact
+from complex_page_experiment.loop import (
+    _mechanical_correction,
+    _repair_value,
+    load_accepted_image_seal,
+    run_candidate_loop,
+)
+from complex_page_experiment.review import (
+    ReviewProblem,
+    VisualReview,
+    preflight_candidate,
+    review_candidate_once,
+)
 from provider_keyring import signing_key
 from test_director import _director_value, _result
 from test_provider import _real_worker_runner, provider_fixture  # noqa: F401
@@ -92,6 +103,67 @@ def _invoke_sequence(view, *, strategy="regenerate_from_materials"):
     return invoke
 
 
+def _director_only(view):
+    def invoke(_project, **kwargs):
+        assert kwargs["role"] == "awesome-page-director"
+        return _result(_director_value(view))
+
+    return invoke
+
+
+HUANGSHI_PROBLEM_PAGES = (
+    (3, (("misleading_fabrication", "删除来源未提供的能力扩写，仅保留来源明确授权的四项能力名称。"),), True),
+    (25, (("misleading_fabrication", "将可见错字“清出表现挂钩”修正为源文“退出表现挂钩”，其余构图保持不变。"),), True),
+    (9, (("fixed_layer_violation", "删除正文图顶部与固定页标题重复的标题，保留正文构图。"),), True),
+    (10, (("semantic_color_misuse", "删除未经确认的绿色语义，将结构恢复为黑灰和少量确认红色。"),), True),
+    (35, (
+        ("unusable_17_8_composition", "完整呈现五类成果并恢复四周留白。"),
+        ("consulting_argument_failure", "补齐职责界定到成果承接的完整论证路径。"),
+    ), False),
+)
+
+
+@pytest.mark.parametrize("page_number,problems,mechanical", HUANGSHI_PROBLEM_PAGES)
+def test_huangshi_problem_pages_keep_the_quality_routing_boundary(
+    page_number, problems, mechanical
+):
+    director = DirectorArtifact(
+        value={}, actual_prompt=f"page {page_number} source prompt",
+        selected_reference_ids=(), quality="high", model="director",
+        effort="high", duration_seconds=1.0, model_provider="test", usage={},
+        runtime_trace={}, thread_id="thread", turn_id="turn",
+    )
+    review = VisualReview(
+        decision="correct", problems=tuple(detail for _category, detail in problems),
+        model="reviewer", effort="high", duration_seconds=1.0,
+        problem_records=tuple(ReviewProblem(category, detail) for category, detail in problems),
+    )
+
+    correction = _mechanical_correction(review, director, next_attempt=2)
+
+    assert (correction is not None) is mechanical
+    if correction is not None:
+        prompt, selected, strategy = correction
+        assert strategy == "edit_previous"
+        assert selected == ()
+        assert all(detail in prompt for _category, detail in problems)
+        assert "Do not add, paraphrase, or expand any visible source text" in prompt
+
+
+def test_huangshi_page_25_typo_becomes_an_exact_reconstruction_repair():
+    problem = ReviewProblem(
+        "misleading_fabrication",
+        "第三行可见文字错误，请将“清出”明确修正为“退出”，其余构图与内容保持不变。",
+    )
+
+    assert _repair_value(problem) == {
+        "category": "misleading_fabrication",
+        "detail": problem.detail,
+        "find": "清出",
+        "replace": "退出",
+    }
+
+
 def _run(provider_fixture, monkeypatch, reviews, *, max_corrections=2,
          material_factory=None, director_invoke=None):
     workspace, view, recorder, _refs = provider_fixture
@@ -127,15 +199,23 @@ def test_first_valid_candidate_accepts_without_default_extra_candidates(
     assert summary["call_totals"]["correction_decision"] == 0
 
 
-@pytest.mark.parametrize("strategy", ["edit_previous", "regenerate_from_materials"])
-def test_semantic_problem_uses_direct_correction_then_accepts(
-    provider_fixture, monkeypatch, strategy
+@pytest.mark.parametrize(
+    "category",
+    [
+        "fixed_layer_violation",
+        "misleading_fabrication",
+        "ai_heavy_reporting_style",
+        "semantic_color_misuse",
+    ],
+)
+def test_mechanical_review_problem_skips_correction_model_then_accepts(
+    provider_fixture, monkeypatch, category
 ):
     workspace, view, recorder, outcome = _run(
         provider_fixture,
         monkeypatch,
-        [_review_result("correct"), _review_result("accept")],
-        director_invoke=_invoke_sequence(provider_fixture[1], strategy=strategy),
+        [_review_result("correct", category=category), _review_result("accept")],
+        director_invoke=_director_only(provider_fixture[1]),
     )
 
     assert outcome.status == "accepted"
@@ -145,14 +225,46 @@ def test_semantic_problem_uses_direct_correction_then_accepts(
         workspace.project_copy / "04_v6/experiments" / workspace.experiment_id /
         "request_attempt_2.json"
     ).read_text(encoding="utf-8"))
-    assert second["strategy"] == strategy
-    if strategy == "regenerate_from_materials":
-        assert second["request"]["correction_candidate_input"] is None
+    assert second["strategy"] == "edit_previous"
+    assert second["request"]["correction_candidate_input"] is not None
     assert outcome.attempts[0].request_identity != outcome.attempts[1].request_identity
     summary = recorder.finalize()
     assert summary["call_totals"]["image2"] == 2
     assert summary["call_totals"]["visual_review"] == 2
     assert summary["call_totals"]["correction_decision"] == 1
+    correction = next(
+        call for call in summary["calls"] if call["kind"] == "correction_decision"
+    )
+    assert correction["model"] == "deterministic-local"
+    assert correction["duration_seconds"] == 0.0
+    assert correction["metadata"]["quota_bearing"] is False
+    accepted = json.loads(outcome.accepted.receipt_path.read_text(encoding="utf-8"))
+    assert accepted["reconstruction_repairs"] == [
+        {"category": category, "detail": "candidate is clearly off topic"}
+    ]
+
+
+def test_ambiguous_review_problem_keeps_correction_model_fallback(
+    provider_fixture, monkeypatch
+):
+    workspace, _view, recorder, outcome = _run(
+        provider_fixture,
+        monkeypatch,
+        [_review_result("correct", category="consulting_argument_failure"),
+         _review_result("accept")],
+        director_invoke=_invoke_sequence(
+            provider_fixture[1], strategy="regenerate_from_materials"
+        ),
+    )
+
+    assert outcome.status == "accepted"
+    second = json.loads((
+        workspace.project_copy / "04_v6/experiments" / workspace.experiment_id /
+        "request_attempt_2.json"
+    ).read_text(encoding="utf-8"))
+    assert second["strategy"] == "regenerate_from_materials"
+    assert second["request"]["correction_candidate_input"] is None
+    assert recorder.finalize()["call_totals"]["correction_decision"] == 1
 
 
 def test_technical_failure_consumes_slot_regenerates_without_review(

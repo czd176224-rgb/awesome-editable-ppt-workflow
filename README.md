@@ -1,10 +1,10 @@
-# Awesome Editable PPT Workflow 1.2.0
+# Awesome Editable PPT Workflow 1.2.1
 
 Public Codex plugin for converting a paginated Word document plus an SVG Logo into an object-level editable 16:9 PowerPoint.
 
 ## V6 adaptive production contract
 
-The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `consulting-page-director-v2-six-part-image2`.
+The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `consulting-page-director-v2-source-text-custody`.
 
 - One Word page becomes one slide. The body is 1904x896 (17:8).
 - Non-contiguous Word page labels such as `第4页`、`第33页`、`第26页` remain in the user's order.
@@ -24,9 +24,9 @@ The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is 
 
 ## Install
 
-Download the immutable `v1.2.0` Windows release ZIP:
+Download the immutable `v1.2.1` Windows release ZIP:
 
-`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.0/awesome-editable-ppt-workflow-1.2.0-windows.zip`
+`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.1/awesome-editable-ppt-workflow-1.2.1-windows.zip`
 
 Download the adjacent `SHA256SUMS.txt`, verify locally with `Get-FileHash`, extract the ZIP and run `install.ps1`. Restart Codex after installation or upgrade.
 

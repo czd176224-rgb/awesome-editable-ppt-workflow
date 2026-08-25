@@ -154,6 +154,8 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
     assert "one coherent body-region consulting report image" in prompt
     assert "evidence, interpretation, and conclusion" in prompt
     assert "explanatory copy" in prompt
+    assert "planning instructions, not visible slide copy" in prompt
+    assert "exact contiguous spans from complete_word_content" in prompt
     assert "3D machinery" in prompt
     for legacy_name in (
         "Scene or Background",
