@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v2-source-text-custody",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "7cda86717a64b94a0536e47c822e01e627c90d52d7e40b3b02715e4594df96e1",
+  "sourceManifestSha256": "51b0ee79ca72490c189728114b19ef15d9a015f78e2f7ceb3db1717add4302b8",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -108,8 +108,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/scripts/install_runtime.ps1",
-      "bytes": 16850,
-      "sha256": "3ef727e7d381f0bcaae4b7e29985162800db8c169c6ceb6a421ed19d77971dca"
+      "bytes": 16911,
+      "sha256": "42951e560869c03f8dc0fdff53ea32f6ec6f79bc16bc2fcde3fe6618b383efd8"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/scripts/portable_e2e_smoke.py",
@@ -1174,7 +1174,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 43501,
-      "sha256": "7cda86717a64b94a0536e47c822e01e627c90d52d7e40b3b02715e4594df96e1"
+      "sha256": "51b0ee79ca72490c189728114b19ef15d9a015f78e2f7ceb3db1717add4302b8"
     },
     {
       "path": "README.md",
@@ -1248,8 +1248,8 @@
     },
     {
       "path": "tests/test_runtime_install_safety.py",
-      "bytes": 20955,
-      "sha256": "e4f116fb49adff93467923d451a539fb85e52b1a0af3542d307b05e53e8b9195"
+      "bytes": 21667,
+      "sha256": "777bb05946cd85941dff43fb6639071a1843f32c4074f13c560ccb4de84b7a78"
     },
     {
       "path": "tests/test_skill_role_names.py",
