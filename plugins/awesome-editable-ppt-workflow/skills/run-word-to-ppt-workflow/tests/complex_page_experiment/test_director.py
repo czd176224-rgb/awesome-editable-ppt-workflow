@@ -591,15 +591,37 @@ def test_correction_taskbook_uses_same_boundary_without_template_metadata(tmp_pa
         assert forbidden not in prompt
 
 
-def test_director_request_does_not_authorize_omitting_secondary_explanation(
+def test_director_request_preserves_required_explanation_and_source_structure(
     tmp_path: Path,
 ):
     _call, sections = _captured_director_request(tmp_path)
     requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"].casefold()
 
-    assert "omitting secondary explanation" not in requirements
+    assert "explanatory sentences" in requirements
+    assert "must not collapse into a keyword list" in requirements
     assert "source-exact" in requirements
-    assert "do not authorize any other factual prose" in requirements
+    assert "table" in requirements
+    assert "matrix" in requirements
+    assert "object-action-result" in requirements
+    assert "must preserve that source structure" in requirements
+
+
+def test_director_request_allows_an_information_canvas_without_an_invented_scene(
+    tmp_path: Path,
+):
+    _call, sections = _captured_director_request(tmp_path)
+    requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"].casefold()
+
+    assert "does not need a scene" in requirements
+    assert "two-dimensional information canvas" in requirements
+    assert "shared alignment system" in requirements
+    assert "do not invent" in requirements
+    for forbidden_scene in (
+        "industrial park",
+        "track",
+        "mechanical hub",
+    ):
+        assert forbidden_scene in requirements
 
 
 def test_director_request_reserves_canvas_background_for_the_compiler(
