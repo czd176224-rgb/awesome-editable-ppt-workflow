@@ -10,9 +10,9 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 try:
-    from .build_pptx_from_manifest import normalize_manifest
+    from .build_pptx_from_manifest import _chart_shared_text, normalize_manifest
 except ImportError:  # direct runtime script execution through the editppt launcher
-    from build_pptx_from_manifest import normalize_manifest
+    from build_pptx_from_manifest import _chart_shared_text, normalize_manifest
 
 
 NS = {
@@ -443,6 +443,135 @@ def collect_notes_texts(z, names):
     return notes
 
 
+def _chart_xml_values(chart, tag):
+    values = []
+    for series in chart._element.xpath(".//c:ser"):
+        dimension = series.xpath(f"./c:{tag}")
+        points = dimension[0].xpath(".//c:pt") if dimension else []
+        indexed = []
+        for point in points:
+            value = point.xpath("./c:v")
+            indexed.append((int(point.get("idx")), float(value[0].text)))
+        values.append([value for _index, value in sorted(indexed)])
+    return values
+
+
+def quantitative_chart_readback_violations(pptx_path, manifests):
+    """Read exact chart objects and direct marks back from the generated PPTX."""
+    from pptx import Presentation
+    from pptx.enum.chart import XL_CHART_TYPE
+
+    chart_types = {
+        "column": XL_CHART_TYPE.COLUMN_CLUSTERED,
+        "bar": XL_CHART_TYPE.BAR_CLUSTERED,
+        "line": XL_CHART_TYPE.LINE,
+        "scatter": XL_CHART_TYPE.XY_SCATTER,
+        "bubble": XL_CHART_TYPE.BUBBLE,
+    }
+    violations = []
+    try:
+        normalized = [normalize_manifest(manifest) for manifest in manifests]
+        presentation = Presentation(pptx_path)
+    except Exception as exc:
+        return [{"field": "charts", "reason": str(exc)}]
+    if len(presentation.slides) != len(normalized):
+        return [{"field": "charts", "reason": "slide count does not match chart manifests"}]
+
+    def add(field, expected, actual):
+        if actual != expected:
+            violations.append({"field": field, "expected": expected, "actual": actual})
+
+    for slide_index, (slide, manifest) in enumerate(zip(presentation.slides, normalized)):
+        named = {shape.name: shape for shape in slide.shapes}
+        for chart_index, expected in enumerate(manifest.get("charts", [])):
+            prefix = f"slides[{slide_index}].charts[{chart_index}]" if len(normalized) > 1 else f"charts[{chart_index}]"
+            root = named.get(expected["name"])
+            if root is None:
+                violations.append({"field": prefix, "reason": "missing chart root object"})
+                continue
+            description = root._element.xpath(".//p:cNvPr")[0].get("descr")
+            add(
+                f"{prefix}.object_id",
+                f"object_id:{expected['object_id']};chart_variant:{expected['chart_variant']}",
+                description,
+            )
+            add(f"{prefix}.box.left", int(expected["left"] * 914400), root.left)
+            add(f"{prefix}.box.top", int(expected["top"] * 914400), root.top)
+            add(f"{prefix}.box.width", int(expected["width"] * 914400), root.width)
+            add(f"{prefix}.box.height", int(expected["height"] * 914400), root.height)
+            variant = expected["chart_variant"]
+            unit = _chart_shared_text(expected, "unit") if expected["rendering_primitive"] != "xy" else None
+            if expected["rendering_primitive"] == "xy":
+                unit = f"x: {expected['x_unit']} | y: {expected['y_unit']}"
+                if variant == "bubble":
+                    unit += f" | size: {expected['size_unit']}"
+            for role, text in (("Unit", unit), ("Period", expected["period"])):
+                shape = named.get(f"{expected['name']} {role}")
+                add(f"{prefix}.{role.lower()}", text, shape.text if shape is not None else None)
+
+            if variant == "dot":
+                point_count = sum(len(item["values"]) for item in expected["series"])
+                add(
+                    f"{prefix}.points",
+                    point_count,
+                    sum(name.startswith(f"{expected['name']} Point ") for name in named),
+                )
+                add(
+                    f"{prefix}.connectors",
+                    point_count,
+                    sum(name.startswith(f"{expected['name']} Connector ") for name in named),
+                )
+                for series_index, item in enumerate(expected["series"], start=1):
+                    series_shape = named.get(f"{expected['name']} Series {series_index}")
+                    add(f"{prefix}.series[{series_index - 1}].name", item["name"], series_shape.text if series_shape is not None else None)
+                point_index = 1
+                for series_index, item in enumerate(expected["series"]):
+                    for category, value in zip(item["categories"], item["values"]):
+                        category_shape = named.get(f"{expected['name']} Category {point_index}")
+                        value_shape = named.get(f"{expected['name']} Value {point_index}")
+                        add(f"{prefix}.series[{series_index}].categories[{point_index - 1}]", category, category_shape.text if category_shape is not None else None)
+                        add(f"{prefix}.series[{series_index}].values[{point_index - 1}]", str(value), value_shape.text if value_shape is not None else None)
+                        point_index += 1
+            else:
+                if not root.has_chart:
+                    violations.append({"field": prefix, "reason": "expected native chart object"})
+                    continue
+                native = root.chart
+                add(f"{prefix}.chart_variant", chart_types[variant], native.chart_type)
+                add(f"{prefix}.title", expected["title"], native.chart_title.text_frame.text if native.has_title else None)
+                if expected["rendering_primitive"] == "xy":
+                    add(f"{prefix}.x_label", expected["x_label"], native.category_axis.axis_title.text_frame.text if native.category_axis.has_title else None)
+                    add(f"{prefix}.y_label", expected["y_label"], native.value_axis.axis_title.text_frame.text if native.value_axis.has_title else None)
+                add(f"{prefix}.series.names", [item["name"] for item in expected["series"]], [item.name for item in native.series])
+                if variant in {"column", "bar", "line"}:
+                    add(f"{prefix}.categories", expected["series"][0]["categories"], [item.label for item in native.plots[0].categories])
+                    for series_index, item in enumerate(expected["series"]):
+                        add(f"{prefix}.series[{series_index}].values", item["values"], list(native.series[series_index].values))
+                else:
+                    x_values = _chart_xml_values(native, "xVal")
+                    y_values = _chart_xml_values(native, "yVal")
+                    size_values = _chart_xml_values(native, "bubbleSize") if variant == "bubble" else []
+                    for series_index, item in enumerate(expected["series"]):
+                        add(f"{prefix}.series[{series_index}].x_values", item["x_values"], x_values[series_index])
+                        add(f"{prefix}.series[{series_index}].y_values", item["y_values"], y_values[series_index])
+                        if variant == "bubble":
+                            add(f"{prefix}.series[{series_index}].size_values", item["size_values"], size_values[series_index])
+
+            if expected.get("target_value") is not None:
+                for role, value in (
+                    ("Target", f"Target: {expected['target_value']}"),
+                    ("Actual", f"Actual: {expected['actual_value']}"),
+                    ("Difference", f"Difference: {expected['actual_value'] - expected['target_value']}"),
+                ):
+                    shape = named.get(f"{expected['name']} {role}")
+                    add(f"{prefix}.{role.lower()}", value, shape.text if shape is not None else None)
+                if f"{expected['name']} Target Line" not in named:
+                    violations.append({"field": f"{prefix}.target_line", "reason": "missing target line"})
+                if f"{expected['name']} Difference Arrow" not in named:
+                    violations.append({"field": f"{prefix}.difference_arrow", "reason": "missing difference arrow"})
+    return violations
+
+
 def validate_deck(args):
     deck_path = Path(args.deck_manifest).resolve()
     deck = read_manifest(deck_path)
@@ -469,10 +598,13 @@ def validate_deck(args):
         "notes_expected": len(notes_manifest.get("notes", [])),
         "notes_found": 0,
         "notes_hash_mismatches": [],
+        "chart_readback_violations": [],
         "missing_parts": [],
         "warnings": [],
         "passed": False,
     }
+
+    page_manifests = []
 
     for page in deck.get("pages", []):
         manifest_path = Path(page.get("manifest", ""))
@@ -486,6 +618,7 @@ def validate_deck(args):
         else:
             try:
                 raw_manifest = read_manifest(manifest_path)
+                page_manifests.append(raw_manifest)
                 normalized_manifest, authoring_violations = normalize_for_validation(raw_manifest)
                 violations = (
                     authoring_violations
@@ -538,6 +671,9 @@ def validate_deck(args):
     except Exception as exc:
         report["warnings"].append(f"Unable to read pptx: {exc}")
 
+    if page_manifests:
+        report["chart_readback_violations"] = quantitative_chart_readback_violations(args.pptx, page_manifests)
+
     report["passed"] = (
         report["slides"] == expected_pages
         and not report["page_manifests_missing"]
@@ -546,6 +682,7 @@ def validate_deck(args):
         and not report["page_contract_violations"]
         and not report["missing_parts"]
         and not report["notes_hash_mismatches"]
+        and not report["chart_readback_violations"]
     )
     output = json.dumps(report, ensure_ascii=False, indent=2)
     if args.report:
@@ -646,6 +783,7 @@ def main():
         "relationship_targets_checked": 0,
         "warnings": [],
         "page_contract_violations": [],
+        "chart_readback_violations": [],
     }
 
     try:
@@ -770,6 +908,8 @@ def main():
     report["page_contract_violations"] = (
         authoring_violations + page_contract_violations(manifest) + quality_contract_violations(raw_manifest)
     )
+    if raw_manifest.get("charts"):
+        report["chart_readback_violations"] = quantitative_chart_readback_violations(args.pptx, [raw_manifest])
 
     report["passed"] = (
         report["zip_ok"]
@@ -784,6 +924,7 @@ def main():
         and not report["missing_provenance_sources"]
         and not report["invalid_asset_provenance"]
         and not report["page_contract_violations"]
+        and not report["chart_readback_violations"]
         and (report["editable_text_shapes"] > 0 or not required)
     )
 
