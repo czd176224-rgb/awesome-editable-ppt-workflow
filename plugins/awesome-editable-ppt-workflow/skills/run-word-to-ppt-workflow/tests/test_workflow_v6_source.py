@@ -115,6 +115,22 @@ def test_duplicate_source_page_ids_warn_but_do_not_block(tmp_path):
     }]
 
 
+def test_adjacent_duplicate_marker_without_content_is_one_page(tmp_path):
+    document = Document()
+    document.add_paragraph("第1页")
+    document.add_paragraph("第 1 页  ·  STORY LINE")
+    document.add_paragraph("正文")
+    source = tmp_path / "adjacent-duplicate.docx"
+    document.save(source)
+
+    payload = extract_auto(source, marker_pattern=V6_PAGE_MARKER)
+
+    assert payload["page_count"] == 1
+    assert payload["pages"][0]["marker_text"] == "第 1 页  ·  STORY LINE"
+    assert [block["text"] for block in payload["pages"][0]["blocks"]] == ["正文"]
+    assert payload["pagination_warnings"] == []
+
+
 def test_initialize_uses_appearance_order_when_source_ids_are_9_3_9(tmp_path: Path):
     word = tmp_path / "input.docx"
     logo = tmp_path / "logo.svg"

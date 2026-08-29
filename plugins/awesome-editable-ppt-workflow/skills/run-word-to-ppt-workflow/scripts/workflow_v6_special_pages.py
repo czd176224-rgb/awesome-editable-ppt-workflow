@@ -23,6 +23,7 @@ from pptx.oxml.ns import nsdecls
 from pptx.util import Cm, Pt
 
 import workflow_v6_secure_io as secure_io
+from director_taskbook import project_emphasis_pages
 from workflow_v6_composition import validate_composition
 from workflow_v6_contract import validate_project
 from workflow_v6_state import mutation_lock, save
@@ -225,6 +226,8 @@ def render_special_page(project: Path, page_number: int) -> dict[str, Any]:
     if not isinstance(contract, Mapping):
         raise ValueError("V6 confirmed visual contract is missing")
     heading_font, body_font, primary, accent, background, title_size, body_size = _style(contract)
+    font_accent_allowed = page_number in project_emphasis_pages(root)
+    font_accent = accent if font_accent_allowed else primary
     title_size = max(title_size, 24)
     body_size = max(body_size, 12)
     chapter_title = page["chapter_title"].strip()
@@ -324,14 +327,14 @@ def render_special_page(project: Path, page_number: int) -> dict[str, Any]:
     elif role == "section":
         start = section_start
         if start == 2:
-            add_source(required_ids[0], text=title, box=(2.0, 2.8, 18.0, 0.75), font=body_font, size=body_size, color=accent, bold=True)
+            add_source(required_ids[0], text=title, box=(2.0, 2.8, 18.0, 0.75), font=body_font, size=body_size, color=font_accent, bold=True)
             add_source(required_ids[1], text=chapter_title, box=(2.0, 3.7, 20.0, 2.2), font=heading_font, size=max(title_size, 30), color=primary, bold=True)
         else:
             add_source(required_ids[0], text=title, box=(2.0, 3.4, 20.0, 2.2), font=heading_font, size=max(title_size, 30), color=primary, bold=True)
         _add_rule(slide, name="special-accent-rule", box=(2.0, 6.05, 4.2, 0.1), color=accent)
         y = 6.45
         for block_id, text, height in zip(required_ids[start:], lines[start:], row_heights):
-            add_source(block_id, text=text, box=(2.0, y, 18.5, height), font=body_font, size=body_size, color=accent)
+            add_source(block_id, text=text, box=(2.0, y, 18.5, height), font=body_font, size=body_size, color=font_accent)
             y += height + 0.18
     else:
         _add_rule(slide, name="special-accent-rule", box=(2.0, 3.35, 3.4, 0.12), color=accent)
@@ -345,6 +348,10 @@ def render_special_page(project: Path, page_number: int) -> dict[str, Any]:
         raise ValueError(f"V6 special page source/display mismatch: required={required_ids}, displayed={displayed_ids}")
     if page["visible_page_number"]:
         _add_page_number(slide, page_number, font=body_font, color=primary)
+    if not font_accent_allowed:
+        from workflow_v6_reconstruction import _replace_non_emphasis_text_colors
+
+        _replace_non_emphasis_text_colors(deck, contract)
 
     output = root / "06_v6" / "pages" / f"page_{page_number:03d}" / "page.pptx"
     temporary = output.with_name(f".special-{uuid.uuid4().hex[:8]}.pptx")

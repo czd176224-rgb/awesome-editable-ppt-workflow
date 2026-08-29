@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.enum.dml import MSO_THEME_COLOR
 from pptx.util import Cm
 
 
@@ -24,10 +26,14 @@ from workflow_v6_reconstruction import (  # noqa: E402
 )
 from workflow_v6_state import create, load, save  # noqa: E402
 from awesome_page_materials import publish_page_materials  # noqa: E402
+from director_taskbook import project_emphasis_pages, taskbook_digest  # noqa: E402
 
 
 def _style():
     return {
+        "primary_color": "#17365D",
+        "secondary_color": "#C7352B",
+        "background_color": "#E7F1FA",
         "fixed_frame": {
             "geometry_version": "fixed-canvas-cm-v2",
             "body_bounds_cm": {"x": 0.81, "y": 2.3, "w": 23.78, "h": 11.18},
@@ -52,13 +58,17 @@ def _style():
     }
 
 
-def _body(path: Path, text: str):
+def _body(path: Path, text: str, *, color: str | None = None, bold: bool = False):
     deck = Presentation()
     deck.slide_width = Cm(25.4)
     deck.slide_height = Cm(14.288)
     slide = deck.slides.add_slide(deck.slide_layouts[6])
     box = slide.shapes.add_textbox(Cm(2), Cm(3), Cm(10), Cm(2))
     box.text = text
+    run = box.text_frame.paragraphs[0].runs[0]
+    run.font.bold = bold
+    if color:
+        run.font.color.rgb = RGBColor.from_string(color.lstrip("#"))
     deck.save(path)
 
 
@@ -195,6 +205,130 @@ def test_finalize_and_assemble_add_fixed_layers_without_office_or_visual_qa(tmp_
     assert report["office_render_required"] is False
     assert report["post_reconstruction_visual_qa"] is False
     assert all(page["state"] == "page_complete" for page in load(project)["pages"])
+
+
+def test_finalize_sets_whole_slide_background_and_recolors_non_emphasis_text_only(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "accent-body.pptx"
+    _body(body, "非重点页结论", color="#C7352B", bold=True)
+
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+
+    deck = Presentation(project / "06_v6/pages/page_001/page.pptx")
+    slide = deck.slides[0]
+    body_shape = next(shape for shape in slide.shapes if shape.name == "TextBox 1")
+    run = body_shape.text_frame.paragraphs[0].runs[0]
+    assert str(run.font.color.rgb) == "17365D"
+    assert run.font.bold is True
+    assert str(slide.background.fill.fore_color.rgb) == "E7F1FA"
+
+
+def test_finalize_preserves_accent_text_on_automatically_matched_emphasis_page(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    state = load(project)
+    taskbook = {
+        "use_scenario": "汇报",
+        "presenter": "项目团队",
+        "primary_audience": "管理层",
+        "audience_prior_knowledge": "已阅读材料",
+        "desired_outcome": "形成判断",
+        "emphasis": "正文",
+        "deemphasis": "重复背景",
+    }
+    state["director_confirmation"] = {
+        "template_id": "investment-committee",
+        "template_version": "1.0",
+        "taskbook": taskbook,
+        "taskbook_digest": taskbook_digest(taskbook),
+    }
+    save(project, state)
+    body = tmp_path / "emphasis-body.pptx"
+    _body(body, "重点页结论", color="#C7352B")
+
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+
+    deck = Presentation(project / "06_v6/pages/page_001/page.pptx")
+    body_shape = next(shape for shape in deck.slides[0].shapes if shape.name == "TextBox 1")
+    assert str(body_shape.text_frame.paragraphs[0].runs[0].font.color.rgb) == "C7352B"
+
+
+def test_emphasis_pages_are_recomputed_after_paginated_word_changes(tmp_path: Path):
+    project = _project(tmp_path, 2)
+    state = load(project)
+    taskbook = {
+        "use_scenario": "汇报", "presenter": "项目团队", "primary_audience": "管理层",
+        "audience_prior_knowledge": "已阅读材料", "desired_outcome": "形成判断",
+        "emphasis": "新增成果", "deemphasis": "重复背景",
+    }
+    state["director_confirmation"] = {
+        "template_id": "investment-committee", "template_version": "1.0",
+        "taskbook": taskbook, "taskbook_digest": taskbook_digest(taskbook),
+    }
+    save(project, state)
+    assert project_emphasis_pages(project) == set()
+    source_path = project / "02_v6/paginated_word_source.json"
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    source["pages"][1]["blocks"][1]["text"] = "新增成果"
+    source_path.write_text(json.dumps(source, ensure_ascii=False), encoding="utf-8")
+    assert project_emphasis_pages(project) == {2}
+
+
+def test_non_emphasis_theme_color_is_replaced_only_when_it_resolves_to_secondary_family(
+    tmp_path: Path,
+):
+    project = _project(tmp_path, 2)
+    for page, theme in ((1, MSO_THEME_COLOR.ACCENT_1), (2, MSO_THEME_COLOR.ACCENT_2)):
+        body = tmp_path / f"theme-{page}.pptx"
+        _body(body, f"主题文字{page}")
+        deck = Presentation(body)
+        run = deck.slides[0].shapes[0].text_frame.paragraphs[0].runs[0]
+        run.font.color.theme_color = theme
+        deck.save(body)
+        finalize_reconstructed_page(project, page_number=page, reconstructed_body=body)
+
+    primary_theme = Presentation(project / "06_v6/pages/page_001/page.pptx")
+    secondary_theme = Presentation(project / "06_v6/pages/page_002/page.pptx")
+    primary_color = primary_theme.slides[0].shapes[0].text_frame.paragraphs[0].runs[0].font.color
+    secondary_color = secondary_theme.slides[0].shapes[0].text_frame.paragraphs[0].runs[0].font.color
+    assert primary_color.theme_color == MSO_THEME_COLOR.ACCENT_1
+    assert str(secondary_color.rgb) == "17365D"
+
+
+def test_non_emphasis_replacement_uses_theme_fill_for_contrast(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "theme-fill.pptx"
+    _body(body, "深色底文字", color="#C7352B")
+    deck = Presentation(body)
+    shape = deck.slides[0].shapes[0]
+    shape.fill.solid()
+    shape.fill.fore_color.theme_color = MSO_THEME_COLOR.ACCENT_1
+    deck.save(body)
+
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+
+    final = Presentation(project / "06_v6/pages/page_001/page.pptx")
+    run = final.slides[0].shapes[0].text_frame.paragraphs[0].runs[0]
+    assert str(run.font.color.rgb) == "000000"
+
+
+def test_assembly_reapplies_background_and_non_emphasis_text_guard(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "body.pptx"
+    _body(body, "最终校验")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+    page_path = project / "06_v6/pages/page_001/page.pptx"
+    page_deck = Presentation(page_path)
+    slide = page_deck.slides[0]
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = RGBColor.from_string("FFFFFF")
+    slide.shapes[0].text_frame.paragraphs[0].runs[0].font.color.rgb = RGBColor.from_string("C7352B")
+    page_deck.save(page_path)
+
+    report = assemble_v6_deck(project)
+    final = Presentation(project / report["output"])
+    slide = final.slides[0]
+    assert str(slide.background.fill.fore_color.rgb) == "E7F1FA"
+    assert str(slide.shapes[0].text_frame.paragraphs[0].runs[0].font.color.rgb) == "17365D"
 
 
 def test_current_confirmed_project_missing_composition_fails_closed_at_assembly(tmp_path: Path):

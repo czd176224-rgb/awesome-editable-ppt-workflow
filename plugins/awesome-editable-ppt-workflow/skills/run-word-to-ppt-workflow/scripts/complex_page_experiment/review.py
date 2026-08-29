@@ -20,7 +20,7 @@ import workflow_v6_image
 from codex_subscription_runtime import CodexStructuredResult, invoke_structured
 from provider_keyring import signing_key, verification_key
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
-from director_taskbook import confirmed_taskbook_prompt
+from director_taskbook import confirmed_taskbook_prompt, project_emphasis_pages
 
 from . import provider as experiment_provider
 from .director import (
@@ -346,12 +346,24 @@ def _validated_candidate_authority(
 
 
 def _validate_director(
-    director: DirectorArtifact, material_view: CompletePageMaterialView
+    workspace: ExperimentWorkspace,
+    director: DirectorArtifact,
+    material_view: CompletePageMaterialView,
 ) -> None:
-    selected = _validate_director_value(director.value, material_view)
+    font_accent_allowed = workspace.page_number in project_emphasis_pages(
+        workspace.project_copy
+    )
+    selected = _validate_director_value(
+        director.value, material_view, font_accent_allowed=font_accent_allowed
+    )
+    current_prompt = compile_consulting_six_part_prompt(
+        director.value, material_view, font_accent_allowed=font_accent_allowed
+    )
+    legacy_prompt = compile_consulting_six_part_prompt(
+        director.value, material_view, font_accent_allowed=None
+    )
     if (
-        compile_consulting_six_part_prompt(director.value, material_view)
-        != director.actual_prompt
+        director.actual_prompt not in {current_prompt, legacy_prompt}
         or selected != director.selected_reference_ids
         or director.value.get("quality") != director.quality
         or not isinstance(director.model, str)
@@ -534,8 +546,16 @@ def _review_prompt(
         "or explicit takeaway, including disconnected module grids; (9) AI-heavy spectacle unsuitable for a formal "
         "report dominates the body, including decorative hero scenes, 3D machinery, miniature factories or parks, "
         "neon, cyberpunk, glowing tracks, or toy-model aesthetics; or (10) visible colors contradict the confirmed "
-        "semantic color meaning in the page authority. Every correction problem must name the visible defect and a "
-        "concrete repair. Harmless rendering variance, noncritical omission, incomplete verbatim text, and possible polish "
+        "semantic color meaning in the page authority. Every visible word or label absent from complete_word_content "
+        "is a hard misleading_fabrication error, even when it sounds plausible or merely explanatory. When "
+        "complete_word_content contains source-explicit process, hierarchy, parallelism, membership, comparison, or "
+        "causality, isolated text blocks without a dominant visual backbone are a hard consulting_argument_failure. "
+        "The candidate must use color, space, shape, connectors, or hierarchy to expose that source relationship. "
+        "When the prompt gives color a structural duty, the candidate must visibly use derived shades of the confirmed UI "
+        "secondary color, with at least two visibly distinct tones across the analytical backbone; do not accept a monochrome, "
+        "single-accent-line, colored-text-only, or unrelated-hue substitute. Color may clarify source relationships but "
+        "must not invent them. Every "
+        "correction problem must name the visible defect and a concrete repair. Harmless rendering variance and possible polish "
         "must be accepted. For a comment that specifically requests a real logo, person, product, project, or factual "
         "image, judge availability against all mapped Context-Images, not merely the selected references. After the "
         "completed project material search/import stage, if no corresponding mapped Context-Image exists, accept the "
@@ -771,7 +791,7 @@ def review_candidate_once(
     if preflight != current_preflight or not current_preflight.passed:
         raise ValueError("candidate must pass the current exact technical preflight")
     image_ids = _validate_material_view(workspace, material_view)
-    _validate_director(director, material_view)
+    _validate_director(workspace, director, material_view)
     validate_published_director_authority(workspace, material_view, director)
     _archive, actual_prompt = _validated_candidate_authority(workspace, candidate)
     final_preflight = preflight_candidate(candidate)

@@ -97,6 +97,93 @@ def test_director_taskbook_contract_is_exact_and_digest_is_canonical():
     assert module.TASKBOOK_FIELDS == tuple(value)
 
 
+def test_director_taskbook_allows_no_emphasis_and_matches_repeated_pages_conservatively():
+    module = load_taskbook_module()
+    value = valid_taskbook()
+    value["emphasis"] = ""
+    assert module.validate_taskbook(value)["emphasis"] == ""
+    Draft202012Validator(
+        json.loads(TASKBOOK_SCHEMA_PATH.read_text(encoding="utf-8"))
+    ).validate(value)
+    pages = [
+        {"page_number": 1, "blocks": [{"type": "paragraph", "text": "现金流改善"}]},
+        {"page_number": 2, "blocks": [{"type": "paragraph", "text": "新增风险清单"}]},
+        {"page_number": 3, "blocks": [{"type": "paragraph", "text": "现金流改善"}]},
+        {"page_number": 4, "blocks": [{"type": "paragraph", "text": "一般背景"}]},
+    ]
+    assert module.identify_emphasis_pages("现金流改善；新增风险清单", pages) == {1, 2, 3}
+    assert module.identify_emphasis_pages("相似但未出现的内容", pages) == set()
+    assert module.identify_emphasis_pages("", pages) == set()
+    composition = [
+        {"output_page_number": 1, "page_role": "section"},
+        {"output_page_number": 2, "page_role": "content"},
+        {"output_page_number": 3, "page_role": "content"},
+        {"output_page_number": 4, "page_role": "content"},
+        {"output_page_number": 5, "page_role": "section"},
+    ]
+    assert module.expand_emphasis_sections({1}, composition) == {1, 2, 3, 4}
+    assert module.expand_emphasis_sections({2, 4}, composition) == {1, 2, 3, 4}
+    assert module.expand_emphasis_sections({2}, composition) == {2}
+
+
+def test_emphasis_semantics_match_section_heading_then_expand_only_that_section():
+    module = load_taskbook_module()
+    pages = [
+        {"page_number": 1, "blocks": [{"text": "七、核心合作：委托联合团队开展母基金专业化管理"}]},
+        {"page_number": 2, "blocks": [{"text": "管理职责"}]},
+        {"page_number": 3, "blocks": [{"text": "九、实施计划：形成产业成果"}]},
+        {"page_number": 4, "blocks": [{"text": "十二个月成果与绩效评价"}]},
+        {"page_number": 5, "blocks": [{"text": "普通附录"}]},
+    ]
+    composition = [
+        {"output_page_number": 1, "source_page_number": 1, "page_role": "section", "fixed_page_title": "核心合作"},
+        {"output_page_number": 2, "source_page_number": 2, "page_role": "content", "fixed_page_title": "管理职责"},
+        {"output_page_number": 3, "source_page_number": 3, "page_role": "section", "fixed_page_title": "实施计划"},
+        {"output_page_number": 4, "source_page_number": 4, "page_role": "content", "fixed_page_title": "成果与评价"},
+        {"output_page_number": 5, "source_page_number": 5, "page_role": "closing", "fixed_page_title": "结语"},
+    ]
+    section_matches = module.identify_semantic_emphasis_pages(
+        "母基金管理、合作机制、实施路径和预期成效", pages, composition,
+    )
+    assert section_matches == {1, 3}
+    assert module.expand_emphasis_sections(section_matches, composition) == {1, 2, 3, 4}
+    negatives = [
+        {"page_number": 1, "blocks": [{"text": "产业概况"}]},
+        {"page_number": 2, "blocks": [{"text": "合作历史"}]},
+        {"page_number": 3, "blocks": [{"text": "实施背景"}]},
+    ]
+    negative_composition = [
+        {
+            "output_page_number": index,
+            "source_page_number": index,
+            "page_role": "section",
+            "fixed_page_title": page["blocks"][0]["text"],
+        }
+        for index, page in enumerate(negatives, start=1)
+    ]
+    assert module.identify_semantic_emphasis_pages(
+        "产业创新、合作机制、实施路径", negatives, negative_composition,
+    ) == set()
+
+
+def test_semantic_emphasis_matches_individual_content_pages_without_expanding_neighbors():
+    module = load_taskbook_module()
+    pages = [
+        {"page_number": 1, "blocks": [{"text": "建立母基金专业化管理与委托关系"}]},
+        {"page_number": 2, "blocks": [{"text": "普通背景介绍"}]},
+        {"page_number": 3, "blocks": [{"text": "前90天开始实施计划并产出成果"}]},
+    ]
+    composition = [
+        {"output_page_number": index, "source_page_number": index, "page_role": "content", "fixed_page_title": page["blocks"][0]["text"]}
+        for index, page in enumerate(pages, start=1)
+    ]
+    matches = module.identify_semantic_emphasis_pages(
+        "母基金管理、合作机制、实施路径和预期成效", pages, composition,
+    )
+    assert matches == {1, 3}
+    assert module.expand_emphasis_sections(matches, composition) == {1, 3}
+
+
 @pytest.mark.parametrize("mutation", ["missing", "extra", "blank", "non_string"])
 def test_director_taskbook_rejects_invalid_fields(mutation: str):
     module = load_taskbook_module()
@@ -466,6 +553,8 @@ def test_static_document_has_exactly_three_steps_and_no_page_editor_fields():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     parser.feed(html)
     assert [step["data-step"] for step in parser.steps] == ["1", "2", "3"]
+    assert "整页 PPT 背景色" in html
+    assert '<textarea name="emphasis" maxlength="2000" rows="3"></textarea>' in html
     for forbidden in (
         "confirmed_pages", "page_role", "composition-warnings", "page-review",
         "regional_characteristics", "visual_description", "风险警告", "页面编排",

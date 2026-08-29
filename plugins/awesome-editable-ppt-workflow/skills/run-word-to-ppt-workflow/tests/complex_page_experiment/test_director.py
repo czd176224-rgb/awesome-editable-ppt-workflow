@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -304,27 +305,21 @@ def test_compile_prompt_injects_confirmed_color_roles_and_budgets_once():
     view = _compiler_material_view("#F7F7F7", "#161616", "#CD202A")
     value = _director_value(CompletePageMaterialView({}, (), (), ""))
 
-    prompt = compile_consulting_six_part_prompt(value, view)
+    prompt = compile_consulting_six_part_prompt(
+        value, view, font_accent_allowed=True
+    )
     sections = _compiled_prompt_sections(prompt)
-    positive, prohibited = _color_constraints(view)
+    positive, prohibited = _color_constraints(view, font_accent_allowed=True)
 
     assert prompt.count(positive) == 1
     assert prompt.count(prohibited) == 1
     assert positive in sections["Visual Style and Color"]
     assert prohibited in sections["Strict Prohibitions"]
-    assert "primary color #161616 for primary text and structural hierarchy" in positive
-    assert "secondary color #CD202A strictly as an accent" in positive
-    for marker in (
-        "70%-85%",
-        "15%-25%",
-        "3%-7%",
-        "never above 10%",
-        "continuous accent block above 2%",
-        "full-width solid headers",
-        "wide bands or paths",
-        "large tinted regions",
-    ):
-        assert marker in positive + prohibited
+    assert "primary color #161616 for primary text and neutral structure" in positive
+    assert "derived shades of secondary color #CD202A" in positive
+    assert "This is a user-confirmed emphasis page" in positive
+    for obsolete_quota in ("70%-85%", "15%-25%", "3%-7%", "never above 10%"):
+        assert obsolete_quota not in positive + prohibited
     assert [line[3:] for line in prompt.splitlines() if line.startswith("## ")] == list(HEADINGS)
 
 
@@ -340,8 +335,8 @@ def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
         _compiler_material_view(secondary_color="#CD202A"),
     )
 
-    assert prompt.replace(secondary_color, "#SECONDARY") == baseline.replace(
-        "#CD202A", "#SECONDARY"
+    assert re.sub(r"#[0-9A-F]{6}", "#COLOR", prompt) == re.sub(
+        r"#[0-9A-F]{6}", "#COLOR", baseline
     )
     if secondary_color == "#1F5AA6":
         compiler_owned = " ".join(

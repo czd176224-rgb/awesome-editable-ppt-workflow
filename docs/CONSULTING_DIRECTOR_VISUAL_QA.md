@@ -31,7 +31,7 @@ Record only a local pass/fail note with this non-sensitive shape:
 ```json
 {
   "schema_version": "awesome-private-consulting-visual-smoke-v1",
-  "plugin_version": "1.2.1",
+  "plugin_version": "1.2.2",
   "pages": [
     {
       "page_number": 4,

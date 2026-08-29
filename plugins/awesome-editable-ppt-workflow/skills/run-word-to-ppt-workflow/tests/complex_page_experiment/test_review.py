@@ -353,8 +353,12 @@ def test_review_allows_only_actionable_serious_correction_prompt_classes(
     assert "miniature factories or parks" in captured[0]
     assert "neon, cyberpunk" in captured[0]
     assert "confirmed semantic color meaning" in captured[0]
+    assert "Every visible word or label absent from complete_word_content" in captured[0]
+    assert "isolated text blocks without a dominant visual backbone" in captured[0]
+    assert "source-explicit process, hierarchy, parallelism, membership, comparison, or causality" in captured[0]
+    assert "derived shades of the confirmed UI secondary color" in captured[0]
+    assert "at least two visibly distinct tones" in captured[0]
     assert "Harmless rendering variance" in captured[0]
-    assert "noncritical omission" in captured[0]
     assert "possible polish" in captured[0]
 
 

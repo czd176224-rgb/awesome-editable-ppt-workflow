@@ -19,7 +19,7 @@ if str(IMAGE_PROVIDER_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(IMAGE_PROVIDER_SCRIPTS))
 from provider_keyring import signing_key, verification_key
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
-from director_taskbook import confirmed_taskbook_prompt
+from director_taskbook import confirmed_taskbook_prompt, project_emphasis_pages
 
 from .consulting_prompt import compile_consulting_six_part_prompt
 
@@ -357,7 +357,8 @@ def _complete_material_use(
 
 
 def _validate_director_value(
-    value: Mapping[str, object], material_view: CompletePageMaterialView
+    value: Mapping[str, object], material_view: CompletePageMaterialView, *,
+    font_accent_allowed: bool = False,
 ) -> tuple[str, ...]:
     schema = _load_schema()
     errors = sorted(
@@ -426,7 +427,9 @@ def _validate_director_value(
         item not in allowed_references for item in selected_ids
     ):
         raise ValueError("selected reference must be a unique viewable project-owned material ID")
-    compile_consulting_six_part_prompt(value, material_view)
+    compile_consulting_six_part_prompt(
+        value, material_view, font_accent_allowed=font_accent_allowed
+    )
     return selected_ids
 
 
@@ -445,6 +448,9 @@ def direct_page(
 ) -> DirectorArtifact:
     """Run one page-level multimodal director turn in role awesome-page-director."""
     image_ids = _validate_material_view(workspace, material_view)
+    font_accent_allowed = workspace.page_number in project_emphasis_pages(
+        workspace.project_copy
+    )
     visual_reference = _visual_director_reference()
     taskbook = confirmed_taskbook_prompt(workspace.project_copy)
     prompt = (
@@ -508,12 +514,16 @@ def direct_page(
         timeout=timeout,
     )
     director_value = _complete_material_use(result.value, material_view)
-    selected_ids = _validate_director_value(director_value, material_view)
+    selected_ids = _validate_director_value(
+        director_value, material_view, font_accent_allowed=font_accent_allowed
+    )
     quality = director_value["quality"]
     assert quality in {"medium", "high"}
     artifact = DirectorArtifact(
         value=director_value,
-        actual_prompt=compile_consulting_six_part_prompt(director_value, material_view),
+        actual_prompt=compile_consulting_six_part_prompt(
+            director_value, material_view, font_accent_allowed=font_accent_allowed
+        ),
         selected_reference_ids=selected_ids,
         quality=quality,
         model=result.model,
@@ -599,6 +609,9 @@ def decide_correction(
         raise ValueError("correction requires explicit review problems")
     candidate = _candidate_under_project(workspace, previous_candidate)
     image_ids = _validate_material_view(workspace, material_view)
+    font_accent_allowed = workspace.page_number in project_emphasis_pages(
+        workspace.project_copy
+    )
     taskbook = confirmed_taskbook_prompt(workspace.project_copy)
     prior_candidate: Path | None = None
     if (previous_decision is None) != (previous_request_candidate is None):
@@ -667,7 +680,9 @@ def decide_correction(
         raise ValueError("correction contains a duplicate selected reference")
     if any(item not in allowed_references for item in selected_ids):
         raise ValueError("selected reference must be a viewable source material ID")
-    actual_prompt = compile_consulting_six_part_prompt(result.value, material_view)
+    actual_prompt = compile_consulting_six_part_prompt(
+        result.value, material_view, font_accent_allowed=font_accent_allowed
+    )
     if actual_prompt == director.actual_prompt and selected_ids == director.selected_reference_ids:
         raise ValueError("correction cannot reproduce the unchanged prior prompt and input request")
     strategy = result.value["strategy"]

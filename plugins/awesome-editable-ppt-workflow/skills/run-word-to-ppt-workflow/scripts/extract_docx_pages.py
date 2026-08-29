@@ -149,6 +149,14 @@ def extract(input_path: Path, marker_pattern: str) -> dict:
             match = marker.match(block.text.strip())
             if match:
                 source_page_id = int(match.group(1))
+                if (
+                    current is not None
+                    and current["source_page_id"] == source_page_id
+                    and not current["blocks"]
+                ):
+                    current["marker_text"] = block.text.strip()
+                    current["marker_source_block_id"] = f"word-block-{source_block_index:06d}"
+                    continue
                 page_number = len(pages) + 1
                 page_blocks = list(leading_blocks) if not pages else []
                 current = {

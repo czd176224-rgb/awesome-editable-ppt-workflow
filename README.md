@@ -1,4 +1,4 @@
-# Awesome Editable PPT Workflow 1.2.1
+# Awesome Editable PPT Workflow 1.2.2
 
 Public Codex plugin for converting a paginated Word document plus an SVG Logo into an object-level editable 16:9 PowerPoint.
 
@@ -11,7 +11,10 @@ The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is 
 - The first visible Word paragraph is the slide-title authority; later headings stay in the body.
 - Cover, TOC, section, closing and appendix pages use native editable layouts and preserve every frozen source block.
 - One three-step UI confirms a whole-deck director preset, the visual contract and a seven-field presentation taskbook. Word remains the factual and page-content authority.
+- The confirmed background color becomes the native whole-slide background on every final PPT page, while positioned fills may still structure the page body.
+- The confirmed emphasis content is conservatively matched to Word pages in the background. Only those pages may use the secondary-color family for text; non-emphasis pages retain hierarchy through weight, size, position, shapes and fills without secondary-family text.
 - One consulting page director turns each body into a coherent business argument with explanatory copy, an analytical backbone, evidence-to-interpretation-to-conclusion flow, and an explicit takeaway.
+- The director makes explicit source relationships visible through color, position, shape, connectors and hierarchy, including process, level, parallelism, ownership, comparison and causality.
 - The sealed Image2 prompt has exactly six consulting-report sections. The compiler owns the canvas, fixed-layer exclusions, semantic color roles, accent limits, and formal-report prohibitions.
 - The single final UI submission is the sole material/reference authority. Every staged reference requires explicit keep/remove; the backend cannot reinterpret it afterward.
 - Zero confirmed references uses Image2 `generate`; 1-16 confirmed refs uses `edit`, preserving their ordered role descriptions.
@@ -24,9 +27,9 @@ The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is 
 
 ## Install
 
-Download the immutable `v1.2.1` Windows release ZIP:
+Download the immutable `v1.2.2` Windows release ZIP:
 
-`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.1/awesome-editable-ppt-workflow-1.2.1-windows.zip`
+`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.2/awesome-editable-ppt-workflow-1.2.2-windows.zip`
 
 Download the adjacent `SHA256SUMS.txt`, verify locally with `Get-FileHash`, extract the ZIP and run `install.ps1`. Restart Codex after installation or upgrade.
 

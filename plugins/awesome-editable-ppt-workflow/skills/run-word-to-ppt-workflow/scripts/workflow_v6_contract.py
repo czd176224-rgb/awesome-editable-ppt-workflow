@@ -17,7 +17,7 @@ from director_templates import DIRECTOR_TEMPLATES
 
 
 PLUGIN_ID = "awesome-editable-ppt-workflow"
-PLUGIN_VERSION = "1.2.1"
+PLUGIN_VERSION = "1.2.2"
 WORKFLOW_VERSION = "awesome-word-ppt-workflow-v1"
 PROJECT_ARTIFACT_VERSION = "awesome-word-ppt-project-v1"
 PAGE_ARTIFACT_VERSION = "word-ppt-page-v6"

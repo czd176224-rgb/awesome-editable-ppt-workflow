@@ -229,6 +229,9 @@ def apply_fixed_frame(
     if any(shape.name.startswith("fixed-frame-") for shape in slide.shapes):
         raise ValueError("fixed frame has already been applied")
     _assert_slide_and_body(slide, deck)
+    background = style_execution.get("background_color", "#FFFFFF")
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = _hex_color(background, "#FFFFFF")
     title_font, title_pt, title_color = _title_style(style_execution, frame)
 
     title, paragraph = _add_textbox(
@@ -307,6 +310,13 @@ def inspect_fixed_frame(
     except ValueError as exc:
         issues.append(str(exc))
         title_font, title_pt, title_color = "", 0.0, ""
+    expected_background = str(style_execution.get("background_color", "#FFFFFF")).lstrip("#").upper()
+    try:
+        actual_background = str(slide.background.fill.fore_color.rgb)
+    except (AttributeError, ValueError):
+        actual_background = ""
+    if actual_background != expected_background:
+        issues.append("slide background does not match the confirmed whole-slide background color")
     if title:
         runs = title[0].text_frame.paragraphs[0].runs
         run = runs[0] if runs else None
