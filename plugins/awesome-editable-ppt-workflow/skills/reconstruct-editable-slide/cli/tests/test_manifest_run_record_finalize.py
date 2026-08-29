@@ -252,7 +252,9 @@ def test_native_chart_manifest_survives_final_assembly_without_officecli(
     )
     preview = Image.open(page_dir / "preview.png").convert("RGB")
     assert preview.width / preview.height == 16 / 9
-    assert (68, 114, 196) in preview.get_flattened_data()
+    colors = preview.getcolors(maxcolors=preview.width * preview.height)
+    assert colors is not None
+    assert any(color == (68, 114, 196) for _, color in colors)
 
     page_slide = Presentation(page_dir / "page.pptx").slides[0]
     page_chart = next(shape.chart for shape in page_slide.shapes if shape.has_chart)
