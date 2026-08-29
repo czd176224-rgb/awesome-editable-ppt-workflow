@@ -10,9 +10,21 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 try:
-    from .build_pptx_from_manifest import _chart_shared_text, normalize_manifest
+    from .build_pptx_from_manifest import (
+        _chart_basis_labels,
+        _chart_mark_geometry,
+        _chart_shape_description,
+        _chart_shared_text,
+        normalize_manifest,
+    )
 except ImportError:  # direct runtime script execution through the editppt launcher
-    from build_pptx_from_manifest import _chart_shared_text, normalize_manifest
+    from build_pptx_from_manifest import (
+        _chart_basis_labels,
+        _chart_mark_geometry,
+        _chart_shape_description,
+        _chart_shared_text,
+        normalize_manifest,
+    )
 
 
 NS = {
@@ -456,6 +468,44 @@ def _chart_xml_values(chart, tag):
     return values
 
 
+def _shape_geometry(shape):
+    xfrm = shape._element.xpath(".//a:xfrm")[0]
+    off, ext = xfrm.xpath("./a:off")[0], xfrm.xpath("./a:ext")[0]
+    return tuple(int(round(float(value))) for value in (off.get("x"), off.get("y"), ext.get("cx"), ext.get("cy")))
+
+
+def _connector_endpoints(shape):
+    left, top, width, height = _shape_geometry(shape)
+    xfrm = shape._element.xpath(".//a:xfrm")[0]
+    flip_h = xfrm.get("flipH") in {"1", "true"}
+    flip_v = xfrm.get("flipV") in {"1", "true"}
+    return (
+        left + width if flip_h else left,
+        top + height if flip_v else top,
+        left if flip_h else left + width,
+        top if flip_v else top + height,
+    )
+
+
+def _shape_kind(shape):
+    local = shape._element.tag.rsplit("}", 1)[-1]
+    if local == "cxnSp":
+        return "connector"
+    geometry = shape._element.xpath(".//a:prstGeom")
+    return geometry[0].get("prst") if geometry else local
+
+
+def _shape_arrowheads(shape):
+    line = shape._element.xpath(".//a:ln")
+    if not line:
+        return {}
+    return {
+        node.tag.rsplit("}", 1)[-1]: node.get("type")
+        for node in line[0]
+        if node.tag.rsplit("}", 1)[-1] in {"headEnd", "tailEnd"}
+    }
+
+
 def quantitative_chart_readback_violations(pptx_path, manifests):
     """Read exact chart objects and direct marks back from the generated PPTX."""
     from pptx import Presentation
@@ -481,6 +531,19 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
         if actual != expected:
             violations.append({"field": field, "expected": expected, "actual": actual})
 
+    def validate_mark(named, chart, role, field, kind, geometry, arrowheads=None):
+        shape = named.get(f"{chart['name']} {role}")
+        if shape is None:
+            violations.append({"field": field, "reason": "missing mark"})
+            return
+        description = shape._element.xpath(".//p:cNvPr")[0].get("descr")
+        add(f"{field}.object_id", _chart_shape_description(chart, role), description)
+        add(f"{field}.type", kind, _shape_kind(shape))
+        actual_geometry = _connector_endpoints(shape) if kind == "connector" else _shape_geometry(shape)
+        add(f"{field}.geometry", geometry, actual_geometry)
+        if arrowheads is not None:
+            add(f"{field}.arrowheads", arrowheads, _shape_arrowheads(shape))
+
     for slide_index, (slide, manifest) in enumerate(zip(presentation.slides, normalized)):
         named = {shape.name: shape for shape in slide.shapes}
         for chart_index, expected in enumerate(manifest.get("charts", [])):
@@ -492,7 +555,7 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
             description = root._element.xpath(".//p:cNvPr")[0].get("descr")
             add(
                 f"{prefix}.object_id",
-                f"object_id:{expected['object_id']};chart_variant:{expected['chart_variant']}",
+                _chart_shape_description(expected),
                 description,
             )
             add(f"{prefix}.box.left", int(expected["left"] * 914400), root.left)
@@ -505,11 +568,15 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
                 unit = f"x: {expected['x_unit']} | y: {expected['y_unit']}"
                 if variant == "bubble":
                     unit += f" | size: {expected['size_unit']}"
-            for role, text in (("Unit", unit), ("Period", expected["period"])):
+            metadata = [("Unit", unit), ("Period", expected["period"]), *_chart_basis_labels(expected)]
+            for role, text in metadata:
                 shape = named.get(f"{expected['name']} {role}")
-                add(f"{prefix}.{role.lower()}", text, shape.text if shape is not None else None)
+                field = role.lower().replace(" ", "_")
+                add(f"{prefix}.{field}", text, shape.text if shape is not None else None)
 
             if variant == "dot":
+                title_shape = named.get(f"{expected['name']} Title")
+                add(f"{prefix}.title", expected["title"], title_shape.text if title_shape is not None else None)
                 point_count = sum(len(item["values"]) for item in expected["series"])
                 add(
                     f"{prefix}.points",
@@ -525,8 +592,25 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
                     series_shape = named.get(f"{expected['name']} Series {series_index}")
                     add(f"{prefix}.series[{series_index - 1}].name", item["name"], series_shape.text if series_shape is not None else None)
                 point_index = 1
+                mark_geometry = _chart_mark_geometry(expected)
                 for series_index, item in enumerate(expected["series"]):
                     for category, value in zip(item["categories"], item["values"]):
+                        validate_mark(
+                            named,
+                            expected,
+                            f"Point {point_index}",
+                            f"{prefix}.points[{point_index - 1}]",
+                            "ellipse",
+                            mark_geometry[f"Point {point_index}"],
+                        )
+                        validate_mark(
+                            named,
+                            expected,
+                            f"Connector {point_index}",
+                            f"{prefix}.connectors[{point_index - 1}]",
+                            "connector",
+                            mark_geometry[f"Connector {point_index}"],
+                        )
                         category_shape = named.get(f"{expected['name']} Category {point_index}")
                         value_shape = named.get(f"{expected['name']} Value {point_index}")
                         add(f"{prefix}.series[{series_index}].categories[{point_index - 1}]", category, category_shape.text if category_shape is not None else None)
@@ -565,10 +649,24 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
                 ):
                     shape = named.get(f"{expected['name']} {role}")
                     add(f"{prefix}.{role.lower()}", value, shape.text if shape is not None else None)
-                if f"{expected['name']} Target Line" not in named:
-                    violations.append({"field": f"{prefix}.target_line", "reason": "missing target line"})
-                if f"{expected['name']} Difference Arrow" not in named:
-                    violations.append({"field": f"{prefix}.difference_arrow", "reason": "missing difference arrow"})
+                mark_geometry = _chart_mark_geometry(expected)
+                validate_mark(
+                    named,
+                    expected,
+                    "Target Line",
+                    f"{prefix}.target_line",
+                    "connector",
+                    mark_geometry["Target Line"],
+                )
+                validate_mark(
+                    named,
+                    expected,
+                    "Difference Arrow",
+                    f"{prefix}.difference_arrow",
+                    "connector",
+                    mark_geometry["Difference Arrow"],
+                    {"headEnd": "triangle", "tailEnd": "triangle"},
+                )
     return violations
 
 

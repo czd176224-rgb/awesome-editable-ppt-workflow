@@ -307,6 +307,61 @@ def _chart_shared_text(chart, field):
     return values[0]
 
 
+def _chart_basis_labels(chart):
+    if chart["rendering_primitive"] != "xy":
+        return [("Basis", _chart_shared_text(chart, "basis"))]
+    labels = [("X Basis", chart["x_basis"]), ("Y Basis", chart["y_basis"])]
+    if chart["chart_variant"] == "bubble":
+        labels.append(("Size Basis", chart["size_basis"]))
+    return labels
+
+
+def _chart_shape_description(chart, role=None):
+    suffix = "" if role is None else f":{role.lower().replace(' ', '-')}"
+    return f"object_id:{chart['object_id']}{suffix};chart_variant:{chart['chart_variant']}"
+
+
+def _chart_mark_geometry(chart):
+    """Return the exact integer-EMU geometry consumed by direct chart marks."""
+    from pptx.util import Inches
+
+    left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
+    values = [float(value) for item in chart["series"] for value in item["values"]]
+    values.extend(float(chart[key]) for key in ("target_value", "actual_value") if chart.get(key) is not None)
+    low, high = min(values + [0.0]), max(values + [0.0])
+    if high == low:
+        high = low + 1.0
+
+    def value_position(value, horizontal):
+        ratio = (float(value) - low) / (high - low)
+        if horizontal:
+            return int(round(left + width * (0.15 + 0.75 * ratio)))
+        return int(round(top + height * (0.85 - 0.7 * ratio)))
+
+    geometry = {}
+    if chart["chart_variant"] == "dot":
+        points = [(category, value) for series in chart["series"] for category, value in zip(series["categories"], series["values"])]
+        row_height = height * 0.65 / len(points)
+        diameter = int(Inches(min(0.14, chart["height"] / 20)))
+        for index, (_category, value) in enumerate(points, start=1):
+            y = int(round(top + height * 0.18 + row_height * (index - 0.5)))
+            x = value_position(value, True)
+            geometry[f"Connector {index}"] = (int(round(left + width * 0.15)), y, x, y)
+            geometry[f"Point {index}"] = (int(round(x - diameter / 2)), int(round(y - diameter / 2)), diameter, diameter)
+
+    if chart.get("target_value") is not None:
+        horizontal = chart["chart_variant"] in {"bar", "dot"}
+        target = value_position(chart["target_value"], horizontal)
+        actual = value_position(chart["actual_value"], horizontal)
+        if horizontal:
+            geometry["Target Line"] = (target, int(round(top + height * 0.15)), target, int(round(top + height * 0.85)))
+            geometry["Difference Arrow"] = (actual, int(round(top + height * 0.1)), target, int(round(top + height * 0.1)))
+        else:
+            geometry["Target Line"] = (int(round(left + width * 0.15)), target, int(round(left + width * 0.9)), target)
+            geometry["Difference Arrow"] = (int(round(left + width * 0.93)), actual, int(round(left + width * 0.93)), target)
+    return geometry
+
+
 def _validate_chart(manifest, chart):
     if "anchor" in chart or "chart_type" in chart:
         raise ValueError("charts[] anchor/chart_type are unsupported; use fixed-canvas box_px and explicit chart_variant")
@@ -979,12 +1034,11 @@ def apply_native_charts(pptx_path, manifests):
     def identify(shape, chart, role=None):
         shape.name = chart["name"] if role is None else f"{chart['name']} {role}"
         c_nv_pr = shape._element.xpath(".//p:cNvPr")[0]
-        suffix = "" if role is None else f":{role.lower().replace(' ', '-')}"
-        c_nv_pr.set("descr", f"object_id:{chart['object_id']}{suffix};chart_variant:{chart['chart_variant']}")
+        c_nv_pr.set("descr", _chart_shape_description(chart, role))
         return shape
 
     def add_label(slide, chart, role, text, left, top, width, height):
-        shape = identify(slide.shapes.add_textbox(left, top, width, height), chart, role)
+        shape = identify(slide.shapes.add_textbox(*(int(round(value)) for value in (left, top, width, height))), chart, role)
         shape.text_frame.clear()
         paragraph = shape.text_frame.paragraphs[0]
         paragraph.text = str(text)
@@ -998,26 +1052,14 @@ def apply_native_charts(pptx_path, manifests):
         return value + (f" | size: {chart['size_unit']}" if chart["chart_variant"] == "bubble" else "")
 
     def add_metadata(slide, chart):
-        left, top, width = (Inches(chart[key]) for key in ("left", "top", "width"))
-        label_height = Inches(min(0.25, chart["height"] / 10))
-        add_label(slide, chart, "Unit", unit_text(chart), left + width * 0.55, top, width * 0.45, label_height)
-        add_label(slide, chart, "Period", chart["period"], left + width * 0.55, top + label_height, width * 0.45, label_height)
+        left, top, width = (int(Inches(chart[key])) for key in ("left", "top", "width"))
+        label_height = int(Inches(min(0.25, chart["height"] / 10)))
+        labels = [("Unit", unit_text(chart)), ("Period", chart["period"]), *_chart_basis_labels(chart)]
+        for index, (role, text) in enumerate(labels):
+            add_label(slide, chart, role, text, left + width * 0.55, top + label_height * index, width * 0.45, label_height)
 
     def number_text(value):
         return str(value)
-
-    def value_bounds(chart):
-        values = [float(value) for item in chart["series"] for value in item["values"]]
-        values.extend(float(chart[key]) for key in ("target_value", "actual_value") if chart.get(key) is not None)
-        low, high = min(values + [0.0]), max(values + [0.0])
-        return low, high if high != low else low + 1.0
-
-    def value_position(chart, value, horizontal):
-        low, high = value_bounds(chart)
-        ratio = (float(value) - low) / (high - low)
-        if horizontal:
-            return Inches(chart["left"] + chart["width"] * (0.15 + 0.75 * ratio))
-        return Inches(chart["top"] + chart["height"] * (0.85 - 0.7 * ratio))
 
     def add_arrowheads(connector):
         line = connector._element.spPr.get_or_add_ln()
@@ -1029,19 +1071,13 @@ def apply_native_charts(pptx_path, manifests):
     def add_target_marks(slide, chart):
         if chart.get("target_value") is None:
             return
-        left, top, width, height = (Inches(chart[key]) for key in ("left", "top", "width", "height"))
-        horizontal = chart["chart_variant"] in {"bar", "dot"}
-        target = value_position(chart, chart["target_value"], horizontal)
-        actual = value_position(chart, chart["actual_value"], horizontal)
-        if horizontal:
-            target_line = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, target, top + height * 0.15, target, top + height * 0.85)
-            difference = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, actual, top + height * 0.1, target, top + height * 0.1)
-        else:
-            target_line = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, left + width * 0.15, target, left + width * 0.9, target)
-            difference = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, left + width * 0.93, actual, left + width * 0.93, target)
+        geometry = _chart_mark_geometry(chart)
+        target_line = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *geometry["Target Line"])
+        difference = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *geometry["Difference Arrow"])
         identify(target_line, chart, "Target Line")
         identify(difference, chart, "Difference Arrow")
         add_arrowheads(difference)
+        left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
         label_width, label_height = width * 0.28, Inches(min(0.25, chart["height"] / 10))
         add_label(slide, chart, "Target", f"Target: {number_text(chart['target_value'])}", left, top + height - label_height, label_width, label_height)
         add_label(slide, chart, "Actual", f"Actual: {number_text(chart['actual_value'])}", left + label_width, top + height - label_height, label_width, label_height)
@@ -1049,22 +1085,23 @@ def apply_native_charts(pptx_path, manifests):
         add_label(slide, chart, "Difference", f"Difference: {number_text(difference_value)}", left + label_width * 2, top + height - label_height, label_width, label_height)
 
     def add_dot(slide, chart):
-        left, top, width, height = (Inches(chart[key]) for key in ("left", "top", "width", "height"))
+        left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
         root = identify(slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, width, height), chart)
         root.fill.background()
         root.line.fill.background()
+        add_label(slide, chart, "Title", chart["title"], left, top, width * 0.5, int(Inches(min(0.25, chart["height"] / 10))))
         points = [(series, category, value) for series in chart["series"] for category, value in zip(series["categories"], series["values"])]
         series_width = width * 0.4 / len(chart["series"])
         for series_index, series in enumerate(chart["series"], start=1):
             add_label(slide, chart, f"Series {series_index}", series["name"], left + width * 0.15 + series_width * (series_index - 1), top + height * 0.08, series_width, height * 0.08)
-        row_height = height * 0.65 / max(1, len(points))
+        geometry = _chart_mark_geometry(chart)
         for index, (_series, category, value) in enumerate(points, start=1):
-            y = top + height * 0.18 + row_height * (index - 0.5)
-            x = value_position(chart, value, True)
-            connector = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, left + width * 0.15, y, x, y)
+            connector_geometry = geometry[f"Connector {index}"]
+            connector = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *connector_geometry)
             identify(connector, chart, f"Connector {index}")
-            diameter = Inches(min(0.14, chart["height"] / 20))
-            identify(slide.shapes.add_shape(MSO_SHAPE.OVAL, x - diameter / 2, y - diameter / 2, diameter, diameter), chart, f"Point {index}")
+            point_geometry = geometry[f"Point {index}"]
+            identify(slide.shapes.add_shape(MSO_SHAPE.OVAL, *point_geometry), chart, f"Point {index}")
+            x, y, diameter = point_geometry[0] + point_geometry[2] // 2, point_geometry[1] + point_geometry[3] // 2, point_geometry[2]
             add_label(slide, chart, f"Category {index}", category, left, y - diameter, width * 0.12, diameter * 2)
             add_label(slide, chart, f"Value {index}", number_text(value), x + diameter, y - diameter, width * 0.12, diameter * 2)
         add_metadata(slide, chart)

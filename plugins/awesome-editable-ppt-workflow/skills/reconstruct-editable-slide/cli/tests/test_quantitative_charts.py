@@ -8,6 +8,7 @@ import pytest
 from pptx import Presentation
 from pptx.chart.data import ChartData
 from pptx.enum.chart import XL_CHART_TYPE
+from pptx.enum.shapes import MSO_SHAPE
 
 
 RUNTIME = Path(__file__).resolve().parents[1] / "editppt" / "runtime"
@@ -122,6 +123,12 @@ def test_native_variants_preserve_exact_type_data_labels_and_fixed_canvas_box(
     if chart["rendering_primitive"] == "xy":
         assert chart_shape.chart.category_axis.axis_title.text_frame.text == chart["x_label"]
         assert chart_shape.chart.value_axis.axis_title.text_frame.text == chart["y_label"]
+        assert metadata[f"{chart['name']} X Basis"] == chart["x_basis"]
+        assert metadata[f"{chart['name']} Y Basis"] == chart["y_basis"]
+        if chart["chart_variant"] == "bubble":
+            assert metadata[f"{chart['name']} Size Basis"] == chart["size_basis"]
+    else:
+        assert metadata[f"{chart['name']} Basis"] == chart["basis"]
     assert metadata[f"{chart['name']} Unit"] == chart.get("unit", "x: % | y: % pts | size: USD m" if chart["chart_variant"] == "bubble" else "x: % | y: % pts")
     assert metadata[f"{chart['name']} Period"] == "FY2025"
     assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
@@ -139,6 +146,7 @@ def test_dot_uses_editable_points_connectors_and_exact_source_labels(tmp_path: P
 
     assert not any(shape.has_chart for shape in slide.shapes)
     assert chart["name"] in names
+    assert next(shape.text for shape in slide.shapes if shape.name == "Revenue chart Title") == "Revenue"
     assert sum(name.startswith("Revenue chart Point ") for name in names) == 2
     assert sum(name.startswith("Revenue chart Connector ") for name in names) == 2
     assert next(shape.text for shape in slide.shapes if shape.name == "Revenue chart Series 1") == "Revenue"
@@ -173,7 +181,138 @@ def test_one_dimensional_chart_accepts_explicit_shared_series_unit_and_basis(tmp
 
     slide = Presentation(out).slides[0]
     assert next(shape.text for shape in slide.shapes if shape.name == "Revenue chart Unit") == "USD m"
+    assert next(shape.text for shape in slide.shapes if shape.name == "Revenue chart Basis") == "same portfolio companies"
     assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
+
+
+@pytest.mark.parametrize(
+    ("chart", "role", "changed", "field"),
+    [
+        (_one_dimensional(), "Basis", "wrong basis", "charts[0].basis"),
+        (_one_dimensional(), "Basis", None, "charts[0].basis"),
+        (_xy("scatter"), "X Basis", "wrong x basis", "charts[0].x_basis"),
+        (_xy("scatter"), "Y Basis", "wrong y basis", "charts[0].y_basis"),
+        (_xy("bubble"), "Size Basis", "wrong size basis", "charts[0].size_basis"),
+    ],
+)
+def test_readback_rejects_changed_or_missing_dimension_basis(
+    tmp_path: Path, chart: dict, role: str, changed: str | None, field: str
+) -> None:
+    manifest = _manifest(chart)
+    out = tmp_path / "basis.pptx"
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+    presentation = Presentation(out)
+    named = {shape.name: shape for shape in presentation.slides[0].shapes}
+    basis_shape = named[f"{chart['name']} {role}"]
+    if changed is None:
+        basis_shape._element.getparent().remove(basis_shape._element)
+    else:
+        basis_shape.text = changed
+    presentation.save(out)
+
+    violations = validate_pptx.quantitative_chart_readback_violations(out, [manifest])
+
+    assert any(item["field"] == field for item in violations)
+
+
+def test_dot_readback_rejects_changed_title(tmp_path: Path) -> None:
+    chart = _one_dimensional("dot")
+    manifest = _manifest(chart)
+    out = tmp_path / "dot-title.pptx"
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+    presentation = Presentation(out)
+    named = {shape.name: shape for shape in presentation.slides[0].shapes}
+    named["Revenue chart Title"].text = "Wrong title"
+    presentation.save(out)
+
+    violations = validate_pptx.quantitative_chart_readback_violations(out, [manifest])
+
+    assert any(item["field"] == "charts[0].title" for item in violations)
+
+
+@pytest.mark.parametrize(
+    ("damage", "field"),
+    [
+        ("point_identity", "charts[0].points[0].object_id"),
+        ("point_type", "charts[0].points[0].type"),
+        ("connector_geometry", "charts[0].connectors[0].geometry"),
+    ],
+)
+def test_dot_mark_readback_rejects_wrong_identity_type_or_geometry(
+    tmp_path: Path, damage: str, field: str
+) -> None:
+    chart = _one_dimensional("dot")
+    manifest = _manifest(chart)
+    out = tmp_path / f"dot-{damage}.pptx"
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+    presentation = Presentation(out)
+    named = {shape.name: shape for shape in presentation.slides[0].shapes}
+    if damage == "point_identity":
+        named["Revenue chart Point 1"]._element.xpath(".//p:cNvPr")[0].set("descr", "object_id:wrong")
+    elif damage == "point_type":
+        named["Revenue chart Point 1"]._element.xpath(".//a:prstGeom")[0].set("prst", "rect")
+    else:
+        off = named["Revenue chart Connector 1"]._element.xpath(".//a:xfrm/a:off")[0]
+        off.set("x", str(float(off.get("x")) + 1000))
+    presentation.save(out)
+
+    violations = validate_pptx.quantitative_chart_readback_violations(out, [manifest])
+
+    assert any(item["field"] == field for item in violations)
+
+
+@pytest.mark.parametrize(
+    ("damage", "field"),
+    [
+        ("target_identity", "charts[0].target_line.object_id"),
+        ("target_geometry", "charts[0].target_line.geometry"),
+        ("difference_type", "charts[0].difference_arrow.type"),
+        ("difference_arrowheads", "charts[0].difference_arrow.arrowheads"),
+        ("difference_label", "charts[0].difference"),
+    ],
+)
+def test_target_mark_readback_rejects_wrong_identity_geometry_type_or_arrowheads(
+    tmp_path: Path, damage: str, field: str
+) -> None:
+    chart = {**_one_dimensional("column"), "target_value": 20, "actual_value": 18}
+    manifest = _manifest(chart)
+    out = tmp_path / f"target-{damage}.pptx"
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+    presentation = Presentation(out)
+    slide = presentation.slides[0]
+    named = {shape.name: shape for shape in slide.shapes}
+    if damage == "target_identity":
+        named["Revenue chart Target Line"]._element.xpath(".//p:cNvPr")[0].set("descr", "object_id:wrong")
+    elif damage == "target_geometry":
+        off = named["Revenue chart Target Line"]._element.xpath(".//a:xfrm/a:off")[0]
+        off.set("y", str(float(off.get("y")) + 1000))
+    elif damage == "difference_type":
+        old = named["Revenue chart Difference Arrow"]
+        xfrm = old._element.xpath(".//a:xfrm")[0]
+        off, ext = xfrm.xpath("./a:off")[0], xfrm.xpath("./a:ext")[0]
+        replacement = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            int(round(float(off.get("x")))),
+            int(round(float(off.get("y")))),
+            int(round(float(ext.get("cx")))),
+            int(round(float(ext.get("cy")))),
+        )
+        replacement.name = old.name
+        replacement._element.xpath(".//p:cNvPr")[0].set(
+            "descr", old._element.xpath(".//p:cNvPr")[0].get("descr")
+        )
+        old._element.getparent().remove(old._element)
+    elif damage == "difference_arrowheads":
+        line = named["Revenue chart Difference Arrow"]._element.xpath(".//a:ln")[0]
+        for arrow in line.xpath("./a:headEnd | ./a:tailEnd"):
+            line.remove(arrow)
+    else:
+        named["Revenue chart Difference"].text = "Difference: 999"
+    presentation.save(out)
+
+    violations = validate_pptx.quantitative_chart_readback_violations(out, [manifest])
+
+    assert any(item["field"] == field for item in violations)
 
 
 @pytest.mark.parametrize(

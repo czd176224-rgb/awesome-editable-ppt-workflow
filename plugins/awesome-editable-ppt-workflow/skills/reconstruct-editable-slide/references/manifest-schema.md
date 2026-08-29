@@ -187,9 +187,9 @@ Positioned build object requirements:
 - `line_point` with `line` or `dot`
 - `xy` with `scatter` or `bubble`
 
-`column`, `bar`, `line`, `scatter`, and `bubble` become native PowerPoint chart objects. `dot` becomes editable point and connector shapes because PowerPoint has no stable dedicated dot-plot chart type.
+`column`, `bar`, `line`, `scatter`, and `bubble` become native PowerPoint chart objects. `dot` becomes editable title, point, connector, category, and value shapes because PowerPoint has no stable dedicated dot-plot chart type.
 
-One-dimensional charts require one shared explicit `unit` and `basis`, either at chart level or repeated identically on every series. Every series requires `name`, exact `categories`, and an equally sized numeric `values` list; all series in one native chart must use the same categories. XY charts require explicit `x_label`/`x_unit`/`x_basis` and `y_label`/`y_unit`/`y_basis`, plus aligned numeric `x_values` and `y_values` per named series. Bubble charts additionally require `size_label`/`size_unit`/`size_basis` and aligned non-negative `size_values`.
+One-dimensional charts require one shared explicit `unit` and `basis`, either at chart level or repeated identically on every series. Every series requires `name`, exact `categories`, and an equally sized numeric `values` list; all series in one native chart must use the same categories. XY charts require explicit `x_label`/`x_unit`/`x_basis` and `y_label`/`y_unit`/`y_basis`, plus aligned numeric `x_values` and `y_values` per named series. Bubble charts additionally require `size_label`/`size_unit`/`size_basis` and aligned non-negative `size_values`. The runtime renders every applicable basis as a named editable text object and requires exact basis readback; missing or changed basis text blocks validation.
 
 Example:
 
@@ -212,7 +212,7 @@ Example:
 
 `target_value` and `actual_value` are optional only as one explicit numeric pair on a compatible one-dimensional chart. When both exist, the builder adds an editable target line, actual/target labels, and a difference arrow whose displayed value is exactly `actual_value - target_value`. A lone value, inferred target, inferred actual, or additional derived metric is rejected.
 
-Core validation reopens both page and final PPTX files and checks the exact chart/object type, fixed-canvas box, object identity, title, labels, units, period, series dimensions, target, actual, and displayed direct difference. OfficeCLI may add optional evidence but is not required for this readback.
+Core validation reopens both page and final PPTX files and checks the exact chart/object type, fixed-canvas box, object identity, title, labels, units, bases, period, series dimensions, target, actual, and displayed direct difference. Dot points/connectors plus target and difference marks have deterministic object descriptions; validation checks their expected ellipse/connector type and exact integer-EMU bounds or endpoints. The difference arrow must retain triangle arrowheads at both ends. OfficeCLI may add optional evidence but is not required for this readback.
 
 For `editable-image-v3`, every `tables[]` item is a native table and must also provide `rows`, `font_size`, `font_color`, `cell_fill`, and `cell_margin_px`. Both colors are explicit `#RRGGBB`; inheritance from an unresolved table style or theme is not accepted. The runtime writes the selected font size/color, fill, and margins into every cell so the verifier can calculate per-cell contrast and capacity from actual DrawingML rather than defaults.
 

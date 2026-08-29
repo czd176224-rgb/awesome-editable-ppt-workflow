@@ -254,19 +254,25 @@ def test_native_chart_manifest_survives_final_assembly_without_officecli(
     assert preview.width / preview.height == 16 / 9
     assert (68, 114, 196) in preview.get_flattened_data()
 
-    page_chart = next(shape.chart for shape in Presentation(page_dir / "page.pptx").slides[0].shapes if shape.has_chart)
+    page_slide = Presentation(page_dir / "page.pptx").slides[0]
+    page_chart = next(shape.chart for shape in page_slide.shapes if shape.has_chart)
     assert [item.label for item in page_chart.plots[0].categories] == authority["categories"]
     assert list(page_chart.series[0].values) == authority["series"][0]["values"]
     assert page_chart.chart_title.text_frame.text == "Revenue"
+    page_text = {shape.name: shape.text for shape in page_slide.shapes if shape.has_text_frame}
+    assert page_text["Revenue chart Basis"] == "same portfolio companies"
 
     record_manifest_page(run, page_id="page_001", agent_id="worker-1")
     summary = finalize_manifest_run(run)
     assert summary["officecli_validation"]["status"] == "skipped"
     assert summary["officecli_validation"]["detail"] == "OfficeCLI unavailable"
-    final_chart = next(shape.chart for shape in Presentation(summary["output"]).slides[0].shapes if shape.has_chart)
+    final_slide = Presentation(summary["output"]).slides[0]
+    final_chart = next(shape.chart for shape in final_slide.shapes if shape.has_chart)
     assert [item.label for item in final_chart.plots[0].categories] == authority["categories"]
     assert list(final_chart.series[0].values) == authority["series"][0]["values"]
     assert final_chart.chart_title.text_frame.text == "Revenue"
+    final_text = {shape.name: shape.text for shape in final_slide.shapes if shape.has_text_frame}
+    assert final_text["Revenue chart Basis"] == "same portfolio companies"
     assert json.loads(Path(summary["validation"]).read_text(encoding="utf-8"))["passed"] is True
 
 
