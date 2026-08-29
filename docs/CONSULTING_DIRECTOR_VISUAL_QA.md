@@ -21,7 +21,7 @@ For each page, confirm all of the following:
 
 - The entire 17:8 body reads as one continuous reporting composition, excluding the fixed title, upper-right logo, footer, and page number.
 - The page states one business proposition, uses a visible analytical backbone, includes enough explanatory copy to understand the page, connects evidence to interpretation and conclusion, and ends with an explicit takeaway.
-- Confirmed semantic colors retain their assigned meaning. The secondary color remains a sparse accent rather than a large fill, repeated card color, or decorative path.
+- Confirmed semantic colors retain their assigned meaning. Only taskbook-matched emphasis pages may use secondary-family text; non-emphasis pages reserve that family for shapes, lines and fills. Color remains structural rather than decorative.
 - Supporting imagery functions as evidence or context. It does not become a decorative hero scene.
 - The page contains no disconnected module grid, glossy 3D machinery, miniature factory or park, toy-model scene, neon/cyberpunk treatment, glowing track, or other AI-heavy spectacle unsuitable for a formal report.
 - Text is readable at presentation scale, source-faithful, and free of generated fixed-layer content.
@@ -31,7 +31,7 @@ Record only a local pass/fail note with this non-sensitive shape:
 ```json
 {
   "schema_version": "awesome-private-consulting-visual-smoke-v1",
-  "plugin_version": "1.2.1",
+  "plugin_version": "1.2.2",
   "pages": [
     {
       "page_number": 4,

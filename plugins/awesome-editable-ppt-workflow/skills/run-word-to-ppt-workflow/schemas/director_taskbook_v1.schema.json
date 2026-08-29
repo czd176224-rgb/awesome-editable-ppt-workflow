@@ -19,7 +19,7 @@
     "primary_audience": {"type": "string", "minLength": 1, "maxLength": 2000},
     "audience_prior_knowledge": {"type": "string", "minLength": 1, "maxLength": 2000},
     "desired_outcome": {"type": "string", "minLength": 1, "maxLength": 2000},
-    "emphasis": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "emphasis": {"type": "string", "maxLength": 2000},
     "deemphasis": {"type": "string", "minLength": 1, "maxLength": 2000}
   }
 }

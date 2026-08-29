@@ -9,18 +9,22 @@ import shutil
 import uuid
 import zipfile
 import copy
+import colorsys
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Mapping
+from xml.etree import ElementTree
 
 from PIL import Image
 from pptx import Presentation
+from pptx.dml.color import RGBColor
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.opc.package import Part
 from pptx.opc.packuri import PackURI
 
 from fixed_frame import apply_fixed_frame, inspect_fixed_frame
 from fixed_region_contract import fixed_frame_execution
+from director_taskbook import project_emphasis_pages
 from workflow_v6_contract import geometry_contract, transition_page, validate_project
 from workflow_v6_composition import load_composition_authority
 from workflow_v6_state import mutation_lock, save
@@ -306,6 +310,233 @@ def _editable_slide_text(deck: Presentation) -> str:
     return "\n".join(values)
 
 
+def _rgb(value: str) -> tuple[int, int, int]:
+    text = value.strip().lstrip("#")
+    if len(text) != 6:
+        raise ValueError("confirmed color must be six-digit hex")
+    return tuple(int(text[index : index + 2], 16) for index in (0, 2, 4))
+
+
+def _mix(color: tuple[int, int, int], target: int, amount: float) -> tuple[int, int, int]:
+    return tuple(round(channel * (1 - amount) + target * amount) for channel in color)
+
+
+def _accent_family(candidate: tuple[int, int, int], accent: tuple[int, int, int]) -> bool:
+    known = {accent, _mix(accent, 0, 0.20), *(_mix(accent, 255, amount) for amount in (0.40, 0.70, 0.88))}
+    if candidate in known:
+        return True
+    accent_hue, accent_saturation, _ = colorsys.rgb_to_hsv(*(value / 255 for value in accent))
+    hue, saturation, _ = colorsys.rgb_to_hsv(*(value / 255 for value in candidate))
+    if accent_saturation < 0.15:
+        return False
+    return min(abs(hue - accent_hue), 1 - abs(hue - accent_hue)) <= 0.04 and saturation >= max(
+        0.12, accent_saturation * 0.20
+    )
+
+
+def _luminance(color: tuple[int, int, int]) -> float:
+    channels = [
+        value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+        for value in (channel / 255 for channel in color)
+    ]
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast(first: tuple[int, int, int], second: tuple[int, int, int]) -> float:
+    lighter, darker = sorted((_luminance(first), _luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _direct_rgb(color: object) -> tuple[int, int, int] | None:
+    try:
+        value = getattr(color, "rgb")
+    except (AttributeError, ValueError):
+        return None
+    if value is None:
+        return None
+    return tuple(int(str(value)[index : index + 2], 16) for index in (0, 2, 4))
+
+
+def _theme_colors(slide: object) -> dict[str, tuple[int, int, int]]:
+    parts = (
+        part for part in slide.part.package.iter_parts()
+        if "theme" in str(part.partname)
+    )
+    try:
+        root = ElementTree.fromstring(next(parts).blob)
+    except (StopIteration, ElementTree.ParseError):
+        return {}
+    scheme = root.find(".//{http://schemas.openxmlformats.org/drawingml/2006/main}clrScheme")
+    if scheme is None:
+        return {}
+    result: dict[str, tuple[int, int, int]] = {}
+    for slot in scheme:
+        color = next(iter(slot), None)
+        if color is None:
+            continue
+        value = color.get("val") or color.get("lastClr")
+        if value and len(value) == 6:
+            try:
+                result[slot.tag.rsplit("}", 1)[-1]] = _rgb(value)
+            except ValueError:
+                continue
+    return result
+
+
+def _font_rgb(
+    color: object, theme_colors: Mapping[str, tuple[int, int, int]],
+) -> tuple[int, int, int] | None:
+    direct = _direct_rgb(color)
+    if direct is not None:
+        return direct
+    try:
+        slot = str(color.theme_color).split(" ", 1)[0].lower().replace("_", "")
+    except (AttributeError, TypeError, ValueError):
+        return None
+    # ponytail: theme tint/shade transforms are ignored; resolve them if authored decks depend on them.
+    return theme_colors.get(slot)
+
+
+def _fill_rgb(
+    owner: object,
+    fallback: tuple[int, int, int],
+    theme_colors: Mapping[str, tuple[int, int, int]],
+) -> tuple[int, int, int]:
+    try:
+        value = _font_rgb(getattr(owner, "fill").fore_color, theme_colors)
+    except (AttributeError, TypeError, ValueError):
+        return fallback
+    return value or fallback
+
+
+def _replace_text_frame_colors(
+    text_frame: object,
+    *,
+    background: tuple[int, int, int],
+    accent: tuple[int, int, int],
+    default: tuple[int, int, int],
+    theme_colors: Mapping[str, tuple[int, int, int]],
+) -> None:
+    replacement = default
+    if _accent_family(default, accent) or _contrast(default, background) < 4.5:
+        replacement = max(((0, 0, 0), (255, 255, 255)), key=lambda color: _contrast(color, background))
+    for paragraph in getattr(text_frame, "paragraphs", []):
+        for run in paragraph.runs:
+            _replace_font_color(
+                run.font,
+                background=background,
+                accent=accent,
+                default=default,
+                replacement=replacement,
+                theme_colors=theme_colors,
+            )
+
+
+def _replace_font_color(
+    font: object,
+    *,
+    background: tuple[int, int, int],
+    accent: tuple[int, int, int],
+    default: tuple[int, int, int],
+    replacement: tuple[int, int, int] | None = None,
+    theme_colors: Mapping[str, tuple[int, int, int]],
+) -> None:
+    if replacement is None:
+        replacement = default
+        if _accent_family(default, accent) or _contrast(default, background) < 4.5:
+            replacement = max(
+                ((0, 0, 0), (255, 255, 255)),
+                key=lambda color: _contrast(color, background),
+            )
+    color = getattr(font, "color", None)
+    actual = _font_rgb(color, theme_colors) if color is not None else None
+    if actual is not None and _accent_family(actual, accent):
+        font.color.rgb = RGBColor(*replacement)
+
+
+def _replace_non_emphasis_slide_text_colors(slide: object, style: Mapping[str, Any]) -> None:
+    accent = _rgb(str(style.get("secondary_color", "#C7352B")))
+    default = _rgb(str(style.get("primary_color", "#1F2937")))
+    slide_background = _rgb(str(style.get("background_color", "#FFFFFF")))
+    theme_colors = _theme_colors(slide)
+
+    def visit(shape: object, inherited_background: tuple[int, int, int]) -> None:
+        background = _fill_rgb(shape, inherited_background, theme_colors)
+        text_frame = getattr(shape, "text_frame", None)
+        if text_frame is not None:
+            _replace_text_frame_colors(
+                text_frame, background=background, accent=accent, default=default,
+                theme_colors=theme_colors,
+            )
+        if getattr(shape, "has_table", False):
+            for row in shape.table.rows:
+                for cell in row.cells:
+                    _replace_text_frame_colors(
+                        cell.text_frame,
+                        background=_fill_rgb(cell, background, theme_colors),
+                        accent=accent,
+                        default=default,
+                        theme_colors=theme_colors,
+                    )
+        if getattr(shape, "has_chart", False):
+            chart = shape.chart
+            if getattr(chart, "has_title", False):
+                _replace_text_frame_colors(
+                    chart.chart_title.text_frame,
+                    background=background,
+                    accent=accent,
+                    default=default,
+                    theme_colors=theme_colors,
+                )
+            if getattr(chart, "has_legend", False):
+                _replace_font_color(
+                    chart.legend.font,
+                    background=background,
+                    accent=accent,
+                    default=default,
+                    theme_colors=theme_colors,
+                )
+            for axis_name in ("category_axis", "value_axis", "series_axis"):
+                try:
+                    axis = getattr(chart, axis_name)
+                except (AttributeError, ValueError):
+                    continue
+                _replace_font_color(
+                    axis.tick_labels.font,
+                    background=background,
+                    accent=accent,
+                    default=default,
+                    theme_colors=theme_colors,
+                )
+                if getattr(axis, "has_title", False):
+                    _replace_text_frame_colors(
+                        axis.axis_title.text_frame,
+                        background=background,
+                        accent=accent,
+                        default=default,
+                        theme_colors=theme_colors,
+                    )
+            for plot in chart.plots:
+                if getattr(plot, "has_data_labels", False):
+                    _replace_font_color(
+                        plot.data_labels.font,
+                        background=background,
+                        accent=accent,
+                        default=default,
+                        theme_colors=theme_colors,
+                    )
+        for child in getattr(shape, "shapes", []):
+            visit(child, background)
+
+    for shape in slide.shapes:
+        visit(shape, slide_background)
+
+
+def _replace_non_emphasis_text_colors(deck: Presentation, style: Mapping[str, Any]) -> None:
+    for slide in deck.slides:
+        _replace_non_emphasis_slide_text_colors(slide, style)
+
+
 def _validate_reconstructed_text_repairs(
     root: Path, page_number: int, deck: Presentation,
 ) -> None:
@@ -384,7 +615,13 @@ def finalize_reconstructed_page(
             or existing_fixed.get("passed") is not True
         ):
             raise ValueError("V6 existing finalized page authority is invalid")
-    reconstructed_bytes = reconstructed_body.read_bytes()
+    if page_number not in project_emphasis_pages(root):
+        _replace_non_emphasis_text_colors(opened, style)
+        buffer = BytesIO()
+        opened.save(buffer)
+        reconstructed_bytes = buffer.getvalue()
+    else:
+        reconstructed_bytes = reconstructed_body.read_bytes()
     repair_target: Path | None = None
     if repairing_complete_page:
         repair_target = output_dir / f".page-repair-{uuid.uuid4().hex[:8]}.pptx"
@@ -473,7 +710,18 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
         reopened = Presentation(temporary)
         if len(reopened.slides) != len(pages):
             raise ValueError("assembled V6 slide count is incorrect")
-        for slide, contract in zip(reopened.slides, page_contracts):
+        style = state["style_confirmation"]["contract"]
+        if not isinstance(style, Mapping):
+            raise ValueError("V6 confirmed style contract is missing")
+        emphasis_pages = project_emphasis_pages(root)
+        background = _rgb(str(style.get("background_color", "#FFFFFF")))
+        for page_number, (slide, contract) in enumerate(
+            zip(reopened.slides, page_contracts), start=1
+        ):
+            slide.background.fill.solid()
+            slide.background.fill.fore_color.rgb = RGBColor(*background)
+            if page_number not in emphasis_pages:
+                _replace_non_emphasis_slide_text_colors(slide, style)
             role = contract["page_role"]
             if role in {"content", "appendix"}:
                 _require_current_fixed_frame(slide)
@@ -484,6 +732,7 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
             for slide in reopened.slides
         ):
             raise ValueError("assembled V6 slide has no editable text or table object")
+        reopened.save(temporary)
         if not zipfile.is_zipfile(temporary):
             raise ValueError("assembled V6 output is not an OpenXML package")
         temporary_bytes = temporary.read_bytes()

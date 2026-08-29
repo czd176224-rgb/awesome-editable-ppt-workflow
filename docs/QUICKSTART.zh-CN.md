@@ -1,8 +1,8 @@
-# Awesome Editable PPT Workflow 1.2.1 快速开始
+# Awesome Editable PPT Workflow 1.2.2 快速开始
 
-下载不可变的 `v1.2.1` Windows Release ZIP：
+下载不可变的 `v1.2.2` Windows Release ZIP：
 
-`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.1/awesome-editable-ppt-workflow-1.2.1-windows.zip`
+`https://github.com/czd176224-rgb/awesome-editable-ppt-workflow/releases/download/v1.2.2/awesome-editable-ppt-workflow-1.2.2-windows.zip`
 
 同时下载 `SHA256SUMS.txt`，使用 PowerShell `Get-FileHash` 核验后解压并运行 `install.ps1`，然后重启 Codex。
 
@@ -11,6 +11,8 @@
 1. 选择系统推荐的整篇页面导演；
 2. 确认主题色、辅助色、背景色、字体和字号；
 3. 确认本次场景任务书。
+
+确认的背景色会作为所有最终 PPT 页面的整页背景色。系统会在后台把任务书中确认的重点内容与 Word 各页匹配，只允许匹配到的重点页使用辅助色同色系字体；非重点页仍可使用同色系形状、线条和文本框底色，并通过加粗、字号、位置和层级强调文字。
 
 Word 始终是页数、顺序、标题、正文和事实的权威。插件不会增加、删减、改写或移动 Word 材料。
 

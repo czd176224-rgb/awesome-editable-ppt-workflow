@@ -39,7 +39,7 @@
       <form id="visual-form" class="settings-grid">
         <label>主色<input name="primary_color" type="color" required></label>
         <label>辅助色<input name="secondary_color" type="color" required></label>
-        <label>背景色<input name="background_color" type="color" required></label>
+        <label>整页 PPT 背景色<input name="background_color" type="color" required></label>
         <label>中文字体<input name="cjk_font" type="text" maxlength="120" required></label>
         <label>西文字体<input name="latin_font" type="text" maxlength="120" required></label>
         <label>标题字号（pt）<input name="title_size_pt" type="number" min="12" max="72" step="1" required></label>
@@ -61,7 +61,7 @@
         <label>主要受众<textarea name="primary_audience" maxlength="2000" rows="2" required></textarea></label>
         <label>受众已有认知<textarea name="audience_prior_knowledge" maxlength="2000" rows="2" required></textarea></label>
         <label>本次希望形成的理解、讨论或决定<textarea name="desired_outcome" maxlength="2000" rows="3" required></textarea></label>
-        <label>需要重点呈现的 Word 已有内容<textarea name="emphasis" maxlength="2000" rows="3" required></textarea></label>
+        <label>需要重点呈现的 Word 已有内容（可留空）<textarea name="emphasis" maxlength="2000" rows="3"></textarea></label>
         <label>不希望展开或不适合披露的内容<textarea name="deemphasis" maxlength="2000" rows="3" required></textarea></label>
       </form>
       <footer class="actions"><button type="button" data-action="back">返回</button><button type="button" class="primary" data-action="submit">确认并生成</button></footer>

@@ -169,6 +169,13 @@ def test_special_page_is_editable_and_obeys_page_number_policy(
     assert receipt["page_role"] == role
     assert load(project)["pages"][0]["state"] == "page_complete"
     assert str(deck.slides[0].background.fill.fore_color.rgb) == "F1F2F3"
+    assert all(
+        str(run.font.color.rgb) != "C7352B"
+        for shape in deck.slides[0].shapes if shape.has_text_frame
+        for paragraph in shape.text_frame.paragraphs
+        for run in paragraph.runs
+        if run.font.color.type is not None
+    )
 
 
 @pytest.mark.parametrize("role,visible", [

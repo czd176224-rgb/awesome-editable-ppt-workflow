@@ -64,13 +64,19 @@ _VISIBLE_TEXT_CUSTODY = (
     "business_proposition, explanatory_lead, and takeaway_statement are planning instructions, "
     "not visible slide copy. Every visible word or label must use exact contiguous spans from "
     "complete_word_content. Do not paraphrase, summarize, expand, or invent "
-    "visible wording."
+    "visible wording. The prohibition is against text expansion, not visual semantic expansion: "
+    "use color, spatial position, shapes, connectors, and visual hierarchy to make relationships "
+    "already explicit in complete_word_content visible without adding explanatory wording."
 )
 
 _ARCHITECTURE_CONSTRAINT = (
-    "Choose one content-driven analytical backbone and make every module participate in the "
+    "Choose one content-driven analytical backbone, build the page skeleton before placing text, "
+    "and make every module participate in the "
     "same reading path; do not substitute disconnected cards or one decorative panorama for "
-    "the page argument."
+    "the page argument. Make source-explicit process, hierarchy, parallelism, membership, "
+    "comparison, and causality visible as a complete page skeleton. Labels, legends, numbering, "
+    "and spatial structure remain the primary information carriers. Color may make an existing "
+    "relationship explicit but must not create a relationship that complete_word_content does not state."
 )
 
 _TYPOGRAPHY_CONSTRAINT = (
@@ -103,25 +109,59 @@ def _visual_contract_colors(material_view: object) -> dict[str, str]:
     return colors
 
 
-def _color_constraints(material_view: object) -> tuple[str, str]:
+def _mix_hex(color: str, target: tuple[int, int, int], amount: float) -> str:
+    source = tuple(int(color[index : index + 2], 16) for index in (1, 3, 5))
+    mixed = tuple(
+        round(value * (1 - amount) + target_value * amount)
+        for value, target_value in zip(source, target)
+    )
+    return "#" + "".join(f"{value:02X}" for value in mixed)
+
+
+def _color_constraints(
+    material_view: object, *, font_accent_allowed: bool | None = False,
+) -> tuple[str, str]:
+    if font_accent_allowed is not None and type(font_accent_allowed) is not bool:
+        raise ValueError("font accent permission must be boolean")
     colors = _visual_contract_colors(material_view)
+    secondary = colors["secondary_color"]
+    strong = _mix_hex(secondary, (0, 0, 0), 0.20)
+    support = _mix_hex(secondary, (255, 255, 255), 0.40)
+    soft = _mix_hex(secondary, (255, 255, 255), 0.70)
+    wash = _mix_hex(secondary, (255, 255, 255), 0.88)
     positive = (
         "Treat the confirmed background color as the canvas base; "
-        f"use primary color {colors['primary_color']} for primary text and structural hierarchy, "
-        f"and use secondary color {colors['secondary_color']} strictly as an accent. Background "
-        "and light gray areas must cover 70%-85%; dark text and structure 15%-25%; target 3%-7% "
-        "visible secondary/accent coverage, never above 10%, with no single continuous accent "
-        "block above 2%. Limit accent uses to key numbers, conclusion terms, numbering, core "
-        "nodes, arrow tips, local underlines, small status markers, and key transitions. If the "
-        "primary color is saturated, limit it to tier-one structure and headings; use a "
-        "sufficiently contrasting deep neutral for body text. Neutral gray is an auxiliary "
-        "layout color, not another brand color."
+        f"use primary color {colors['primary_color']} for primary text and neutral structure. "
+        f"Use derived shades of secondary color {secondary} when color has a source-grounded "
+        f"structural duty: strong {strong}, the confirmed secondary as base, support {support}, "
+        f"soft {soft}, and wash {wash}. "
+        "The same hue communicates parallel items, the same "
+        "category, or common membership. Ordered light-to-dark shades may communicate only a "
+        "source-explicit process, hierarchy, stage, or visual focus. Cross-hue colors may be used "
+        "only for source-explicit risk, status, rating, or positive/negative business meaning. "
+        "Labels, legends, numbering, and spatial structure remain primary; color is supporting "
+        "evidence and never invents meaning. When the source contains any of these relationships, "
+        "use at least two visibly distinct tones from this family across the analytical backbone, "
+        "not merely one accent line or colored text; parallel peers keep the same tone while their "
+        "shared group, axis, stage, or focal node may use another tone. A page with no color duty "
+        "may remain black, white, and gray."
     )
+    if font_accent_allowed is True:
+        positive += (
+            " This is a user-confirmed emphasis page: secondary-color-family shades may be used "
+            "selectively for important text, but they are optional and must remain restrained."
+        )
+    elif font_accent_allowed is False:
+        positive += (
+            " This is not a user-confirmed emphasis page. Do not use any secondary-color-family "
+            "shade for any text object. Use primary or neutral text color plus weight, size, "
+            "position, shape, or hierarchy for local emphasis. Secondary-color-family shades "
+            "remain allowed for text-box fills, shapes, borders, nodes, and connectors."
+        )
     prohibited = (
-        "Do not use the accent color for full-width solid headers, full-column fills, card "
-        "backgrounds, wide bands or paths, large tinted regions, repeated solid icons, or a "
-        "colored border around every module. Avoid thick accent paths, large brand-color headers "
-        "or card arrays, and compositions that depend on a particular hue."
+        "Do not use color as the sole carrier of a fact or relationship, assign ordered color "
+        "depth to merely parallel categories, or introduce cross-hue business semantics absent "
+        "from complete_word_content."
     )
     return positive, prohibited
 
@@ -179,7 +219,8 @@ def _join(parts: Sequence[str]) -> str:
 
 
 def compile_consulting_six_part_prompt(
-    value: Mapping[str, object], material_view: object
+    value: Mapping[str, object], material_view: object, *,
+    font_accent_allowed: bool | None = False,
 ) -> str:
     """Compile exactly six consulting-report sections in their sealed order."""
     if value.get("schema_version") not in {
@@ -188,7 +229,9 @@ def compile_consulting_six_part_prompt(
     }:
         raise ValueError("consulting prompt requires a v2 director or correction authority")
     sections = _validated_sections(value)
-    positive_color, prohibited_color = _color_constraints(material_view)
+    positive_color, prohibited_color = _color_constraints(
+        material_view, font_accent_allowed=font_accent_allowed
+    )
     for _heading, key in SECTION_SPECS:
         original = sections[key]
         sections[key] = _without_compiler_owned_clauses(

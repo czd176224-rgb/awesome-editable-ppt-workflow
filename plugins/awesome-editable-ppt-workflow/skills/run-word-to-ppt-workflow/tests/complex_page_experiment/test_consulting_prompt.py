@@ -123,7 +123,7 @@ def _director_value() -> dict[str, object]:
     }
 
 
-def _material_view():
+def _material_view(*, font_accent_allowed: bool = True):
     return SimpleNamespace(
         value={
             "visual_contract": {
@@ -138,7 +138,9 @@ def _material_view():
 def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> None:
     module = _load_compiler_module()
 
-    prompt = module.compile_consulting_six_part_prompt(_director_value(), _material_view())
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=True
+    )
 
     assert [line[3:] for line in prompt.splitlines() if line.startswith("## ")] == [
         "Task and Canvas",
@@ -156,6 +158,20 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
     assert "explanatory copy" in prompt
     assert "planning instructions, not visible slide copy" in prompt
     assert "exact contiguous spans from complete_word_content" in prompt
+    assert "visual semantic expansion" in prompt
+    assert "process, hierarchy, parallelism, membership, comparison, and causality" in prompt
+    assert "same hue" in prompt
+    assert "derived shades of secondary color #CD202A" in prompt
+    assert "strong #A41A22" in prompt
+    assert "support #E1797F" in prompt
+    assert "soft #F0BCBF" in prompt
+    assert "wash #F9E4E5" in prompt
+    assert "build the page skeleton before placing text" in prompt
+    assert "at least two visibly distinct tones" in prompt
+    assert "must not create a relationship that complete_word_content does not state" in prompt
+    assert "This is a user-confirmed emphasis page" in prompt
+    for obsolete_quota in ("70%-85%", "15%-25%", "3%-7%", "never above 10%"):
+        assert obsolete_quota not in prompt
     assert "3D machinery" in prompt
     for legacy_name in (
         "Scene or Background",
@@ -166,6 +182,27 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
         "Preservation and Fixed Exclusions",
     ):
         assert legacy_name not in prompt
+
+
+def test_compiler_bans_accent_family_text_only_on_non_emphasis_pages() -> None:
+    module = _load_compiler_module()
+
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=False
+    )
+
+    assert "This is not a user-confirmed emphasis page" in prompt
+    assert "Do not use any secondary-color-family shade for any text" in prompt
+    assert "text-box fills, shapes, borders, nodes, and connectors" in prompt
+
+
+def test_compiler_legacy_mode_omits_only_the_new_page_gate() -> None:
+    module = _load_compiler_module()
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=None
+    )
+    assert "user-confirmed emphasis page" not in prompt
+    assert "derived shades of secondary color #CD202A" in prompt
 
 
 def test_compiler_rejects_the_legacy_six_part_shape() -> None:
