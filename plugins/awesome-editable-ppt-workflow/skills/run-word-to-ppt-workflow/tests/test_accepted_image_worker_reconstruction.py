@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -64,6 +65,19 @@ def _successful_worker(calls: list, text: str = "Editable worker output"):
     return invoke
 
 
+def _numeric_authority() -> dict[str, object]:
+    return {
+        "title": "Revenue",
+        "relationship": "change_over_time",
+        "rendering_primitive": "line_point",
+        "chart_variant": "line",
+        "unit": "USD m",
+        "basis": "reported revenue",
+        "period": "FY2024-FY2025",
+        "series": [{"name": "Revenue", "categories": ["2024", "2025"], "values": [12, 18]}],
+    }
+
+
 def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_calls(
     tmp_path: Path,
 ):
@@ -116,6 +130,88 @@ def test_page_worker_prompt_enforces_sealed_text_repairs(tmp_path: Path):
     prompt = calls[0].prompt_file.read_text(encoding="utf-8")
     assert "SEALED TEXT REPAIRS" in prompt
     assert "将错字“清出”修正为“退出”" in prompt
+
+
+def test_page_worker_request_copies_numeric_authority_before_whole_request_hash(
+    tmp_path: Path,
+):
+    project = _project(tmp_path, 1)
+    authority = _numeric_authority()
+    materials = project / "02_v6/page_materials/page_001.json"
+    materials.parent.mkdir(parents=True, exist_ok=True)
+    materials.write_text(
+        json.dumps({"chart_facts": [authority]}, ensure_ascii=False), encoding="utf-8"
+    )
+    calls: list = []
+
+    def worker(request):
+        calls.append(request)
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(EDITPPT_RUNTIME / "record_page_dispatch.py"),
+                str(request.run_dir),
+                "--page", "page_001",
+                "--agent-id", "test-worker",
+                "--prompt-file", str(request.prompt_file),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        body = request.page_dir / "numeric-authority.pptx"
+        _body(body, "Numeric authority")
+        return PageWorkerResult(status="completed", reconstructed_body=body)
+
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project), page_worker=worker,
+    )
+
+    page_request_path = calls[0].page_dir / "page_request.json"
+    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    jobs = json.loads((calls[0].run_dir / "page_jobs.json").read_text(encoding="utf-8"))
+    assert page_request["numeric_authority"] == authority
+    assert jobs["pages"][0]["dispatch"]["page_request_sha256"] == hashlib.sha256(
+        page_request_path.read_bytes()
+    ).hexdigest()
+    assert not list(calls[0].page_dir.glob("numeric_authority*.json"))
+
+
+def test_qualitative_relationship_never_creates_numeric_authority_in_page_request(
+    tmp_path: Path,
+):
+    project = _project(tmp_path, 1)
+    materials = project / "02_v6/page_materials/page_001.json"
+    materials.parent.mkdir(parents=True, exist_ok=True)
+    materials.write_text(
+        json.dumps(
+            {
+                "chart_facts": [{
+                    "title": "Change over time",
+                    "relationship": "change_over_time",
+                    "source_wording": "The source states a sequence but no complete values.",
+                    "disabled_primitive": "line_point",
+                    "fallback": "timeline_roadmap",
+                    "series": [],
+                }]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    calls: list = []
+
+    reconstruct_accepted_page(
+        _workspace(project),
+        _accepted_outcome(project),
+        page_worker=_successful_worker(calls),
+    )
+
+    page_request = json.loads(
+        (calls[0].page_dir / "page_request.json").read_text(encoding="utf-8")
+    )
+    assert "numeric_authority" not in page_request
 
 
 def test_unreadable_text_uses_paddle_once_then_same_page_worker(tmp_path: Path):

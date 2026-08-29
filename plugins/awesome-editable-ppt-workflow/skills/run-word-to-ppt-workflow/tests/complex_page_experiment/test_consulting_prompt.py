@@ -184,6 +184,57 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
         assert legacy_name not in prompt
 
 
+@pytest.mark.parametrize(
+    ("relationship", "quantitative_form", "qualitative_substitute"),
+    [
+        ("increase_decrease_drivers", "cumulative bridge", "driver bridge"),
+        ("change_over_time", "line or point chart", "timeline/roadmap"),
+        ("two_variable_relationship", "scatter plot", "source-labelled qualitative quadrant or table"),
+        ("third_variable_size", "bubble chart", "uniform nodes"),
+        ("market_size_share", "variable-width hierarchy", "equal-width hierarchy"),
+        ("project_stage_time", "time-interval chart", "roadmap/milestones"),
+        ("option_comparison", "bar or column chart", "comparison table"),
+        ("target_actual_variance", "target-versus-actual chart", "goal-current-gap"),
+    ],
+)
+def test_compiler_emits_exact_dual_mode_relationship_mapping(
+    relationship: str, quantitative_form: str, qualitative_substitute: str,
+) -> None:
+    module = _load_compiler_module()
+
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=True
+    )
+
+    row = next(line for line in prompt.splitlines() if line.startswith(f"{relationship}:"))
+    assert quantitative_form in row
+    assert qualitative_substitute in row
+    assert "only when source evidence is complete" in row
+    assert "otherwise" in row
+
+
+def test_compiler_keeps_quantitative_and_qualitative_discipline_inside_six_sections() -> None:
+    module = _load_compiler_module()
+
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=True
+    )
+
+    assert len([line for line in prompt.splitlines() if line.startswith("## ")]) == 6
+    assert "numeric_authority" not in prompt
+    for label_dimension in ("subject", "unit", "period", "basis"):
+        assert label_dimension in prompt
+    for forbidden_geometry in (
+        "numeric axes",
+        "proportional geometry",
+        "bubble-size ranking",
+        "target-line magnitude",
+        "difference magnitude",
+    ):
+        assert forbidden_geometry in prompt
+    assert "do not calculate new metrics" in prompt
+
+
 def test_compiler_bans_accent_family_text_only_on_non_emphasis_pages() -> None:
     module = _load_compiler_module()
 

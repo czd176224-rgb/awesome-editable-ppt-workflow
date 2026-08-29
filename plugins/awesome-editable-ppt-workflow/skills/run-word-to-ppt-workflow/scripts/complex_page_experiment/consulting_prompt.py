@@ -60,6 +60,14 @@ _ARGUMENT_CONSTRAINT = (
     "connects evidence, interpretation, and conclusion, ending with an explicit takeaway."
 )
 
+_QUANTITATIVE_CONTENT_CONSTRAINT = (
+    "Use a quantitative form only when source evidence is complete and unambiguous for the "
+    "subject, unit, period, basis, categories, and values required by that form. Preserve every "
+    "source value and label exactly; do not calculate new metrics, infer missing values, or mix "
+    "incompatible subjects, units, periods, or bases. When those dimensions are incomplete, use "
+    "the named qualitative substitute and make the source-stated relationship visibly legible."
+)
+
 _VISIBLE_TEXT_CUSTODY = (
     "business_proposition, explanatory_lead, and takeaway_statement are planning instructions, "
     "not visible slide copy. Every visible word or label must use exact contiguous spans from "
@@ -79,9 +87,29 @@ _ARCHITECTURE_CONSTRAINT = (
     "relationship explicit but must not create a relationship that complete_word_content does not state."
 )
 
+_DUAL_MODE_RELATIONSHIP_CONSTRAINT = """Apply this exact eight-row dual-mode relationship mapping:
+increase_decrease_drivers: use a cumulative bridge only when source evidence is complete; otherwise use a driver bridge.
+change_over_time: use a line or point chart only when source evidence is complete; otherwise use a timeline/roadmap.
+two_variable_relationship: use a scatter plot only when source evidence is complete; otherwise use a source-labelled qualitative quadrant or table.
+third_variable_size: use a bubble chart only when source evidence is complete; otherwise use uniform nodes.
+market_size_share: use a variable-width hierarchy only when source evidence is complete; otherwise use an equal-width hierarchy.
+project_stage_time: use a time-interval chart only when source evidence is complete; otherwise use a roadmap/milestones.
+option_comparison: use a bar or column chart only when source evidence is complete; otherwise use a comparison table.
+target_actual_variance: use a target-versus-actual chart only when source evidence is complete; otherwise use a goal-current-gap."""
+
 _TYPOGRAPHY_CONSTRAINT = (
     "Render source-authorized Simplified Chinese accurately and legibly, with presentation-scale "
-    "hierarchy for explanatory lead, analytical labels, evidence, interpretation, and takeaway."
+    "hierarchy for explanatory lead, analytical labels, evidence, interpretation, and takeaway. "
+    "Apply TTS-style quantitative label discipline: every quantitative mark must identify its "
+    "subject and keep its unit, period, and basis explicit through the title, subtitle, axis, "
+    "legend, data label, or adjacent source-exact annotation."
+)
+
+_QUALITATIVE_PROHIBITION = (
+    "Without complete source values, do not use numeric axes, proportional geometry, bubble-size "
+    "ranking, target-line magnitude, or difference magnitude. A qualitative substitute must not "
+    "masquerade as measured scale; use labels, equal sizing, sequence, grouping, connectors, and "
+    "source wording to signal the relationship visibly."
 )
 
 
@@ -257,10 +285,15 @@ def compile_consulting_six_part_prompt(
             sections["core_proposition_and_content"],
             _ARGUMENT_CONSTRAINT,
             _VISIBLE_TEXT_CUSTODY,
+            _QUANTITATIVE_CONTENT_CONSTRAINT,
         )
     )
     sections["consulting_information_architecture"] = _join(
-        (sections["consulting_information_architecture"], _ARCHITECTURE_CONSTRAINT)
+        (
+            sections["consulting_information_architecture"],
+            _ARCHITECTURE_CONSTRAINT,
+            _DUAL_MODE_RELATIONSHIP_CONSTRAINT,
+        )
     )
     sections["visual_style_and_color"] = _join(
         (sections["visual_style_and_color"], positive_color)
@@ -269,7 +302,7 @@ def compile_consulting_six_part_prompt(
         (sections["text_and_typography"], _TYPOGRAPHY_CONSTRAINT)
     )
     sections["strict_prohibitions"] = _join(
-        (sections["strict_prohibitions"], prohibited_color)
+        (sections["strict_prohibitions"], prohibited_color, _QUALITATIVE_PROHIBITION)
     )
     return "\n\n".join(
         f"## {heading}\n{sections[key]}" for heading, key in SECTION_SPECS

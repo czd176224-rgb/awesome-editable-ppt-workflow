@@ -10,6 +10,8 @@ Page id: {{PAGE_ID}}
 Page dir: {{PAGE_DIR}}
 Source image: {{SOURCE_IMAGE}}
 
+{{NUMERIC_AUTHORITY_CONTRACT}}
+
 You own only this Page dir. Do not edit deck_manifest.json, page_jobs.json, notes_manifest.json, final outputs, the original input, or any other page directory.
 
 MANDATORY FIRST ACTION — before looking at the source image, before any decision, before any tool call other than reading: read these three files in full. Do not skim, do not rely on prior knowledge of them, do not start reconstruction first and consult them later. Every past failure mode of this skill is encoded in them; any decision made without having read them is invalid and will be redone.
@@ -18,7 +20,7 @@ MANDATORY FIRST ACTION — before looking at the source image, before any decisi
 - {{SKILL_ROOT}}/references/cli-helper.md — editppt command syntax and examples.
 
 Hard rules (reminders only; the details and rationale live in the references above):
-0. source.png is the accepted body's only visual authority. Reconstruct its visible content, composition, geometry, hierarchy, palette, spacing, visual rhythm, and major decorative elements as closely as editable PowerPoint allows. Do not read or reinterpret Word, comments, attachments, generation prompts, or reference selections. page_request.json supplies runtime geometry and paths only; it is not content authority. A material visual departure from source.png is a page failure, not creative freedom.
+0. source.png is the accepted body's visual authority: the accepted source image owns composition and style, including visible composition, geometry, hierarchy, palette, spacing, visual rhythm, and major decorative elements. Reconstruct those as closely as editable PowerPoint allows. When page_request.json contains numeric_authority, the sealed numeric authority owns quantitative marks and labels. The worker must copy those source values unchanged, must not change its rendering_primitive or chart_variant, and must not calculate new metrics. Do not read or reinterpret Word, comments, attachments, generation prompts, or reference selections. Apart from optional numeric_authority, page_request.json supplies runtime geometry and paths only; it is not content authority. A material visual departure from source.png is a page failure, not creative freedom.
 1. Reconstruct locally from source.png first. The default reconstruction uses zero Image2 calls. Only when the reconstruction request explicitly contains an authorized targeted capability may the page use `editppt image reconstruct-edit --request-capability <capability> --workflow-project <project>` for that target. Never pass a prompt, image, output path, or generic edit command.
 2. Execute the three steps in order: (1) background recognition and repair, (2) foreground asset separation, (3) native element reconstruction. The normal first execution has no OCR hints: inspect `source.png` directly. If a retry supplies `text_hints.json`, use it only after the step-1/2 decisions are recorded and only as transcription, position, and size assistance.
 3. manifest.json is the authoritative build source for page validation and final deck assembly. Build page.pptx and preview.png from manifest.json with the deterministic runtime, never with separate page-local PowerPoint code that bypasses the manifest.

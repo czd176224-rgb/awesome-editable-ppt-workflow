@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -11,6 +12,31 @@ from editppt.runtime.editable_page_cache import (
     PackageValidationError,
     create_page_package,
 )
+
+
+PROMPT_BUILDER = Path(__file__).resolve().parents[2] / "scripts" / "build-page-worker-prompt.py"
+
+
+def _load_prompt_builder():
+    spec = importlib.util.spec_from_file_location("page_worker_prompt_builder", PROMPT_BUILDER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _worker_prompt(tmp_path: Path, numeric_authority: dict[str, object] | None) -> str:
+    module = _load_prompt_builder()
+    run_dir = tmp_path / "run"
+    page_dir = run_dir / "pages" / "page_001"
+    page_dir.mkdir(parents=True)
+    request: dict[str, object] = {"source_image": str(page_dir / "source.png")}
+    if numeric_authority is not None:
+        request["numeric_authority"] = numeric_authority
+    (page_dir / "page_request.json").write_text(
+        json.dumps(request, ensure_ascii=False), encoding="utf-8"
+    )
+    return module.build_prompt(run_dir, {"page_id": "page_001"}, page_dir)
 
 
 def _write_editable_pptx(path, *, slide_count: int) -> None:
@@ -83,3 +109,37 @@ def test_installed_runtime_exposes_only_manifest_record_and_finalize_routes():
     assert '"finalize_manifest_deck_run.py"' in main
     for name in ("record_page_result.py", "finalize_deck_run.py", "final_assembler.py"):
         assert not (runtime / name).exists()
+
+
+def test_page_worker_prompt_seals_composition_and_numeric_ownership(tmp_path):
+    authority = {
+        "title": "Revenue",
+        "rendering_primitive": "column_bar",
+        "chart_variant": "column",
+        "unit": "USD m",
+        "basis": "reported revenue",
+        "period": "FY2025",
+        "series": [{"name": "Revenue", "categories": ["A"], "values": [10]}],
+    }
+
+    prompt = _worker_prompt(tmp_path, authority)
+
+    assert "accepted source image owns composition and style" in prompt
+    assert "sealed numeric authority owns quantitative marks and labels" in prompt
+    assert "must not change its rendering_primitive or chart_variant" in prompt
+    assert "must not calculate new metrics" in prompt
+    assert json.dumps(authority, ensure_ascii=False, sort_keys=True) in prompt
+
+
+def test_page_worker_prompt_without_numeric_authority_forbids_quantitative_geometry(tmp_path):
+    prompt = _worker_prompt(tmp_path, None)
+
+    assert "No sealed numeric authority is present" in prompt
+    for forbidden_geometry in (
+        "numeric axes",
+        "proportional geometry",
+        "bubble-size ranking",
+        "target-line magnitude",
+        "difference magnitude",
+    ):
+        assert forbidden_geometry in prompt
