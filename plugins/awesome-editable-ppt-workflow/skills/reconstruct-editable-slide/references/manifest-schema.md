@@ -181,13 +181,21 @@ Positioned build object requirements:
 
 ### Optional quantitative `charts[]`
 
-`charts[]` consumes the sealed quantitative authority without choosing or inferring a chart form. Each item requires `rendering_primitive`, explicit `chart_variant`, `title`, `period`, and non-empty `series`. Supported standard pairs are exactly:
+`charts[]` consumes the sealed quantitative authority without choosing or inferring a chart form. Each item requires `rendering_primitive`, `title`, `period`, and non-empty `series`. Standard chart primitives must include the matching explicit `chart_variant`; special shape-based primitives must omit `chart_variant`. Supported standard pairs are exactly:
 
 - `column_bar` with `column` or `bar`
 - `line_point` with `line` or `dot`
 - `xy` with `scatter` or `bubble`
 
 `column`, `bar`, `line`, `scatter`, and `bubble` become native PowerPoint chart objects. `dot` becomes editable title, point, connector, category, and value shapes because PowerPoint has no stable dedicated dot-plot chart type.
+
+Supported special primitives are exactly:
+
+- `cumulative_bridge` must omit `chart_variant` and contain exactly one named series with aligned `categories` and numeric `changes`, numeric `start` and `end`, and one explicit shared `unit` and `basis`. `end` must exactly equal `start + sum(changes)`. Optional non-empty `start_label` and `end_label` are copied only when supplied by the source; the runtime does not invent endpoint labels.
+- `time_interval` must omit `chart_variant`. Every named series contains aligned `categories`, ISO `start_dates`, and ISO `end_dates`; each start must be on or before its matching end.
+- `variable_rectangle` must omit `chart_variant` and contain exactly one named series. It requires aligned `categories` and strictly positive `width_values`, plus explicit `width_label`, `width_unit`, and `width_basis`. It also requires aligned non-empty non-negative `share_values`, a positive `share_denominator`, and explicit `share_label`, `share_unit`, and `share_basis`; each share list must total the denominator exactly.
+
+These three primitives expand into editable shapes and text. Their numeric geometry remains source-scaled, while labels for zero or extremely small geometry may be placed outside the mark without changing the data geometry.
 
 One-dimensional charts require one shared explicit `unit` and `basis`, either at chart level or repeated identically on every series. Every series requires renderer-ready `name`, string `categories`, and an equally sized numeric `values` list; all series in one categorical chart must use identical categories. XY charts require explicit `x_label`/`x_unit`/`x_basis` and `y_label`/`y_unit`/`y_basis`, plus aligned numeric `x_values` and `y_values` per named series. Bubble charts additionally require `size_label`/`size_unit`/`size_basis` and aligned non-negative `size_values`. The runtime renders every applicable basis as a named editable text object and requires exact basis readback; missing or changed basis text blocks validation.
 

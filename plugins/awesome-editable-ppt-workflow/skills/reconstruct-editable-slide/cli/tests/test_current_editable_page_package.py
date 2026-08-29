@@ -15,6 +15,7 @@ from editppt.runtime.editable_page_cache import (
 
 
 PROMPT_BUILDER = Path(__file__).resolve().parents[2] / "scripts" / "build-page-worker-prompt.py"
+MANIFEST_SCHEMA = Path(__file__).resolve().parents[2] / "references" / "manifest-schema.md"
 
 
 def _load_prompt_builder():
@@ -148,6 +149,33 @@ def test_page_worker_prompt_requires_special_authority_to_omit_chart_variant(tmp
     authority["chart_variant"] = "bubble"
     with pytest.raises(SystemExit, match="must omit chart_variant"):
         _worker_prompt(tmp_path / "invalid", authority)
+
+
+def test_manifest_schema_matches_worker_chart_variant_and_special_field_contracts(tmp_path):
+    schema = MANIFEST_SCHEMA.read_text(encoding="utf-8")
+    native_prompt = _worker_prompt(tmp_path / "native", {
+        "title": "Revenue", "rendering_primitive": "column_bar", "chart_variant": "column",
+        "unit": "USD m", "basis": "reported revenue", "period": "FY2025",
+        "series": [{"name": "Revenue", "categories": ["A"], "values": [10]}],
+    })
+    special_prompt = _worker_prompt(tmp_path / "special", {
+        "title": "Bridge", "rendering_primitive": "cumulative_bridge",
+        "unit": "USD m", "basis": "reported EBITDA", "period": "FY2025",
+        "series": [{"name": "Bridge", "categories": ["Price"], "start": 10,
+        "start_label": "FY2024", "changes": [2], "end": 12, "end_label": "FY2025"}],
+    })
+
+    assert "Standard chart primitives must include the matching explicit `chart_variant`" in schema
+    assert "special shape-based primitives must omit `chart_variant`" in schema
+    assert "Keep chart_variant unchanged for native charts" in native_prompt
+    assert "special rendering primitives omit chart_variant" in special_prompt
+    for field in (
+        "cumulative_bridge", "start", "changes", "end", "start_label", "end_label",
+        "time_interval", "start_dates", "end_dates", "variable_rectangle", "width_values",
+        "width_label", "width_unit", "width_basis", "share_values", "share_denominator",
+        "share_label", "share_unit", "share_basis",
+    ):
+        assert f"`{field}`" in schema
 
 
 def test_page_worker_prompt_without_numeric_authority_forbids_quantitative_geometry(tmp_path):
