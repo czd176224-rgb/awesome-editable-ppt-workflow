@@ -362,8 +362,11 @@ def _chart_mark_geometry(chart):
     if chart.get("target_value") is not None and chart["chart_variant"] == "dot":
         target = value_position(chart["target_value"], True)
         actual = value_position(chart["actual_value"], True)
-        geometry["Target Line"] = (target, int(round(top + height * 0.15)), target, int(round(top + height * 0.85)))
-        geometry["Difference Arrow"] = (actual, int(round(top + height * 0.1)), target, int(round(top + height * 0.1)))
+        mark = chart.get("comparison_mark", "both")
+        if mark in {"target_line", "both"}:
+            geometry["Target Line"] = (target, int(round(top + height * 0.15)), target, int(round(top + height * 0.85)))
+        if mark in {"difference_arrow", "both"}:
+            geometry["Difference Arrow"] = (actual, int(round(top + height * 0.1)), target, int(round(top + height * 0.1)))
     return geometry
 
 
@@ -668,8 +671,14 @@ def _validate_chart(manifest, chart):
             ):
                 raise ValueError("charts[].series bubble size_values must align and be non-negative")
     target, actual = chart.get("target_value"), chart.get("actual_value")
+    comparison_mark = chart.get("comparison_mark")
+    if target is None and comparison_mark is not None:
+        raise ValueError("charts[].comparison_mark requires target_value and actual_value")
     if (target is None) != (actual is None) or target is not None and (
-        variant != "dot" or not _is_number(target) or not _is_number(actual)
+        variant != "dot"
+        or not _is_number(target)
+        or not _is_number(actual)
+        or (comparison_mark or "both") not in {"target_line", "difference_arrow", "both"}
     ):
         raise ValueError("charts[].target_value and actual_value require one explicit numeric pair on chart_variant dot")
 
@@ -1328,17 +1337,19 @@ def apply_native_charts(pptx_path, manifests):
         if chart.get("target_value") is None:
             return
         geometry = _chart_mark_geometry(chart)
-        target_line = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *geometry["Target Line"])
-        difference = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *geometry["Difference Arrow"])
-        identify(target_line, chart, "Target Line")
-        identify(difference, chart, "Difference Arrow")
-        add_arrowheads(difference)
+        if "Target Line" in geometry:
+            identify(slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *geometry["Target Line"]), chart, "Target Line")
+        if "Difference Arrow" in geometry:
+            difference = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *geometry["Difference Arrow"])
+            identify(difference, chart, "Difference Arrow")
+            add_arrowheads(difference)
         left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
         label_width, label_height = width * 0.28, Inches(min(0.25, chart["height"] / 10))
         add_label(slide, chart, "Target", f"Target: {_number_text(chart['target_value'])}", left, top + height - label_height, label_width, label_height)
         add_label(slide, chart, "Actual", f"Actual: {_number_text(chart['actual_value'])}", left + label_width, top + height - label_height, label_width, label_height)
-        difference_value = Decimal(str(chart["actual_value"])) - Decimal(str(chart["target_value"]))
-        add_label(slide, chart, "Difference", f"Difference: {_number_text(difference_value)}", left + label_width * 2, top + height - label_height, label_width, label_height)
+        if chart.get("comparison_mark", "both") in {"difference_arrow", "both"}:
+            difference_value = Decimal(str(chart["actual_value"])) - Decimal(str(chart["target_value"]))
+            add_label(slide, chart, "Difference", f"Difference: {_number_text(difference_value)}", left + label_width * 2, top + height - label_height, label_width, label_height)
 
     def add_dot(slide, chart):
         left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
@@ -1620,18 +1631,23 @@ def render_preview(manifest, manifest_path, out_path, *, pptx_path=None):
                 draw.text((x + 6, y - 4), _number_text(value), fill="#444444", font=ImageFont.load_default())
             if chart.get("target_value") is not None:
                 target, actual = value_x(chart["target_value"]), value_x(chart["actual_value"])
-                draw.line((target, top + height * 0.15, target, top + height * 0.85), fill="#C00000", width=2)
-                arrow_y = top + height * 0.1
-                draw.line((actual, arrow_y, target, arrow_y), fill="#C00000", width=2)
-                direction = 1 if target >= actual else -1
-                draw.polygon(((actual, arrow_y), (actual + direction * 5, arrow_y - 3), (actual + direction * 5, arrow_y + 3)), fill="#C00000")
-                draw.polygon(((target, arrow_y), (target - direction * 5, arrow_y - 3), (target - direction * 5, arrow_y + 3)), fill="#C00000")
-                difference = Decimal(str(chart["actual_value"])) - Decimal(str(chart["target_value"]))
-                for index, text in enumerate((
+                mark = chart.get("comparison_mark", "both")
+                if mark in {"target_line", "both"}:
+                    draw.line((target, top + height * 0.15, target, top + height * 0.85), fill="#C00000", width=2)
+                if mark in {"difference_arrow", "both"}:
+                    arrow_y = top + height * 0.1
+                    draw.line((actual, arrow_y, target, arrow_y), fill="#C00000", width=2)
+                    direction = 1 if target >= actual else -1
+                    draw.polygon(((actual, arrow_y), (actual + direction * 5, arrow_y - 3), (actual + direction * 5, arrow_y + 3)), fill="#C00000")
+                    draw.polygon(((target, arrow_y), (target - direction * 5, arrow_y - 3), (target - direction * 5, arrow_y + 3)), fill="#C00000")
+                labels = [
                     f"Target: {_number_text(chart['target_value'])}",
                     f"Actual: {_number_text(chart['actual_value'])}",
-                    f"Difference: {_number_text(difference)}",
-                )):
+                ]
+                if mark in {"difference_arrow", "both"}:
+                    difference = Decimal(str(chart["actual_value"])) - Decimal(str(chart["target_value"]))
+                    labels.append(f"Difference: {_number_text(difference)}")
+                for index, text in enumerate(labels):
                     draw.text((left + width * 0.28 * index, top + height - 12), text, fill="#444444", font=ImageFont.load_default())
             return
 

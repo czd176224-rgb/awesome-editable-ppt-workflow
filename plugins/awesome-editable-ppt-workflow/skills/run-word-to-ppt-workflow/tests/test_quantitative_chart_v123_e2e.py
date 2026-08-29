@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import zipfile
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -24,10 +26,62 @@ from build_pptx_from_manifest import render_preview, write_deck  # noqa: E402
 from fixed_region_runtime import CONTENT_BOX, SLIDE  # noqa: E402
 from workflow_v6_materials import select_numeric_authority  # noqa: E402
 from workflow_v6_reconstruction import build_reconstruction_request  # noqa: E402
+from workflow_v6_reconstruction_worker import (  # noqa: E402
+    PageWorkerResult,
+    reconstruct_accepted_page,
+)
 from test_workflow_v6_reconstruction import _project  # noqa: E402
 
 
 OUTPUT = REPO / "tmp/v1.2.3-acceptance/synthetic"
+
+
+def _box_px(left: float, top: float, width: float, height: float) -> list[int]:
+    return [
+        round((left - CONTENT_BOX["left"]) / CONTENT_BOX["width"] * 1904),
+        round((top - CONTENT_BOX["top"]) / CONTENT_BOX["height"] * 896),
+        round(width / CONTENT_BOX["width"] * 1904),
+        round(height / CONTENT_BOX["height"] * 896),
+    ]
+
+
+def _accepted_outcome(project: Path) -> SimpleNamespace:
+    receipt = json.loads((project / "04_v6/images/page_001.json").read_text(encoding="utf-8"))
+    selected = receipt.get("candidate", receipt.get("selected"))
+    candidate = SimpleNamespace(path=project / selected["path"], attempt=selected["attempt"])
+    return SimpleNamespace(status="accepted", accepted=SimpleNamespace(candidate=candidate))
+
+
+def _production_worker(manifest_factory, calls: list[dict]):
+    def worker(request):
+        page_request = json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
+        accepted_request = json.loads((request.page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8"))
+        assert page_request.get("numeric_authority") == accepted_request.get("numeric_authority")
+        manifest = manifest_factory(page_request)
+        manifest_path = request.page_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        dispatch = subprocess.run(
+            [sys.executable, str(RUNTIME / "record_page_dispatch.py"), str(request.run_dir), "--page", "page_001", "--agent-id", "deterministic-worker", "--prompt-file", str(request.prompt_file)],
+            capture_output=True, text=True, check=False,
+        )
+        assert dispatch.returncode == 0, dispatch.stderr
+        for command in (
+            [sys.executable, str(RUNTIME / "main.py"), "page", "build", str(request.page_dir)],
+            [sys.executable, str(RUNTIME / "main.py"), "page", "validate", str(request.page_dir), "--report", "validation.json"],
+        ):
+            completed = subprocess.run(command, capture_output=True, text=True, check=False)
+            assert completed.returncode == 0, completed.stderr
+        validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
+        assert validation["passed"] is True
+        calls.append({"request": page_request, "prompt": request.prompt_file.read_text(encoding="utf-8"), "manifest": manifest, "page_dir": request.page_dir})
+        return PageWorkerResult(status="completed", reconstructed_body=request.page_dir / "page.pptx")
+
+    return worker
+
+
+def _worker_chart(page_request: dict) -> dict:
+    authority = page_request["numeric_authority"]
+    return _manifest({"object_id": "sealed-chart", "name": "sealed-chart", "box_px": [190, 90, 1142, 620], **authority})
 
 
 def _manifest(chart: dict) -> dict:
@@ -73,11 +127,8 @@ def _qualitative_manifest(relationship: str, fallback: str) -> dict:
         {
             "object_id": f"{fallback}-node-{index}",
             "name": f"{fallback} node {index}",
-            "type": "roundRect",
-            "left": left,
-            "top": top,
-            "width": width,
-            "height": height,
+            "type": "rect",
+            "box_px": _box_px(left, top, width, height),
             "fill": "#EAF2F8",
             "stroke": "#6B7A90",
         }
@@ -87,10 +138,7 @@ def _qualitative_manifest(relationship: str, fallback: str) -> dict:
         {
             "object_id": f"{fallback}-title",
             "name": f"{fallback} title",
-            "left": 0.7,
-            "top": 0.5,
-            "width": 12.0,
-            "height": 0.7,
+            "box_px": _box_px(0.7, 1.0, 8.6, 0.5),
             "text": f"{relationship}: {fallback} (qualitative, non-scaled)",
             "font_size": 22,
         },
@@ -98,10 +146,7 @@ def _qualitative_manifest(relationship: str, fallback: str) -> dict:
             {
                 "object_id": f"{fallback}-label-{index}",
                 "name": f"{fallback} label {index}",
-                "left": left + 0.15,
-                "top": top + 0.25,
-                "width": width - 0.3,
-                "height": min(0.7, height - 0.3),
+                "box_px": _box_px(left + 0.15, top + 0.25, width - 0.3, min(0.7, height - 0.3)),
                 "text": f"Source-backed item {chr(65 + index)}",
                 "font_size": 14,
                 "align": "center",
@@ -112,7 +157,7 @@ def _qualitative_manifest(relationship: str, fallback: str) -> dict:
     return manifest
 
 
-def _one_dimensional(name: str, variant: str, *, target: bool = False) -> dict:
+def _one_dimensional(name: str, variant: str, *, comparison_mark: str | None = None) -> dict:
     chart = {
         "object_id": name,
         "name": name,
@@ -125,8 +170,12 @@ def _one_dimensional(name: str, variant: str, *, target: bool = False) -> dict:
         "basis": "same portfolio companies",
         "series": [{"name": "Revenue", "categories": ["A", "B"], "values": [12, 18]}],
     }
-    if target:
-        chart.update({"target_value": 20, "actual_value": 18})
+    if comparison_mark:
+        chart.update({
+            "target_value": 20,
+            "actual_value": 18,
+            "comparison_mark": comparison_mark,
+        })
     return chart
 
 
@@ -191,8 +240,8 @@ QUANTITATIVE_CASES = [
     _waterfall(),
     _gantt(),
     _mekko(),
-    _one_dimensional("target-line", "dot", target=True),
-    _one_dimensional("difference-arrow", "dot", target=True),
+    _one_dimensional("target-line", "dot", comparison_mark="target_line"),
+    _one_dimensional("difference-arrow", "dot", comparison_mark="difference_arrow"),
 ]
 
 
@@ -204,7 +253,7 @@ MATRIX = [
     ("market_size_share", _mekko(), "equal_width_hierarchy"),
     ("project_stage_time", _gantt(), "roadmap_milestones"),
     ("option_comparison", _one_dimensional("options", "dot"), "comparison_table"),
-    ("target_actual_variance", _one_dimensional("target", "dot", target=True), "goal_current_gap"),
+    ("target_actual_variance", _one_dimensional("target", "dot", comparison_mark="both"), "goal_current_gap"),
 ]
 
 
@@ -233,6 +282,9 @@ def test_ten_explicit_quantitative_cases_build_editable_pptx_and_previews() -> N
     target_names = {shape.name for shape in deck.slides[8].shapes}
     difference_names = {shape.name for shape in deck.slides[9].shapes}
     assert "target-line Target Line" in target_names
+    assert "target-line Difference Arrow" not in target_names
+    assert "target-line Difference" not in target_names
+    assert "difference-arrow Target Line" not in difference_names
     assert "difference-arrow Difference Arrow" in difference_names
 
 
@@ -247,6 +299,19 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
         authority = select_numeric_authority([quantitative])
         assert authority is not None
         assert authority["rendering_primitive"] == quantitative["rendering_primitive"]
+        quantitative_project = _project(tmp_path / f"{relationship}-quantitative", 1)
+        quantitative_materials = quantitative_project / "02_v6/page_materials/page_001.json"
+        quantitative_materials.parent.mkdir(parents=True, exist_ok=True)
+        quantitative_materials.write_text(json.dumps({"chart_facts": [quantitative]}, ensure_ascii=False), encoding="utf-8")
+        quantitative_calls: list[dict] = []
+        reconstruct_accepted_page(
+            SimpleNamespace(project_copy=quantitative_project, page_number=1),
+            _accepted_outcome(quantitative_project),
+            page_worker=_production_worker(_worker_chart, quantitative_calls),
+        )
+        assert quantitative_calls[0]["request"]["numeric_authority"] == authority
+        assert "sealed numeric authority owns quantitative mark size" in quantitative_calls[0]["prompt"]
+        assert (quantitative_calls[0]["page_dir"] / "page.pptx").is_file()
 
         qualitative = {
             "title": relationship,
@@ -257,7 +322,7 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
             "series": [],
         }
         assert select_numeric_authority([qualitative]) is None
-        project = _project(tmp_path / relationship, 1)
+        project = _project(tmp_path / f"{relationship}-qualitative", 1)
         material_path = project / "02_v6/page_materials/page_001.json"
         material_path.parent.mkdir(parents=True, exist_ok=True)
         material_path.write_text(
@@ -265,8 +330,18 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
         )
         request = build_reconstruction_request(project, page_number=1)
         assert "numeric_authority" not in request
-
-        manifest = _qualitative_manifest(relationship, fallback)
+        qualitative_calls: list[dict] = []
+        reconstruct_accepted_page(
+            SimpleNamespace(project_copy=project, page_number=1),
+            _accepted_outcome(project),
+            page_worker=_production_worker(
+                lambda page_request, r=relationship, f=fallback: _qualitative_manifest(r, f),
+                qualitative_calls,
+            ),
+        )
+        assert "numeric_authority" not in qualitative_calls[0]["request"]
+        assert "No sealed numeric authority is present" in qualitative_calls[0]["prompt"]
+        manifest = qualitative_calls[0]["manifest"]
         manifest_path = OUTPUT / f"qualitative-{index:02d}.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         preview = OUTPUT / f"qualitative-{index:02d}.png"
@@ -292,7 +367,7 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
         assert len({shape.width for shape in nodes}) == 1
         assert len({shape.height for shape in nodes}) == 1
         assert len({shape.width * shape.height for shape in nodes}) == 1
-        assert all(shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE and shape.auto_shape_type == MSO_SHAPE.ROUNDED_RECTANGLE for shape in nodes)
+        assert all(shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE and shape.auto_shape_type == MSO_SHAPE.RECTANGLE for shape in nodes)
         assert {shape.name for shape in slide.shapes if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE} == {shape.name for shape in nodes}
         assert all(shape.shape_type not in {MSO_SHAPE_TYPE.LINE, MSO_SHAPE_TYPE.CHART} for shape in slide.shapes)
         slide_text = "\n".join(shape.text for shape in slide.shapes if getattr(shape, "has_text_frame", False))

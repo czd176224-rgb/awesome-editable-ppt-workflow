@@ -5,13 +5,16 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 
 TESTS = Path(__file__).resolve().parent
@@ -22,7 +25,6 @@ RUNTIME = PLUGIN / "skills/reconstruct-editable-slide/cli/editppt/runtime"
 sys.path[:0] = [str(SCRIPTS), str(RUNTIME)]
 
 from awesome_page_materials import publish_page_materials  # noqa: E402
-from build_pptx_from_manifest import write_pptx  # noqa: E402
 from codex_subscription_runtime import CodexStructuredResult  # noqa: E402
 from complex_page_experiment.director import direct_page  # noqa: E402
 from complex_page_experiment.materials import build_complete_page_material_view  # noqa: E402
@@ -36,6 +38,7 @@ from workflow_v6_reconstruction import (  # noqa: E402
     build_reconstruction_request,
     finalize_reconstructed_page,
 )
+from workflow_v6_reconstruction_worker import PageWorkerResult, reconstruct_accepted_page  # noqa: E402
 from workflow_v6_state import create, load  # noqa: E402
 
 
@@ -56,6 +59,55 @@ PAGE_CONTRACTS = {
     21: ("option_comparison", "comparison_table", ("总规模百亿元", "总投资68.2亿元", "没有完整披露")),
     40: ("project_stage_time", "roadmap_milestones", ("0—30天", "31—60天", "61—90天", "12个月")),
 }
+
+
+def _box_px(left: float, top: float, width: float, height: float) -> list[int]:
+    return [
+        round((left - CONTENT_BOX["left"]) / CONTENT_BOX["width"] * 1904),
+        round((top - CONTENT_BOX["top"]) / CONTENT_BOX["height"] * 896),
+        round(width / CONTENT_BOX["width"] * 1904),
+        round(height / CONTENT_BOX["height"] * 896),
+    ]
+
+
+def _point_px(left: float, top: float) -> list[int]:
+    return _box_px(left, top, 0, 0)[:2]
+
+
+def _accepted_outcome(project: Path, page_number: int) -> SimpleNamespace:
+    receipt = json.loads((project / "04_v6/images" / f"page_{page_number:03d}.json").read_text(encoding="utf-8"))
+    selected = receipt.get("candidate", receipt.get("selected"))
+    candidate = SimpleNamespace(path=project / selected["path"], attempt=selected["attempt"])
+    return SimpleNamespace(status="accepted", accepted=SimpleNamespace(candidate=candidate))
+
+
+def _production_worker(manifest: dict, calls: list[dict], director_prompt: str | None = None):
+    def worker(request):
+        page_request = json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
+        accepted_request = json.loads((request.page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8"))
+        assert page_request == json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
+        assert page_request.get("numeric_authority") == accepted_request.get("numeric_authority")
+        if director_prompt is not None:
+            assert "exact eight-row dual-mode relationship mapping" in director_prompt
+        manifest_path = request.page_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        dispatch = subprocess.run(
+            [sys.executable, str(RUNTIME / "record_page_dispatch.py"), str(request.run_dir), "--page", "page_001", "--agent-id", "deterministic-worker", "--prompt-file", str(request.prompt_file)],
+            capture_output=True, text=True, check=False,
+        )
+        assert dispatch.returncode == 0, dispatch.stderr
+        for command in (
+            [sys.executable, str(RUNTIME / "main.py"), "page", "build", str(request.page_dir)],
+            [sys.executable, str(RUNTIME / "main.py"), "page", "validate", str(request.page_dir), "--report", "validation.json"],
+        ):
+            completed = subprocess.run(command, capture_output=True, text=True, check=False)
+            assert completed.returncode == 0, completed.stdout or completed.stderr
+        validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
+        assert validation["passed"] is True
+        calls.append({"page_request": page_request, "accepted_request": accepted_request, "manifest": json.loads(manifest_path.read_text(encoding="utf-8")), "prompt": request.prompt_file.read_text(encoding="utf-8")})
+        return PageWorkerResult(status="completed", reconstructed_body=request.page_dir / "page.pptx")
+
+    return worker
 
 
 def _sha256(path: Path) -> str:
@@ -88,7 +140,13 @@ def _style() -> dict:
     }
 
 
-def _director_value(page_number: int, material_ids: tuple[str, ...], source_text: str) -> dict:
+def _director_value(
+    page_number: int,
+    material_ids: tuple[str, ...],
+    source_text: str,
+    relationship: str,
+    fallback: str,
+) -> dict:
     return {
         "schema_version": "awesome-consulting-page-director-v2", "page_number": page_number, "quality": "high",
         "machine_record": {
@@ -101,7 +159,7 @@ def _director_value(page_number: int, material_ids: tuple[str, ...], source_text
         "creative_direction": {
             "business_proposition": "Present the selected source facts without inventing quantitative geometry.",
             "explanatory_lead": "Lead with the page's source-supported conclusion.",
-            "analytical_backbone": "Use the named qualitative substitute required by incomplete evidence.",
+            "analytical_backbone": f"Use the {fallback} qualitative substitute for {relationship} because numeric dimensions are incomplete.",
             "evidence_interpretation_conclusion": "Move from exact Word evidence to its stated implication.",
             "content_hierarchy": "Conclusion, source facts, then limitation or implication.",
             "reading_path_and_density": "Use equal-weight editable objects and a restrained reading path.",
@@ -112,7 +170,7 @@ def _director_value(page_number: int, material_ids: tuple[str, ...], source_text
         "prompt_sections": {
             "task_and_canvas": "Arrange a calm source-led information canvas.",
             "core_proposition_and_content": "Preserve the exact Word facts and their relationship.",
-            "consulting_information_architecture": "Use equal-weight native editable objects.",
+            "consulting_information_architecture": f"Use equal-weight native editable objects in the {fallback} structure.",
             "visual_style_and_color": "Use restrained editorial styling.",
             "text_and_typography": "Keep Chinese labels and numbers crisp.",
             "strict_prohibitions": "No invented values, axes, areas, durations, comparisons, or arithmetic.",
@@ -132,9 +190,9 @@ def _director_result(value: dict) -> CodexStructuredResult:
 
 def _manifest(source_page: int, fallback: str, labels: tuple[str, ...]) -> dict:
     if source_page == 10:
-        boxes = [(1.0, 1.3, 3.8, 1.0), (5.2, 1.3, 3.8, 1.0), *[(0.4 + index * 2.35, 3.0, 2.1, 1.0) for index in range(4)]]
+        boxes = [(0.65 + column * 3.1, 1.35 + row * 1.65, 2.75, 1.1) for row in range(2) for column in range(3)]
     elif source_page == 20:
-        boxes = [(1.0, 0.95, 1.65, 0.8), (4.15, 0.95, 1.65, 0.8), *[(0.55 + index * 2.25, 2.4, 1.65, 0.8) for index in range(4)], (4.15, 3.9, 1.65, 0.8)]
+        boxes = [(4.175, 1.0, 1.65, 0.7), (4.175, 1.9, 1.65, 0.7), *[(0.55 + index * 2.25, 2.95, 1.65, 0.7) for index in range(4)], (4.175, 4.05, 1.65, 0.7)]
     elif source_page == 21:
         boxes = [(0.8, 1.2, 4.0, 1.0), (5.2, 1.2, 4.0, 1.0), (0.8, 3.2, 8.4, 1.0)]
     elif source_page == 40:
@@ -142,20 +200,33 @@ def _manifest(source_page: int, fallback: str, labels: tuple[str, ...]) -> dict:
     else:
         width = 8.4 / len(labels)
         boxes = [(0.8 + index * width, 1.75, width - 0.12, 1.5) for index in range(len(labels))]
+    connectors = []
+    if source_page == 20:
+        links = [(0, 1), (1, 2), (1, 3), (1, 4), (1, 5), (3, 6)]
+        for index, (start, end) in enumerate(links):
+            sx, sy, sw, sh = boxes[start]
+            ex, ey, ew, _eh = boxes[end]
+            connectors.append({
+                "object_id": f"page-20-hierarchy-connector-{index}",
+                "name": f"page-20-hierarchy-connector-{index}",
+                "type": "line",
+                "points_px": [*_point_px(sx + sw / 2, sy + sh), *_point_px(ex + ew / 2, ey)],
+                "stroke": "#6B7A90",
+            })
     return {
         "workflow_contract_version": "fixed-canvas-cm-v2", "reconstruction_contract_version": "editable-image-v3",
         "slide": dict(SLIDE), "content_box": dict(CONTENT_BOX), "source": {"width_px": 1904, "height_px": 896},
         "text_inventory": [], "visual_inventory": [], "background_strategy": "native white body background",
         "quality_checks": {"font_size_calibrated": True, "visual_inventory_matched": True, "background_strategy_checked": True, "shape_corner_geometry_checked": True},
         "text_boxes": [
-            {"object_id": f"page-{source_page}-{fallback}-label-{index}", "name": f"page-{source_page}-{fallback}-label-{index}", "left": x + 0.08, "top": y + 0.25, "width": w - 0.16, "height": min(0.7, h - 0.3), "text": label, "font_size": 12, "preview_font": PREVIEW_FONT, "align": "center"}
+            {"object_id": f"page-{source_page}-{fallback}-label-{index}", "name": f"page-{source_page}-{fallback}-label-{index}", "box_px": _box_px(x + 0.08, y + 0.15, w - 0.16, min(0.7, h - 0.2)), "text": label, "font_size": 12, "preview_font": PREVIEW_FONT, "align": "center"}
             for index, (label, (x, y, w, h)) in enumerate(zip(labels, boxes, strict=True))
         ],
         "tables": [],
         "shapes": [
-            {"object_id": f"page-{source_page}-{fallback}-node-{index}", "name": f"page-{source_page}-{fallback}-node-{index}", "type": "roundRect", "left": x, "top": y, "width": w, "height": h, "fill": "#EAF2F8", "stroke": "#6B7A90"}
+            {"object_id": f"page-{source_page}-{fallback}-node-{index}", "name": f"page-{source_page}-{fallback}-node-{index}", "type": "rect", "box_px": _box_px(x, y, w, h), "fill": "#EAF2F8", "stroke": "#6B7A90"}
             for index, (x, y, w, h) in enumerate(boxes)
-        ],
+        ] + connectors,
         "images": [], "charts": [], "asset_provenance": [],
     }
 
@@ -242,30 +313,40 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
     project = _build_project(tmp_path, source, svg)
     source_pages = {page["page_number"]: page for page in source["pages"]}
     director_prompts = []
+    worker_calls: list[dict] = []
 
     for page_number, source_page in source_pages.items():
+        director_prompt = None
         if page_number in SELECTED:
             relationship, fallback, labels = PAGE_CONTRACTS[page_number]
             source_text = _page_text(source_page)
             assert all(label in source_text for label in labels)
             workspace = open_live_page_workspace(project, page_number)
             material_view = build_complete_page_material_view(workspace)
-            value = _director_value(page_number, material_view.material_ids, source_text)
+            value = _director_value(page_number, material_view.material_ids, source_text, relationship, fallback)
             artifact = direct_page(workspace, material_view, timeout=30, invoke=lambda *_args, v=value, **_kwargs: _director_result(v))
             director_prompts.append(artifact.actual_prompt)
+            director_prompt = artifact.actual_prompt
+            assert fallback in director_prompt and relationship in director_prompt
             qualitative = {"title": source_page["blocks"][1]["text"], "relationship": relationship, "source_wording": source_text, "disabled_primitive": "quantitative_encoding", "fallback": fallback, "series": []}
             materials = project / "02_v6/page_materials" / f"page_{page_number:03d}.json"
             materials.parent.mkdir(parents=True, exist_ok=True)
             materials.write_text(json.dumps({"chart_facts": [qualitative]}, ensure_ascii=False), encoding="utf-8")
-            assert "numeric_authority" not in build_reconstruction_request(project, page_number=page_number)
+            reconstruction_request = build_reconstruction_request(project, page_number=page_number)
+            assert "numeric_authority" not in reconstruction_request
             manifest = _manifest(page_number, fallback, labels)
         else:
             manifest = _manifest(page_number, "source_page", (source_page["blocks"][2].get("text", "Source page"),))
-        manifest_path = tmp_path / f"page-{page_number:02d}-manifest.json"
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-        body = tmp_path / f"body-{page_number:03d}.pptx"
-        write_pptx(manifest, body, manifest_path)
-        finalize_reconstructed_page(project, page_number=page_number, reconstructed_body=body)
+        sealed_request = build_reconstruction_request(project, page_number=page_number)
+        before = len(worker_calls)
+        reconstruct_accepted_page(
+            SimpleNamespace(project_copy=project, page_number=page_number),
+            _accepted_outcome(project, page_number),
+            page_worker=_production_worker(manifest, worker_calls, director_prompt),
+        )
+        assert len(worker_calls) == before + 1
+        assert worker_calls[-1]["manifest"] == manifest
+        assert worker_calls[-1]["accepted_request"] == sealed_request
 
     assembly = assemble_v6_deck(project)
     assert assembly["page_order"] == list(range(1, 43))
@@ -287,11 +368,40 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
         assert by_name["fixed-frame-title"].text == source_pages[source_number]["blocks"][1]["text"]
         assert by_name["fixed-frame-page-number"].text == str(source_number)
         label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{fallback}-label-")]
+        nodes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{fallback}-node-")]
         assert len(label_shapes) == len(PAGE_CONTRACTS[source_number][2])
         assert all(shape.has_text_frame for shape in label_shapes)
+        assert len(nodes) == len(label_shapes)
+        if source_number in {5, 10}:
+            assert len({shape.width for shape in nodes}) == len({shape.height for shape in nodes}) == 1
+            assert len({shape.width * shape.height for shape in nodes}) == 1
+        if source_number == 14:
+            assert len(nodes) == 7
+            assert len({shape.width for shape in nodes}) == len({shape.top for shape in nodes}) == 1
+        if source_number == 20:
+            connectors = [shape for name, shape in by_name.items() if name.startswith("page-20-hierarchy-connector-")]
+            assert len({shape.width for shape in nodes}) == 1
+            assert len(connectors) == 6
+            assert all(
+                shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE
+                and shape._element.spPr.prstGeom.get("prst") == "line"
+                for shape in connectors
+            )
+            assert len({shape.top for shape in nodes}) == 4
+        if source_number == 21:
+            assert nodes[0].width == nodes[1].width
+            assert "没有完整披露" in slide_text
+            assert all(token not in slide_text for token in ("差额", "占比", "=", "+"))
+        if source_number == 40:
+            assert len({shape.width for shape in nodes[:3]}) == len({shape.height for shape in nodes[:3]}) == len({shape.top for shape in nodes[:3]}) == 1
+            assert nodes[3].top > nodes[0].top
 
     with zipfile.ZipFile(deck_path) as package:
         embedded_svg = [package.read(name) for name in package.namelist() if name.startswith("ppt/media/") and name.endswith(".svg")]
+        slide_xml = b"\n".join(package.read(name) for name in package.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml"))
+        assert not any(name.startswith("ppt/charts/") for name in package.namelist())
+        assert b"<c:chart" not in slide_xml and b"<c:plotArea" not in slide_xml
+        assert all(term not in slide_xml.lower() for term in (b"axis", b"area", b"bubble", b"target line", b"difference arrow"))
     assert svg.read_bytes() in embedded_svg
     assert encoded_logo.encode("ascii") in svg.read_bytes()
     assert all("exact eight-row dual-mode relationship mapping" in prompt and "numeric axes" in prompt for prompt in director_prompts)

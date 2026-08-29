@@ -681,31 +681,23 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
                             add(f"{prefix}.series[{series_index}].size_values", item["size_values"], size_values[series_index])
 
             if expected.get("target_value") is not None:
-                for role, value in (
+                labels = [
                     ("Target", f"Target: {_number_text(expected['target_value'])}"),
                     ("Actual", f"Actual: {_number_text(expected['actual_value'])}"),
-                    ("Difference", f"Difference: {_number_text(Decimal(str(expected['actual_value'])) - Decimal(str(expected['target_value'])))}"),
-                ):
+                ]
+                if expected.get("comparison_mark", "both") in {"difference_arrow", "both"}:
+                    labels.append(("Difference", f"Difference: {_number_text(Decimal(str(expected['actual_value'])) - Decimal(str(expected['target_value'])))}"))
+                for role, value in labels:
                     shape = named.get(f"{expected['name']} {role}")
                     add(f"{prefix}.{role.lower()}", value, shape.text if shape is not None else None)
                 mark_geometry = _chart_mark_geometry(expected)
-                validate_mark(
-                    named,
-                    expected,
-                    "Target Line",
-                    f"{prefix}.target_line",
-                    "connector",
-                    mark_geometry["Target Line"],
-                )
-                validate_mark(
-                    named,
-                    expected,
-                    "Difference Arrow",
-                    f"{prefix}.difference_arrow",
-                    "connector",
-                    mark_geometry["Difference Arrow"],
-                    {"headEnd": "triangle", "tailEnd": "triangle"},
-                )
+                if "Target Line" in mark_geometry:
+                    validate_mark(named, expected, "Target Line", f"{prefix}.target_line", "connector", mark_geometry["Target Line"])
+                if "Difference Arrow" in mark_geometry:
+                    validate_mark(
+                        named, expected, "Difference Arrow", f"{prefix}.difference_arrow", "connector",
+                        mark_geometry["Difference Arrow"], {"headEnd": "triangle", "tailEnd": "triangle"},
+                    )
     return violations
 
 

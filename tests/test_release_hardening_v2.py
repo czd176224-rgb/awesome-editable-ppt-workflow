@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -21,6 +22,22 @@ def text(relative: str) -> str:
 def require_export_checkout() -> None:
     if not (ROOT / ".git").exists():
         pytest.skip("public export requires the private reviewed Git checkout")
+
+
+def test_committed_public_manifest_hashes_match_head_bytes():
+    require_export_checkout()
+
+    def head_bytes(relative: str) -> bytes:
+        return subprocess.run(
+            ["git", "show", f"HEAD:{relative}"], cwd=ROOT, check=True, capture_output=True,
+        ).stdout
+
+    manifest_bytes = head_bytes("public-source-manifest.json")
+    manifest = json.loads(manifest_bytes.decode("utf-8-sig"))
+    for relative, expected in manifest["files"].items():
+        assert hashlib.sha256(head_bytes(relative)).hexdigest() == expected, relative
+    audit = json.loads(head_bytes("public-release-audit.json").decode("utf-8-sig"))
+    assert audit["sourceManifestSha256"] == hashlib.sha256(manifest_bytes).hexdigest()
 
 
 def test_release_identity_is_immutable_v123_tag():
