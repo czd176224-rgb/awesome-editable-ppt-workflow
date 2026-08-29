@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v2-source-text-custody",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "beb6d95331c1c78d88a8743d82b5cd49a27497ff3ac1e2bc1bd8780b37c65170",
+  "sourceManifestSha256": "bc74804bd29b543974abc9b7bcb71e40def3e2bf9f56d76286a8b9bd47f4fafc",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -373,8 +373,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_manifest_run_record_finalize.py",
-      "bytes": 12014,
-      "sha256": "06334752d00e655da9183a01544c0f149cc845f8b7e931e291cc8a9a06fe6487"
+      "bytes": 12122,
+      "sha256": "71d95808072f7b8f7df6d51cf8257548755274724ce934c9e75c29929d9ff7e0"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_openxml_schema_tokens.py",
@@ -1194,7 +1194,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 48156,
-      "sha256": "beb6d95331c1c78d88a8743d82b5cd49a27497ff3ac1e2bc1bd8780b37c65170"
+      "sha256": "bc74804bd29b543974abc9b7bcb71e40def3e2bf9f56d76286a8b9bd47f4fafc"
     },
     {
       "path": "README.md",

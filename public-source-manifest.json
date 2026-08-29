@@ -6,7 +6,7 @@
     "workflowContractVersion":  "awesome-word-ppt-workflow-v1",
     "promptContractVersion":  "consulting-page-director-v2-source-text-custody",
     "pageImagePolicy":  "generate-without-refs-edit-with-confirmed-refs",
-    "indexTreeSha256":  "be9b1951d5bbf38add1de2fc901ddf069502d4c523cbe537d0d393f9f7fb7c14",
+    "indexTreeSha256":  "55b2a56755af496b3b04373bfcab2c1efd088e0f1cd21376c112121cd5d701ea",
     "files":  {
                   ".agents/plugins/marketplace.json":  "a9ff9f849c8d3f256967f637d91560a479d766ed8b141dbf7689cea0e2689328",
                   ".gitattributes":  "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
@@ -80,7 +80,7 @@
                   "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/conftest.py":  "514c4c6a06ee8059643f69a68dcd97b45821a22f415c2ec697cc0ec52e542d27",
                   "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_current_editable_page_package.py":  "55c003e0fba40115e4aa4940edcb1dcee3fda3fc3066d89d722e54d2b3eb0d2b",
                   "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_fixed_region_reconstruction.py":  "883d1a5b8bf04af7a312145bd0f15126b38f3ead86aee07ac89eec41c8c386bf",
-                  "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_manifest_run_record_finalize.py":  "06334752d00e655da9183a01544c0f149cc845f8b7e931e291cc8a9a06fe6487",
+                  "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_manifest_run_record_finalize.py":  "71d95808072f7b8f7df6d51cf8257548755274724ce934c9e75c29929d9ff7e0",
                   "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_openxml_schema_tokens.py":  "526ca569bceef053b7188df2cdb33e1067dc412a82871e877a2a94169f1803de",
                   "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_quantitative_charts.py":  "af22fd9562b4197ea35f1e67e85dc15b43a1ba72d47d7100901bdb918c941178",
                   "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_v4_manifest_runtime.py":  "46dd6caeb9dad1d4543f2cd2548efbd56b2667eab2ee754b45f464c44badfcc8",
