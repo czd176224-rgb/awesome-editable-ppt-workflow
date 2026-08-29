@@ -63,7 +63,7 @@ def finalize_manifest_run(run: Path) -> dict:
     before = _manifest_hashes(run_dir, jobs)
     output = output_path_from_deck_manifest(deck_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.parent / f".{output.name}.{uuid.uuid4().hex}.tmp"
+    temporary = output.parent / f".{output.stem}.{uuid.uuid4().hex}.tmp.pptx"
     report_path = output.parent / "final_validation.json"
     temporary_report = output.parent / f".{report_path.name}.{uuid.uuid4().hex}.tmp"
     try:

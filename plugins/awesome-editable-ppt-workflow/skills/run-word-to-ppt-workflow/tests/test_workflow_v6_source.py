@@ -455,6 +455,44 @@ def test_initialize_v6_project_wires_source_chart_records_as_text_facts_only(tmp
     assert materials["reference_images"] == []
 
 
+def test_real_word_schedule_table_extracts_dates_or_falls_back(tmp_path: Path):
+    logo = tmp_path / "logo.svg"
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    def build_word(path: Path, end_date: str) -> None:
+        document = Document()
+        document.add_paragraph("第1页")
+        document.add_paragraph("标题：项目计划")
+        table = document.add_table(rows=3, cols=3)
+        for cell, value in zip(table.rows[0].cells, ("任务", "开始日期", "结束日期")):
+            cell.text = value
+        for cell, value in zip(table.rows[1].cells, ("尽调", "2026-09-01", "2026-09-10")):
+            cell.text = value
+        for cell, value in zip(table.rows[2].cells, ("投决", "2026-09-11", end_date)):
+            cell.text = value
+        document.save(path)
+
+    complete_word = tmp_path / "complete.docx"
+    build_word(complete_word, "2026-09-15")
+    initialize_v6_project(complete_word, logo, tmp_path / "complete-project")
+    complete = json.loads(
+        (tmp_path / "complete-project/02_v6/page_materials/page_001.json").read_text(encoding="utf-8")
+    )["chart_facts"][0]
+    assert complete["rendering_primitive"] == "time_interval"
+    assert complete["series"][0]["start_dates"] == ["2026-09-01", "2026-09-11"]
+    assert complete["series"][0]["end_dates"] == ["2026-09-10", "2026-09-15"]
+
+    incomplete_word = tmp_path / "incomplete.docx"
+    build_word(incomplete_word, "")
+    initialize_v6_project(incomplete_word, logo, tmp_path / "incomplete-project")
+    incomplete = json.loads(
+        (tmp_path / "incomplete-project/02_v6/page_materials/page_001.json").read_text(encoding="utf-8")
+    )["chart_facts"][0]
+    assert incomplete["disabled_primitive"] == "time_interval"
+    assert incomplete["fallback"] == "native_table"
+    assert "rendering_primitive" not in incomplete
+
+
 def test_initialize_v6_project_uses_text_derivative_for_binary_attachment(tmp_path: Path, monkeypatch):
     """Decoding an XLSX original as text would discard available extracted evidence."""
     word = tmp_path / "input.docx"

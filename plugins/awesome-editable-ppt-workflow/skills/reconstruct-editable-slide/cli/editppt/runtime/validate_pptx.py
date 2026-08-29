@@ -573,7 +573,7 @@ def resolve_target(rels_name, target):
     if not target or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target):
         return None
     source = rel_source_part(rels_name)
-    return posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
+    return posixpath.normpath(posixpath.join(posixpath.dirname(source), target)).lstrip("/")
 
 
 def relationship_targets(z, rels_name, names):

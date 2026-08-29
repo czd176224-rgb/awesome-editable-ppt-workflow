@@ -551,7 +551,7 @@ def chart_to_facts(chart: Mapping[str, Any]) -> dict[str, Any]:
         entry: dict[str, Any] = {}
         for key in (
             "series", "name", "unit", "value", "values", "time", "times",
-            "trend", "relationship",
+            "trend", "relationship", "start_dates", "end_dates",
         ):
             if key in item:
                 entry[key] = copy.deepcopy(item[key])
@@ -559,6 +559,9 @@ def chart_to_facts(chart: Mapping[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"title": title, "series": factual_series}
     if "unit" in chart:
         result["unit"] = copy.deepcopy(chart["unit"])
+    for key in ("rendering_primitive", "disabled_primitive", "fallback", "table_rows"):
+        if key in chart:
+            result[key] = copy.deepcopy(chart[key])
     return result
 
 

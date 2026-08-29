@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shutil
+from datetime import date
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -282,6 +283,65 @@ def _chart_records(manifest: Mapping[str, Any], page_number: int) -> list[dict[s
     ]
 
 
+def _time_interval_chart_record(
+    blocks: Sequence[Mapping[str, Any]], *, title: str
+) -> dict[str, Any] | None:
+    aliases = {
+        "task": {"任务", "task"},
+        "start": {"开始", "开始日期", "start", "start date"},
+        "end": {"结束", "结束日期", "end", "end date"},
+    }
+    for block in blocks:
+        rows = block.get("rows") if block.get("type") == "table" else None
+        if not isinstance(rows, list) or len(rows) < 2:
+            continue
+        header = [str(value).strip().casefold() for value in rows[0]]
+        indexes = {
+            key: next((index for index, value in enumerate(header) if value in values), None)
+            for key, values in aliases.items()
+        }
+        if any(index is None for index in indexes.values()):
+            continue
+        values = [[str(cell).strip() for cell in row] for row in rows[1:]]
+        width = max(indexes.values()) + 1
+        complete = bool(values) and all(
+            len(row) >= width
+            and row[indexes["task"]]
+            and row[indexes["start"]]
+            and row[indexes["end"]]
+            and _iso_date(row[indexes["start"]])
+            and _iso_date(row[indexes["end"]])
+            for row in values
+        )
+        if not complete:
+            return {
+                "title": title,
+                "series": [],
+                "disabled_primitive": "time_interval",
+                "fallback": "native_table",
+                "table_rows": rows,
+            }
+        return {
+            "title": title,
+            "rendering_primitive": "time_interval",
+            "series": [{
+                "name": "计划",
+                "times": [row[indexes["task"]] for row in values],
+                "start_dates": [row[indexes["start"]] for row in values],
+                "end_dates": [row[indexes["end"]] for row in values],
+            }],
+        }
+    return None
+
+
+def _iso_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _load_reference_materials(project: Path, page_number: int) -> tuple[dict[str, Any], dict[str, Any]]:
     material_path = _material_path(project, page_number)
     receipt_path = _reference_material_path(project, page_number)
@@ -525,12 +585,14 @@ def initialize_v6_project(word: Path, logo: Path, project: Path) -> dict[str, An
         materials["image_requirements"] = [
             dict(requirement) for requirement in comment_resolution.image_requirements
         ]
-        materials["chart_facts"] = [
-            chart_to_facts(chart) for chart in _chart_records(
-                assets,
-                int(source_asset_page_number) if source_asset_page_number is not None else -1,
-            )
-        ]
+        chart_records = _chart_records(
+            assets,
+            int(source_asset_page_number) if source_asset_page_number is not None else -1,
+        )
+        interval_record = _time_interval_chart_record(raw_page.get("blocks", []), title=title)
+        if interval_record:
+            chart_records.append(interval_record)
+        materials["chart_facts"] = [chart_to_facts(chart) for chart in chart_records]
         materials["degradations"].extend(
             dict(degradation) for degradation in comment_resolution.degradations
         )

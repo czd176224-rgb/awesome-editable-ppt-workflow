@@ -6,12 +6,13 @@ import sys
 from pathlib import Path
 
 from PIL import Image
+from pptx import Presentation
 
 
 RUNTIME = Path(__file__).resolve().parents[1] / "editppt" / "runtime"
 sys.path.insert(0, str(RUNTIME))
 
-from build_pptx_from_manifest import render_preview, write_pptx  # noqa: E402
+from build_pptx_from_manifest import officecli_executable, render_preview, write_pptx  # noqa: E402
 from deck_run_state import sha256_file  # noqa: E402
 from finalize_manifest_deck_run import finalize_manifest_run  # noqa: E402
 from fixed_region_runtime import CONTENT_BOX, SLIDE  # noqa: E402
@@ -194,3 +195,63 @@ def test_record_rejects_changed_request_and_failed_worker_validation(tmp_path: P
         assert "passed: true" in str(exc)
     else:
         raise AssertionError("failed validation must not be recorded")
+
+
+def test_native_chart_manifest_survives_final_assembly(tmp_path: Path) -> None:
+    run, page_dir = _prepared_run(tmp_path)
+    authority = {
+        "rendering_primitive": "column_bar",
+        "categories": ["2023", "2024", "2025"],
+        "series": [{"name": "Revenue", "values": [100, 125, 150]}],
+        "unit": "USD m",
+    }
+    request_path = page_dir / "page_request.json"
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request["numeric_authority"] = authority
+    _write(request_path, request)
+    jobs_path = run / "page_jobs.json"
+    jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
+    jobs["pages"][0]["dispatch"]["page_request_sha256"] = sha256_file(request_path)
+    _write(jobs_path, jobs)
+
+    manifest_path = page_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["charts"] = [
+        {
+            "object_id": "chart1",
+            "chart_type": "column",
+            "anchor": "2cm,2cm,18cm,10cm",
+            "title": "Revenue (USD m)",
+            "legend": "none",
+            "categories": authority["categories"],
+            "series": authority["series"],
+        }
+    ]
+    _write(manifest_path, manifest)
+    write_pptx(manifest, page_dir / "page.pptx", manifest_path)
+    render_preview(
+        manifest,
+        manifest_path,
+        page_dir / "preview.png",
+        pptx_path=page_dir / "page.pptx",
+    )
+    preview_size = Image.open(page_dir / "preview.png").size
+    assert preview_size[0] / preview_size[1] == 16 / 9
+
+    page_chart = next(shape.chart for shape in Presentation(page_dir / "page.pptx").slides[0].shapes if shape.has_chart)
+    assert [item.label for item in page_chart.plots[0].categories] == authority["categories"]
+    assert list(page_chart.series[0].values) == authority["series"][0]["values"]
+    assert page_chart.chart_title.text_frame.text == "Revenue (USD m)"
+
+    record_manifest_page(run, page_id="page_001", agent_id="worker-1")
+    summary = finalize_manifest_run(run)
+    final_chart = next(shape.chart for shape in Presentation(summary["output"]).slides[0].shapes if shape.has_chart)
+    assert [item.label for item in final_chart.plots[0].categories] == authority["categories"]
+    assert list(final_chart.series[0].values) == authority["series"][0]["values"]
+    office_validation = subprocess.run(
+        [officecli_executable(), "validate", summary["output"], "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert office_validation.returncode == 0, office_validation.stderr or office_validation.stdout

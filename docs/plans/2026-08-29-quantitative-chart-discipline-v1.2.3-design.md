@@ -292,6 +292,20 @@ Use at least one real Word source containing explicit time-interval or variable-
 
 Phase 0 passes only when both spikes pass. A failed spike blocks the implementation plan and triggers a design revision; it must not be hidden behind a screenshot, heuristic inference, best-effort chart object, or additional model call.
 
+### Phase 0 result (2026-08-29)
+
+Status: passed on the Windows v1.2.2 runtime; the v1.2.3 implementation plan is unblocked.
+
+- Spike A confirmed that an unrecorded post-build chart is lost because final assembly rebuilds from page manifests. The approved fallback was therefore required: one optional `charts` field in the existing page manifest.
+- With that field, one native column chart passed deterministic page build, native PowerPoint preview regeneration, existing page validation, final manifest-authoritative assembly, final validation, OfficeCLI OpenXML validation, and reopen/readback as an actual editable chart object.
+- Readback preserved categories `2023`, `2024`, `2025`, values `100`, `125`, `150`, and the source unit in the chart title exactly.
+- Spike B used real `.docx` tables. Complete `任务 / 开始日期 / 结束日期` columns produced `start_dates`, `end_dates`, and `rendering_primitive: time_interval` without model inference. A missing end date disabled the primitive and produced `fallback: native_table`.
+- The complete authority survived unchanged into `page_request.numeric_authority`.
+- No Agent, model call, reviewer, retry, dependency installation, or parallel chart manifest was added.
+- Relevant regression evidence: `77 passed` across reconstruction manifest/finalization, V6 materials, V6 source extraction, and V6 reconstruction tests.
+
+The spike implements only the single standard-chart lifecycle and the single explicit time-interval extraction proof. It does not authorize the remaining five production primitives or release v1.2.3 by itself.
+
 ## 15. Verification and Release Gate
 
 Six real paginated-Word representative pages are required, one per rendering primitive:

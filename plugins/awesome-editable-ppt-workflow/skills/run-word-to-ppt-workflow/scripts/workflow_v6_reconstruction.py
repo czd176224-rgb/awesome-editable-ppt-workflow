@@ -290,6 +290,20 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
             "exact_reference_material_custody": False,
         },
     }
+    materials_path = root / "02_v6" / "page_materials" / f"page_{page_number:03d}.json"
+    if materials_path.is_file():
+        materials = json.loads(
+            secure_io.read_bytes(root, materials_path.relative_to(root)).decode("utf-8")
+        )
+        authority = next(
+            (
+                item for item in materials.get("chart_facts", [])
+                if isinstance(item, Mapping) and isinstance(item.get("rendering_primitive"), str)
+            ),
+            None,
+        )
+        if authority:
+            request["numeric_authority"] = copy.deepcopy(dict(authority))
     path = root / "05_v6" / "reconstruction_requests" / f"page_{page_number:03d}.json"
     _write_json(path, request)
     return request

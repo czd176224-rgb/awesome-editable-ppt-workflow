@@ -4,6 +4,7 @@ import html
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -788,6 +789,7 @@ def write_pptx(manifest, out_path, manifest_path):
                 src = base / src
             z.write(src, f"ppt/media/image{media_index}{image_ext(src)}")
             media_index += 1
+    apply_native_charts(out, [normalized])
 
 
 def deck_slide_size(deck, page_entries):
@@ -843,6 +845,61 @@ def write_deck(deck, page_entries, out_path, notes_entries):
                 else:
                     z.writestr(f"ppt/notesSlides/notesSlide{notes_index}.xml", notes_slide_xml(note.get("text", "")))
                 z.writestr(f"ppt/notesSlides/_rels/notesSlide{notes_index}.xml.rels", notes_rels_xml(slide_index))
+    apply_native_charts(out, manifests)
+
+
+def officecli_executable():
+    found = shutil.which("officecli")
+    if found:
+        return found
+    bundled = Path.home() / ".codex" / "bin" / "officecli.CMD"
+    if bundled.is_file():
+        return str(bundled)
+    raise RuntimeError("manifest charts require the installed officecli executable")
+
+
+def apply_native_charts(pptx_path, manifests):
+    if not any(manifest.get("charts") for manifest in manifests):
+        return
+    executable = officecli_executable()
+    for slide_index, manifest in enumerate(manifests, start=1):
+        for chart in manifest.get("charts", []):
+            categories = chart.get("categories", [])
+            series = chart.get("series", [])
+            if not categories or not series:
+                raise ValueError("native chart requires categories and series")
+            data = ";".join(
+                f"{item['name']}:{','.join(str(value) for value in item['values'])}"
+                for item in series
+            )
+            command = [
+                executable,
+                "add",
+                str(pptx_path),
+                f"/slide[{slide_index}]",
+                "--type",
+                "chart",
+                "--prop",
+                f"chartType={chart.get('chart_type', 'column')}",
+                "--prop",
+                f"categories={','.join(str(value) for value in categories)}",
+                "--prop",
+                f"data={data}",
+                "--prop",
+                f"anchor={chart['anchor']}",
+                "--prop",
+                f"title={chart.get('title', 'none')}",
+                "--prop",
+                f"legend={chart.get('legend', 'none')}",
+            ]
+            completed = subprocess.run(command, capture_output=True, text=True, check=False)
+            if completed.returncode != 0:
+                raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
+    completed = subprocess.run(
+        [executable, "close", str(pptx_path)], capture_output=True, text=True, check=False
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
 
 
 def page_entries_from_deck_manifest(deck_manifest_path):
@@ -884,7 +941,30 @@ def output_path_from_deck_manifest(deck_manifest_path):
     return output
 
 
-def render_preview(manifest, manifest_path, out_path):
+def render_preview(manifest, manifest_path, out_path, *, pptx_path=None):
+    if manifest.get("charts"):
+        if not pptx_path:
+            raise ValueError("native chart preview requires pptx_path")
+        completed = subprocess.run(
+            [
+                officecli_executable(),
+                "view",
+                str(pptx_path),
+                "screenshot",
+                "--page",
+                "1",
+                "--render",
+                "native",
+                "-o",
+                str(out_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
+        return
     from PIL import Image, ImageColor, ImageDraw, ImageFont
 
     manifest = normalize_manifest(manifest)
@@ -1072,7 +1152,7 @@ def main():
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     write_pptx(manifest, args.out, args.manifest)
     if args.preview:
-        render_preview(manifest, args.manifest, args.preview)
+        render_preview(manifest, args.manifest, args.preview, pptx_path=args.out)
     print(f"Wrote {args.out}")
     if args.preview:
         print(f"Wrote {args.preview}")

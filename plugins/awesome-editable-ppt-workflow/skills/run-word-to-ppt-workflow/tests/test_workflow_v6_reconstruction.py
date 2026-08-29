@@ -145,6 +145,27 @@ def test_v6_reconstruction_request_has_no_exact_material_or_post_visual_qa(tmp_p
     assert request["sealed_text_repairs"] == []
 
 
+def test_reconstruction_request_preserves_numeric_authority(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    authority = {
+        "title": "项目计划",
+        "rendering_primitive": "time_interval",
+        "series": [{
+            "name": "计划",
+            "times": ["尽调", "投决"],
+            "start_dates": ["2026-09-01", "2026-09-11"],
+            "end_dates": ["2026-09-10", "2026-09-15"],
+        }],
+    }
+    path = project / "02_v6/page_materials/page_001.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"chart_facts": [authority]}, ensure_ascii=False), encoding="utf-8")
+
+    request = build_reconstruction_request(project, page_number=1)
+
+    assert request["numeric_authority"] == authority
+
+
 def test_reconstruction_request_carries_signed_text_repairs(tmp_path: Path):
     project = _project(tmp_path, 1)
     receipt_path = project / "04_v6/images/page_001.json"
