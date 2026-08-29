@@ -604,6 +604,9 @@ def _canonical_number(value: Any) -> int | float:
 def _canonical_numeric_chart(chart: Mapping[str, Any]) -> dict[str, Any] | None:
     try:
         result = chart_to_facts(chart)
+        series = result.get("series")
+        if not isinstance(series, list) or any(not isinstance(item, Mapping) for item in series):
+            return None
         for key in (
             "title", "period", "unit", "basis",
             "x_label", "x_unit", "x_basis", "y_label", "y_unit", "y_basis",
@@ -611,7 +614,7 @@ def _canonical_numeric_chart(chart: Mapping[str, Any]) -> dict[str, Any] | None:
         ):
             if key in result and isinstance(result[key], str):
                 result[key] = result[key].strip()
-        for item in result["series"]:
+        for item in series:
             name = item.pop("name", None)
             source_name = item.pop("series", None)
             name = name or source_name

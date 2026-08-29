@@ -919,6 +919,26 @@ def test_selector_canonicalizes_source_values_labels_and_series_name_for_rendere
     }]
 
 
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        {"title": "Missing series"},
+        {"title": "Scalar series", "series": "not-a-list"},
+        {"title": "Scalar member", "series": ["not-an-object"]},
+    ],
+)
+def test_selector_safely_refuses_malformed_canonical_series(
+    malformed_result: dict[str, object], monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        workflow_v6_materials,
+        "chart_to_facts",
+        lambda _chart: malformed_result,
+    )
+
+    assert workflow_v6_materials.select_numeric_authority([{"title": "Source"}]) is None
+
+
 def test_selector_requires_period_and_identical_multi_series_categories():
     missing_period = _one_dimensional_chart("column_bar", "column")
     missing_period.pop("period")
