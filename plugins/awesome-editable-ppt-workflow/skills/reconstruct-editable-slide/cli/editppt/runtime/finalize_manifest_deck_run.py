@@ -11,6 +11,7 @@ import sys
 import uuid
 from pathlib import Path
 
+import build_pptx_from_manifest as manifest_builder
 from build_pptx_from_manifest import (
     output_path_from_deck_manifest,
     page_entries_from_deck_manifest,
@@ -42,6 +43,26 @@ def _manifest_hashes(run_dir: Path, jobs: dict) -> dict[str, str]:
             raise ValueError(f"missing recorded page manifest: {manifest}")
         hashes[page["page_id"]] = sha256_file(manifest)
     return hashes
+
+
+def _optional_officecli_validation(output: Path) -> dict[str, str]:
+    if os.getenv("EDITPPT_OPTIONAL_OFFICECLI_VALIDATION") != "1":
+        return {"status": "skipped", "detail": "set EDITPPT_OPTIONAL_OFFICECLI_VALIDATION=1 to enable"}
+    try:
+        executable = manifest_builder.officecli_executable()
+    except (OSError, RuntimeError) as exc:
+        return {"status": "skipped", "detail": str(exc)}
+    try:
+        completed = subprocess.run(
+            [executable, "validate", str(output), "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return {"status": "warning", "detail": str(exc)}
+    detail = completed.stdout.strip() or completed.stderr.strip()
+    return {"status": "passed" if completed.returncode == 0 else "warning", "detail": detail}
 
 
 def finalize_manifest_run(run: Path) -> dict:
@@ -127,6 +148,7 @@ def finalize_manifest_run(run: Path) -> dict:
             "output_sha256": output_hash,
             "validation": str(report_path),
             "assembly_authority": "recorded-page-manifests",
+            "officecli_validation": _optional_officecli_validation(output),
         }
         write_json(output.parent / "run_summary.json", summary)
         return summary

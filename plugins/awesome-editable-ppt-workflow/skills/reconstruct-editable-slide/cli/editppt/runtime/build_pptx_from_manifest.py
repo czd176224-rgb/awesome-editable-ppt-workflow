@@ -855,51 +855,55 @@ def officecli_executable():
     bundled = Path.home() / ".codex" / "bin" / "officecli.CMD"
     if bundled.is_file():
         return str(bundled)
-    raise RuntimeError("manifest charts require the installed officecli executable")
+    raise RuntimeError("officecli executable is unavailable")
+
+
+def _chart_anchor(anchor):
+    values = [value.strip() for value in str(anchor).split(",")]
+    if len(values) != 4 or any(not value.lower().endswith("cm") for value in values):
+        raise ValueError("native chart anchor must contain four cm values")
+    try:
+        return tuple(float(value[:-2]) for value in values)
+    except ValueError as exc:
+        raise ValueError("native chart anchor must contain four cm values") from exc
 
 
 def apply_native_charts(pptx_path, manifests):
     if not any(manifest.get("charts") for manifest in manifests):
         return
-    executable = officecli_executable()
+    from pptx import Presentation
+    from pptx.chart.data import ChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Cm
+
+    presentation = Presentation(pptx_path)
     for slide_index, manifest in enumerate(manifests, start=1):
         for chart in manifest.get("charts", []):
             categories = chart.get("categories", [])
             series = chart.get("series", [])
             if not categories or not series:
                 raise ValueError("native chart requires categories and series")
-            data = ";".join(
-                f"{item['name']}:{','.join(str(value) for value in item['values'])}"
-                for item in series
-            )
-            command = [
-                executable,
-                "add",
-                str(pptx_path),
-                f"/slide[{slide_index}]",
-                "--type",
-                "chart",
-                "--prop",
-                f"chartType={chart.get('chart_type', 'column')}",
-                "--prop",
-                f"categories={','.join(str(value) for value in categories)}",
-                "--prop",
-                f"data={data}",
-                "--prop",
-                f"anchor={chart['anchor']}",
-                "--prop",
-                f"title={chart.get('title', 'none')}",
-                "--prop",
-                f"legend={chart.get('legend', 'none')}",
-            ]
-            completed = subprocess.run(command, capture_output=True, text=True, check=False)
-            if completed.returncode != 0:
-                raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
-    completed = subprocess.run(
-        [executable, "close", str(pptx_path)], capture_output=True, text=True, check=False
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
+            if chart.get("chart_type", "column") != "column":
+                raise ValueError("Task 1 supports only the Phase 0 column chart")
+            data = ChartData()
+            data.categories = categories
+            for item in series:
+                data.add_series(item["name"], item["values"])
+            left, top, width, height = (Cm(value) for value in _chart_anchor(chart["anchor"]))
+            native_chart = presentation.slides[slide_index - 1].shapes.add_chart(
+                XL_CHART_TYPE.COLUMN_CLUSTERED,
+                left,
+                top,
+                width,
+                height,
+                data,
+            ).chart
+            title = chart.get("title")
+            native_chart.has_title = bool(title and title != "none")
+            if native_chart.has_title:
+                native_chart.chart_title.text_frame.text = str(title)
+            native_chart.has_legend = chart.get("legend", "none") != "none"
+    presentation.save(pptx_path)
 
 
 def page_entries_from_deck_manifest(deck_manifest_path):
@@ -942,29 +946,6 @@ def output_path_from_deck_manifest(deck_manifest_path):
 
 
 def render_preview(manifest, manifest_path, out_path, *, pptx_path=None):
-    if manifest.get("charts"):
-        if not pptx_path:
-            raise ValueError("native chart preview requires pptx_path")
-        completed = subprocess.run(
-            [
-                officecli_executable(),
-                "view",
-                str(pptx_path),
-                "screenshot",
-                "--page",
-                "1",
-                "--render",
-                "native",
-                "-o",
-                str(out_path),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if completed.returncode != 0:
-            raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
-        return
     from PIL import Image, ImageColor, ImageDraw, ImageFont
 
     manifest = normalize_manifest(manifest)
@@ -1083,6 +1064,40 @@ def render_preview(manifest, manifest_path, out_path, *, pptx_path=None):
             return
         draw.multiline_text((x, y), preview_text, fill=fill, font=font, spacing=4, align=align)
 
+    def render_chart(chart):
+        categories = chart.get("categories", [])
+        series = chart.get("series", [])
+        if not categories or not series:
+            raise ValueError("native chart requires categories and series")
+        left_cm, top_cm, width_cm, height_cm = _chart_anchor(chart["anchor"])
+        left = int(left_cm / 2.54 * scale)
+        top = int(top_cm / 2.54 * scale)
+        width = int(width_cm / 2.54 * scale)
+        height = int(height_cm / 2.54 * scale)
+        title_height = int(0.35 * scale) if chart.get("title") not in (None, "none") else 0
+        plot = (left + int(0.45 * scale), top + title_height, left + width, top + height - int(0.35 * scale))
+        draw.line((plot[0], plot[1], plot[0], plot[3]), fill="#666666", width=1)
+        draw.line((plot[0], plot[3], plot[2], plot[3]), fill="#666666", width=1)
+        if title_height:
+            draw.text((left, top), str(chart["title"]), fill="#111111", font=ImageFont.load_default())
+        values = [float(value) for item in series for value in item["values"]]
+        maximum = max(values + [0.0])
+        minimum = min(values + [0.0])
+        span = maximum - minimum or 1.0
+        group_width = (plot[2] - plot[0]) / len(categories)
+        bar_width = group_width * 0.7 / len(series)
+        baseline = plot[1] + maximum / span * (plot[3] - plot[1])
+        colors = ("#4472C4", "#ED7D31", "#A5A5A5", "#FFC000")
+        for series_index, item in enumerate(series):
+            if len(item["values"]) != len(categories):
+                raise ValueError("native chart series values must match categories")
+            for category_index, value in enumerate(item["values"]):
+                x0 = plot[0] + category_index * group_width + group_width * 0.15 + series_index * bar_width
+                y = plot[1] + (maximum - float(value)) / span * (plot[3] - plot[1])
+                draw.rectangle((x0, min(y, baseline), x0 + bar_width, max(y, baseline)), fill=colors[series_index % len(colors)])
+        for index, category in enumerate(categories):
+            draw.text((plot[0] + (index + 0.5) * group_width, plot[3] + 2), str(category), fill="#444444", anchor="ma", font=ImageFont.load_default())
+
     layered = []
     for index, item in enumerate(manifest.get("shapes", [])):
         layered.append((float(item.get("z_index", 100)), index, render_shape, item))
@@ -1090,6 +1105,8 @@ def render_preview(manifest, manifest_path, out_path, *, pptx_path=None):
         layered.append((float(item.get("z_index", 200)), index, render_image, item))
     for index, item in enumerate(manifest.get("text_boxes", [])):
         layered.append((float(item.get("z_index", 300)), index, render_text, item))
+    for index, item in enumerate(manifest.get("charts", [])):
+        layered.append((float(item.get("z_index", 250)), index, render_chart, item))
     for _z_index, _order, renderer, item in sorted(layered, key=lambda entry: (entry[0], entry[1])):
         renderer(item)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

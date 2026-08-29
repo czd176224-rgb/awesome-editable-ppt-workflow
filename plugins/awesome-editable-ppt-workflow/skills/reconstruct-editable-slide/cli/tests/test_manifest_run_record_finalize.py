@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
 from pptx import Presentation
 
@@ -12,7 +13,8 @@ from pptx import Presentation
 RUNTIME = Path(__file__).resolve().parents[1] / "editppt" / "runtime"
 sys.path.insert(0, str(RUNTIME))
 
-from build_pptx_from_manifest import officecli_executable, render_preview, write_pptx  # noqa: E402
+import build_pptx_from_manifest  # noqa: E402
+from build_pptx_from_manifest import render_preview, write_pptx  # noqa: E402
 from deck_run_state import sha256_file  # noqa: E402
 from finalize_manifest_deck_run import finalize_manifest_run  # noqa: E402
 from fixed_region_runtime import CONTENT_BOX, SLIDE  # noqa: E402
@@ -197,8 +199,15 @@ def test_record_rejects_changed_request_and_failed_worker_validation(tmp_path: P
         raise AssertionError("failed validation must not be recorded")
 
 
-def test_native_chart_manifest_survives_final_assembly(tmp_path: Path) -> None:
+def test_native_chart_manifest_survives_final_assembly_without_officecli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     run, page_dir = _prepared_run(tmp_path)
+    monkeypatch.setattr(
+        build_pptx_from_manifest,
+        "officecli_executable",
+        lambda: (_ for _ in ()).throw(RuntimeError("OfficeCLI unavailable")),
+    )
     authority = {
         "rendering_primitive": "column_bar",
         "categories": ["2023", "2024", "2025"],
@@ -235,8 +244,9 @@ def test_native_chart_manifest_survives_final_assembly(tmp_path: Path) -> None:
         page_dir / "preview.png",
         pptx_path=page_dir / "page.pptx",
     )
-    preview_size = Image.open(page_dir / "preview.png").size
-    assert preview_size[0] / preview_size[1] == 16 / 9
+    preview = Image.open(page_dir / "preview.png").convert("RGB")
+    assert preview.width / preview.height == 16 / 9
+    assert (68, 114, 196) in preview.get_flattened_data()
 
     page_chart = next(shape.chart for shape in Presentation(page_dir / "page.pptx").slides[0].shapes if shape.has_chart)
     assert [item.label for item in page_chart.plots[0].categories] == authority["categories"]
@@ -245,13 +255,9 @@ def test_native_chart_manifest_survives_final_assembly(tmp_path: Path) -> None:
 
     record_manifest_page(run, page_id="page_001", agent_id="worker-1")
     summary = finalize_manifest_run(run)
+    assert summary["officecli_validation"]["status"] == "skipped"
     final_chart = next(shape.chart for shape in Presentation(summary["output"]).slides[0].shapes if shape.has_chart)
     assert [item.label for item in final_chart.plots[0].categories] == authority["categories"]
     assert list(final_chart.series[0].values) == authority["series"][0]["values"]
-    office_validation = subprocess.run(
-        [officecli_executable(), "validate", summary["output"], "--json"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert office_validation.returncode == 0, office_validation.stderr or office_validation.stdout
+    assert final_chart.chart_title.text_frame.text == "Revenue (USD m)"
+    assert json.loads(Path(summary["validation"]).read_text(encoding="utf-8"))["passed"] is True
