@@ -8,8 +8,6 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from pptx import Presentation
-from pptx.enum.shapes import MSO_SHAPE
-from pptx.util import Inches
 
 
 TESTS = Path(__file__).resolve().parent
@@ -22,6 +20,8 @@ sys.path[:0] = [str(RUNTIME), str(SCRIPTS)]
 from build_pptx_from_manifest import render_preview, write_deck  # noqa: E402
 from fixed_region_runtime import CONTENT_BOX, SLIDE  # noqa: E402
 from workflow_v6_materials import select_numeric_authority  # noqa: E402
+from workflow_v6_reconstruction import build_reconstruction_request  # noqa: E402
+from test_workflow_v6_reconstruction import _project  # noqa: E402
 
 
 OUTPUT = REPO / "tmp/v1.2.3-acceptance/synthetic"
@@ -50,6 +50,63 @@ def _manifest(chart: dict) -> dict:
         "charts": [chart],
         "asset_provenance": [],
     }
+
+
+def _qualitative_manifest(relationship: str, fallback: str) -> dict:
+    manifest = _manifest({})
+    manifest["charts"] = []
+    layouts = {
+        "driver_bridge": [(0.8, 2.8, 1.8, 0.9), (3.0, 2.1, 1.8, 0.9), (5.2, 2.6, 1.8, 0.9), (7.4, 1.7, 1.8, 0.9)],
+        "timeline_roadmap": [(0.8 + index * 2.2, 2.4, 1.8, 0.9) for index in range(4)],
+        "qualitative_quadrant_or_comparison_table": [(1.2 + column * 4.2, 1.5 + row * 1.8, 3.2, 1.2) for row in range(2) for column in range(2)],
+        "uniform_nodes": [(0.8 + index * 2.2, 2.4, 1.8, 0.9) for index in range(4)],
+        "equal_width_hierarchy": [(4.1, 1.2, 1.8, 0.9), *[(1.3 + index * 2.8, 3.0, 1.8, 0.9) for index in range(3)]],
+        "roadmap_milestones": [(0.8 + index * 2.2, 2.4, 1.8, 0.9) for index in range(4)],
+        "comparison_table": [(1.0, 1.6, 3.7, 2.4), (5.3, 1.6, 3.7, 2.4)],
+        "goal_current_gap": [(0.8 + index * 3.0, 2.1, 2.4, 1.4) for index in range(3)],
+    }
+    boxes = layouts[fallback]
+    manifest["shapes"] = [
+        {
+            "object_id": f"{fallback}-node-{index}",
+            "name": f"{fallback} node {index}",
+            "type": "roundRect",
+            "left": left,
+            "top": top,
+            "width": width,
+            "height": height,
+            "fill": "#EAF2F8",
+            "stroke": "#6B7A90",
+        }
+        for index, (left, top, width, height) in enumerate(boxes)
+    ]
+    manifest["text_boxes"] = [
+        {
+            "object_id": f"{fallback}-title",
+            "name": f"{fallback} title",
+            "left": 0.7,
+            "top": 0.5,
+            "width": 12.0,
+            "height": 0.7,
+            "text": f"{relationship}: {fallback} (qualitative, non-scaled)",
+            "font_size": 22,
+        },
+        *[
+            {
+                "object_id": f"{fallback}-label-{index}",
+                "name": f"{fallback} label {index}",
+                "left": left + 0.15,
+                "top": top + 0.25,
+                "width": width - 0.3,
+                "height": min(0.7, height - 0.3),
+                "text": f"Source-backed item {index + 1}",
+                "font_size": 14,
+                "align": "center",
+            }
+            for index, (left, top, width, height) in enumerate(boxes)
+        ],
+    ]
+    return manifest
 
 
 def _one_dimensional(name: str, variant: str, *, target: bool = False) -> dict:
@@ -176,48 +233,56 @@ def test_ten_explicit_quantitative_cases_build_editable_pptx_and_previews() -> N
     assert "difference-arrow Difference Arrow" in difference_names
 
 
-@pytest.mark.parametrize(("relationship", "quantitative", "fallback"), MATRIX)
-def test_eight_relationships_have_quantitative_and_named_qualitative_modes(
-    relationship: str, quantitative: dict, fallback: str,
+def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contracts(
+    tmp_path: Path,
 ) -> None:
-    quantitative = deepcopy(quantitative)
-    quantitative["relationship"] = relationship
-    authority = select_numeric_authority([quantitative])
-    assert authority is not None
-    assert authority["rendering_primitive"] == quantitative["rendering_primitive"]
-
-    qualitative = {
-        "title": relationship,
-        "relationship": relationship,
-        "source_wording": "Source describes the relationship but supplies no complete numeric dimensions.",
-        "disabled_primitive": quantitative["rendering_primitive"],
-        "fallback": fallback,
-        "series": [],
-    }
-    assert select_numeric_authority([qualitative]) is None
-    assert qualitative["fallback"] == fallback
-    assert "numeric_authority" not in qualitative
-
-
-def test_qualitative_matrix_artifact_is_editable_and_contains_no_chart_or_scaled_axis() -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    deck = Presentation()
-    deck.slide_width = Inches(13.333333)
-    deck.slide_height = Inches(7.5)
-    for relationship, _quantitative, fallback in MATRIX:
-        slide = deck.slides.add_slide(deck.slide_layouts[6])
-        title = slide.shapes.add_textbox(Inches(0.6), Inches(0.3), Inches(12), Inches(0.5))
-        title.name = f"{relationship} title"
-        title.text = f"{relationship}: {fallback} (qualitative, non-scaled)"
-        for index in range(3):
-            node = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1 + index * 4), Inches(2), Inches(3), Inches(1.2))
-            node.name = f"{fallback} node {index + 1}"
-            node.text = f"Source-backed item {index + 1}"
+    entries = []
+    for index, (relationship, quantitative, fallback) in enumerate(MATRIX, start=1):
+        quantitative = deepcopy(quantitative)
+        quantitative["relationship"] = relationship
+        authority = select_numeric_authority([quantitative])
+        assert authority is not None
+        assert authority["rendering_primitive"] == quantitative["rendering_primitive"]
+
+        qualitative = {
+            "title": relationship,
+            "relationship": relationship,
+            "source_wording": "Source describes the relationship but supplies no complete numeric dimensions.",
+            "disabled_primitive": quantitative["rendering_primitive"],
+            "fallback": fallback,
+            "series": [],
+        }
+        assert select_numeric_authority([qualitative]) is None
+        project = _project(tmp_path / relationship, 1)
+        material_path = project / "02_v6/page_materials/page_001.json"
+        material_path.parent.mkdir(parents=True, exist_ok=True)
+        material_path.write_text(
+            json.dumps({"chart_facts": [qualitative]}, ensure_ascii=False), encoding="utf-8",
+        )
+        request = build_reconstruction_request(project, page_number=1)
+        assert "numeric_authority" not in request
+
+        manifest = _qualitative_manifest(relationship, fallback)
+        manifest_path = OUTPUT / f"qualitative-{index:02d}.json"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        preview = OUTPUT / f"qualitative-{index:02d}.png"
+        render_preview(manifest, manifest_path, preview)
+        assert Image.open(preview).size == (1200, 675)
+        entries.append({"manifest": manifest, "manifest_path": str(manifest_path)})
+
     path = OUTPUT / "qualitative-eight-modes.pptx"
-    deck.save(path)
+    write_deck({"workflow_contract_version": "fixed-canvas-cm-v2", "slide": dict(SLIDE)}, entries, path, [])
 
     reopened = Presentation(path)
     assert len(reopened.slides) == 8
     assert all(not any(shape.has_chart for shape in slide.shapes) for slide in reopened.slides)
-    assert all(len(slide.shapes) == 4 for slide in reopened.slides)
-    assert not any("axis" in shape.name.lower() for slide in reopened.slides for shape in slide.shapes)
+    expected_counts = (4, 4, 4, 4, 4, 4, 2, 3)
+    for slide, (_relationship, quantitative, fallback), expected_count in zip(reopened.slides, MATRIX, expected_counts, strict=True):
+        names = {shape.name for shape in slide.shapes}
+        assert any(fallback in name for name in names)
+        nodes = [shape for shape in slide.shapes if shape.name.startswith(f"{fallback} node")]
+        assert len(nodes) == expected_count
+        forbidden = {"axis", "scaled", "bubble size", "target line", "difference arrow"}
+        assert not any(term in name.casefold() for name in names for term in forbidden)
+        assert quantitative["rendering_primitive"] not in " ".join(names)

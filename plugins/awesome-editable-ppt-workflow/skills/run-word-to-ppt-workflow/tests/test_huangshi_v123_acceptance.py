@@ -3,25 +3,40 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
+import shutil
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from pptx import Presentation
-from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches, Pt
 
 
 TESTS = Path(__file__).resolve().parent
 PLUGIN = TESTS.parents[2]
 REPO = TESTS.parents[4]
 SCRIPTS = PLUGIN / "skills/run-word-to-ppt-workflow/scripts"
-sys.path.insert(0, str(SCRIPTS))
+RUNTIME = PLUGIN / "skills/reconstruct-editable-slide/cli/editppt/runtime"
+sys.path[:0] = [str(SCRIPTS), str(RUNTIME)]
 
+from awesome_page_materials import publish_page_materials  # noqa: E402
+from build_pptx_from_manifest import render_preview, write_pptx  # noqa: E402
+from codex_subscription_runtime import CodexStructuredResult  # noqa: E402
+from complex_page_experiment.director import direct_page  # noqa: E402
+from complex_page_experiment.materials import build_complete_page_material_view  # noqa: E402
+from complex_page_experiment.workspace import open_live_page_workspace  # noqa: E402
+from director_taskbook import taskbook_digest  # noqa: E402
 from extract_docx_pages import DEFAULT_MARKER, extract  # noqa: E402
+from fixed_region_runtime import CONTENT_BOX, SLIDE  # noqa: E402
+from workflow_v6_contract import new_page, new_project  # noqa: E402
+from workflow_v6_reconstruction import (  # noqa: E402
+    assemble_v6_deck,
+    build_reconstruction_request,
+    finalize_reconstructed_page,
+)
+from workflow_v6_state import create, load  # noqa: E402
 
 
 DESKTOP = Path.home() / "Desktop"
@@ -31,6 +46,16 @@ WORD_SHA256 = "519FC2C5DAA0B4A2E65954E6FA20DF461E04587749C69AFB5952C6535A4A4A11"
 LOGO_SHA256 = "9681840BACFBA51E87E47D687C1CA1F9C542F9C235577280447E96070726BCF0"
 SELECTED = (5, 10, 14, 20, 21, 40)
 OUTPUT = REPO / "tmp/v1.2.3-acceptance/huangshi"
+PREVIEW_FONT = str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts/msyh.ttc")
+
+PAGE_CONTRACTS = {
+    5: ("option_comparison", "comparison_table", ("科技成果40余项", "举办活动35场", "项目和人才团队30余个", "推动7个项目注册落地")),
+    10: ("target_actual_variance", "goal_current_gap", ("420亿元", "100亿元", "450家", "100个以上", "50家", "3—5家")),
+    14: ("project_stage_time", "roadmap_milestones", ("项目发现", "技术评价", "商业验证", "中试放大", "落地承接", "成长赋能", "并购退出")),
+    20: ("market_size_share", "equal_width_hierarchy", ("1+4+N", "产业发展基金", "天使类", "科创类", "产业类", "专项类", "N只细分子基金")),
+    21: ("option_comparison", "comparison_table", ("总规模百亿元", "总投资68.2亿元", "没有完整披露")),
+    40: ("project_stage_time", "roadmap_milestones", ("0—30天", "31—60天", "61—90天", "12个月")),
+}
 
 
 def _sha256(path: Path) -> str:
@@ -38,204 +63,219 @@ def _sha256(path: Path) -> str:
 
 
 def _page_text(page: dict) -> str:
-    values: list[str] = []
-    for block in page["blocks"]:
-        if block["type"] == "table":
-            values.extend(cell for row in block["rows"] for cell in row)
-        else:
-            values.append(block.get("text", ""))
-    return "\n".join(values)
+    return "\n".join(
+        "\n".join(cell for row in block["rows"] for cell in row)
+        if block["type"] == "table" else block.get("text", "")
+        for block in page["blocks"]
+    )
 
 
-def _add_text(slide, name: str, text: str, x: float, y: float, w: float, h: float, *, size: int = 15, bold: bool = False):
-    shape = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
-    shape.name = name
-    shape.text_frame.clear()
-    paragraph = shape.text_frame.paragraphs[0]
-    paragraph.alignment = PP_ALIGN.CENTER
-    run = paragraph.add_run()
-    run.text = text
-    run.font.name = "Microsoft YaHei"
-    run.font.size = Pt(size)
-    run.font.bold = bold
-    run.font.color.rgb = RGBColor(35, 45, 60)
-    return shape
+def _style() -> dict:
+    return {
+        "primary_color": "#17365D", "secondary_color": "#C7352B",
+        "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei",
+        "latin_font": "Arial", "title_size_pt": 28, "body_size_pt": 12,
+        "caption_size_pt": 9, "regional_characteristics": "黄石产业投资",
+        "visual_description": "Formal investment committee presentation.",
+    }
 
 
-def _add_node(slide, name: str, text: str, x: float, y: float, w: float, h: float, *, fill: str = "EAF2F8"):
-    shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
-    shape.name = name
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = RGBColor.from_string(fill)
-    shape.line.color.rgb = RGBColor.from_string("6B7A90")
-    shape.text = text
-    for paragraph in shape.text_frame.paragraphs:
-        paragraph.alignment = PP_ALIGN.CENTER
-        for run in paragraph.runs:
-            run.font.name = "Microsoft YaHei"
-            run.font.size = Pt(13)
-            run.font.color.rgb = RGBColor.from_string("233044")
-    return shape
+def _director_value(page_number: int, material_ids: tuple[str, ...], source_text: str) -> dict:
+    return {
+        "schema_version": "awesome-consulting-page-director-v2", "page_number": page_number, "quality": "high",
+        "machine_record": {
+            "facts_and_sources": [source_text[:300]],
+            "must_preserve_entities": ["Preserve every source-exact number and named entity."],
+            "core_content_and_comment_direction": ["Use only the selected Word page."],
+            "material_use": [{"material_id": item, "status": "background_understanding", "reason": "Source authority."} for item in material_ids],
+            "selected_references": [], "fixed_layer_exclusions": ["title", "logo", "footer", "page_number"],
+        },
+        "creative_direction": {
+            "business_proposition": "Present the selected source facts without inventing quantitative geometry.",
+            "explanatory_lead": "Lead with the page's source-supported conclusion.",
+            "analytical_backbone": "Use the named qualitative substitute required by incomplete evidence.",
+            "evidence_interpretation_conclusion": "Move from exact Word evidence to its stated implication.",
+            "content_hierarchy": "Conclusion, source facts, then limitation or implication.",
+            "reading_path_and_density": "Use equal-weight editable objects and a restrained reading path.",
+            "takeaway_statement": "Keep every quantitative claim tied to its disclosed basis.",
+            "supporting_visual_policy": "Use structure, not decorative or proportional encoding.",
+            "anti_ai_visual_policy": "Avoid invented scenes, fake charts, and ornamental 3D objects.",
+        },
+        "prompt_sections": {
+            "task_and_canvas": "Arrange a calm source-led information canvas.",
+            "core_proposition_and_content": "Preserve the exact Word facts and their relationship.",
+            "consulting_information_architecture": "Use equal-weight native editable objects.",
+            "visual_style_and_color": "Use restrained editorial styling.",
+            "text_and_typography": "Keep Chinese labels and numbers crisp.",
+            "strict_prohibitions": "No invented values, axes, areas, durations, comparisons, or arithmetic.",
+        },
+    }
 
 
-def _title(slide, page: int, text: str) -> None:
-    _add_text(slide, f"page-{page}-title", text, 0.55, 0.25, 12.2, 0.6, size=21, bold=True)
+def _director_result(value: dict) -> CodexStructuredResult:
+    return CodexStructuredResult(
+        value=value, thread_id="huangshi-test", turn_id="deterministic-director",
+        model="deterministic-test-stub", model_provider="local-test", auth_mode="test",
+        plan_type="test", usage={"input_tokens": 0, "output_tokens": 0},
+        safe_trace={"boundary": "external-model-stub"}, effort="high",
+        duration_seconds=0.01, startup_reused=True,
+    )
 
 
-def _build_deck(source: dict, output: Path) -> None:
-    deck = Presentation()
-    deck.slide_width = Inches(13.333333)
-    deck.slide_height = Inches(7.5)
-    pages = {page["page_number"]: page for page in source["pages"]}
-
-    slide = deck.slides.add_slide(deck.slide_layouts[6])
-    _title(slide, 5, "四个离岸科创中心已形成资源入口，母基金要接续完成产业转化")
-    for index, text in enumerate(("科技成果\n40余项", "活动\n35场", "项目和人才团队\n30余个", "注册落地项目\n7个")):
-        _add_node(slide, f"page-5-independent-kpi-{index + 1}", text, 0.65 + index * 3.13, 2.35, 2.65, 1.45)
-
-    slide = deck.slides.add_slide(deck.slide_layouts[6])
-    _title(slide, 10, "“十五五”量化目标为基金投向和绩效评价提供明确坐标")
-    _add_text(slide, "page-10-economic-group", "经济目标", 0.55, 1.15, 12.2, 0.35, bold=True)
-    economic = ("数字经济核心产业增加值\n420亿元", "通用人工智能产业\n100亿元")
-    for index, text in enumerate(economic):
-        _add_node(slide, f"page-10-independent-kpi-{index + 1}", text, 1.7 + index * 5.2, 1.6, 4.7, 1.0)
-    _add_text(slide, "page-10-implementation-group", "实施目标", 0.55, 3.0, 12.2, 0.35, bold=True)
-    implementation = ("450家企业\n数字化改造", "100个以上\n省级AI应用示范场景", "50家\n省级以上绿色工厂", "新增3—5家\n上市企业")
-    for index, text in enumerate(implementation):
-        _add_node(slide, f"page-10-independent-kpi-{index + 3}", text, 0.55 + index * 3.18, 3.5, 2.7, 1.3)
-
-    slide = deck.slides.add_slide(deck.slide_layouts[6])
-    _title(slide, 14, "从外部创新资源到黄石产业增量，需要打通七个连续转化环节")
-    stages = ("项目发现", "技术评价", "商业验证", "中试放大", "落地承接", "成长赋能", "并购退出")
-    for index, text in enumerate(stages):
-        _add_node(slide, f"page-14-stage-{index + 1}", text, 0.35 + index * 1.83, 2.4, 1.55, 1.35)
-
-    slide = deck.slides.add_slide(deck.slide_layouts[6])
-    _title(slide, 20, "现有“1+4+N”已覆盖企业全生命周期，可承载新增专业工具")
-    _add_node(slide, "page-20-node-root", "1\n产业发展母基金", 5.4, 1.2, 2.5, 0.85, fill="D6EAF8")
-    for index, text in enumerate(("天使类", "科创类", "产业类", "专项类")):
-        _add_node(slide, f"page-20-node-group-{index + 1}", text, 0.8 + index * 3.15, 2.75, 2.5, 0.85)
-    for index, text in enumerate(("细分子基金A", "细分子基金B", "细分子基金N")):
-        _add_node(slide, f"page-20-node-n-{index + 1}", text, 2.3 + index * 3.2, 4.45, 2.5, 0.85)
-
-    slide = deck.slides.add_slide(deck.slide_layouts[6])
-    _title(slide, 21, "黄石基金已进入落地阶段，公开数据尚不足以判断运营成熟度")
-    _add_node(slide, "page-21-disclosed-fact-1", "基金合作\n总规模百亿元", 1.1, 1.55, 4.9, 1.25)
-    _add_node(slide, "page-21-disclosed-fact-2", "招商项目签约\n总投资68.2亿元", 7.3, 1.55, 4.9, 1.25)
-    _add_node(slide, "page-21-data-gap-warning", "数据缺口：未完整披露母基金实缴、子基金设立和实缴比例、组合收益、项目清单、投后成效及退出回款；不能据此做跨口径比较或判断运营已完全成熟。", 1.1, 3.4, 11.1, 1.45, fill="FFF2CC")
-
-    slide = deck.slides.add_slide(deck.slide_layouts[6])
-    _title(slide, 40, "前90天夯实管理基础，12个月形成子基金、项目、赋能与退出的可验证成果")
-    labels = ("0—30天", "31—60天", "61—90天")
-    for index, text in enumerate(labels):
-        _add_node(slide, f"page-40-segment-{index + 1}", text, 0.9 + index * 3.85, 2.05, 3.45, 1.0, fill=("D6EAF8", "D5F5E3", "FCF3CF")[index])
-    _add_node(slide, "page-40-twelve-month-milestone", "12个月成果里程碑（独立于前90天任务条）", 4.3, 4.05, 4.75, 1.0, fill="E8DAEF")
-
-    assert all(_page_text(pages[number]) for number in SELECTED)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    deck.save(output)
+def _manifest(source_page: int, fallback: str, labels: tuple[str, ...]) -> dict:
+    if source_page == 10:
+        boxes = [(1.0, 1.3, 3.8, 1.0), (5.2, 1.3, 3.8, 1.0), *[(0.4 + index * 2.35, 3.0, 2.1, 1.0) for index in range(4)]]
+    elif source_page == 20:
+        boxes = [(1.0, 0.95, 1.65, 0.8), (4.15, 0.95, 1.65, 0.8), *[(0.55 + index * 2.25, 2.4, 1.65, 0.8) for index in range(4)], (4.15, 3.9, 1.65, 0.8)]
+    elif source_page == 21:
+        boxes = [(0.8, 1.2, 4.0, 1.0), (5.2, 1.2, 4.0, 1.0), (0.8, 3.2, 8.4, 1.0)]
+    elif source_page == 40:
+        boxes = [*( (0.8 + index * 2.9, 1.4, 2.55, 1.0) for index in range(3)), (3.25, 3.5, 3.5, 1.0)]
+    else:
+        width = 8.4 / len(labels)
+        boxes = [(0.8 + index * width, 1.75, width - 0.12, 1.5) for index in range(len(labels))]
+    return {
+        "workflow_contract_version": "fixed-canvas-cm-v2", "reconstruction_contract_version": "editable-image-v3",
+        "slide": dict(SLIDE), "content_box": dict(CONTENT_BOX), "source": {"width_px": 1904, "height_px": 896},
+        "text_inventory": [], "visual_inventory": [], "background_strategy": "native white body background",
+        "quality_checks": {"font_size_calibrated": True, "visual_inventory_matched": True, "background_strategy_checked": True, "shape_corner_geometry_checked": True},
+        "text_boxes": [
+            {"object_id": f"page-{source_page}-{fallback}-label-{index}", "name": f"page-{source_page}-{fallback}-label-{index}", "left": x + 0.08, "top": y + 0.25, "width": w - 0.16, "height": min(0.7, h - 0.3), "text": label, "font_size": 12, "preview_font": PREVIEW_FONT, "align": "center"}
+            for index, (label, (x, y, w, h)) in enumerate(zip(labels, boxes, strict=True))
+        ],
+        "tables": [],
+        "shapes": [
+            {"object_id": f"page-{source_page}-{fallback}-node-{index}", "name": f"page-{source_page}-{fallback}-node-{index}", "type": "roundRect", "left": x, "top": y, "width": w, "height": h, "fill": "#EAF2F8", "stroke": "#6B7A90"}
+            for index, (x, y, w, h) in enumerate(boxes)
+        ],
+        "images": [], "charts": [], "asset_provenance": [],
+    }
 
 
-def _render_previews(deck_path: Path, output: Path) -> None:
-    deck = Presentation(deck_path)
-    output.mkdir(parents=True, exist_ok=True)
-    font_path = Path(r"C:\Windows\Fonts\msyh.ttc")
-    body_font = ImageFont.truetype(str(font_path), 20) if font_path.is_file() else ImageFont.load_default()
-    title_font = ImageFont.truetype(str(font_path), 28) if font_path.is_file() else body_font
-    for page_number, slide in zip(SELECTED, deck.slides):
-        canvas = Image.new("RGB", (1600, 900), "white")
-        draw = ImageDraw.Draw(canvas)
-        draw.text((60, 45), next(shape.text for shape in slide.shapes if shape.name.endswith("title")), fill="#172033", font=title_font)
-        for shape in slide.shapes:
-            if not shape.has_text_frame or shape.name.endswith("title"):
-                continue
-            x = int(shape.left / deck.slide_width * 1600)
-            y = int(shape.top / deck.slide_height * 900)
-            w = int(shape.width / deck.slide_width * 1600)
-            h = int(shape.height / deck.slide_height * 900)
-            draw.rounded_rectangle((x, y, x + w, y + h), radius=10, outline="#6B7A90", fill="#EEF4F8")
-            draw.multiline_text((x + 8, y + 8), shape.text, fill="#233044", font=body_font, spacing=6)
-        canvas.save(output / f"page-{page_number:02d}.png")
+def _build_project(root: Path, source: dict, logo_svg: Path) -> tuple[Path, list[dict]]:
+    project = root / "project"
+    (project / "00_source").mkdir(parents=True)
+    shutil.copy2(WORD, project / "00_source/source.docx")
+    shutil.copy2(logo_svg, project / "00_source/logo.svg")
+    selected_pages = [next(page for page in source["pages"] if page["page_number"] == number) for number in SELECTED]
+    pages = []
+    for output_number, selected in enumerate(selected_pages, start=1):
+        page = new_page(output_number, title=selected["blocks"][1]["text"])
+        page["state"] = "accepted"
+        image = project / "04_v6/images" / f"page_{output_number:03d}.png"
+        image.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1904, 896), "white").save(image)  # external Image2 boundary stub
+        digest = hashlib.sha256(image.read_bytes()).hexdigest()
+        candidate = {"path": image.relative_to(project).as_posix(), "attempt": 1, "operation": "generate"}
+        page["first_candidate"] = dict(candidate)
+        page["selected_candidate"] = dict(candidate)
+        (project / "04_v6/images" / f"page_{output_number:03d}.json").write_text(
+            json.dumps({"page_number": output_number, "selected": {**candidate, "sha256": digest}}), encoding="utf-8",
+        )
+        pages.append(page)
+
+    state = new_project(word_source={"path": "00_source/source.docx"}, logo_source={"path": "00_source/logo.svg"}, pages=pages)
+    state["style_confirmation"] = {"status": "confirmed", "contract": _style()}
+    state["confirmed_ui_revision"] = 1
+    state["confirmed_ui_digest"] = "a" * 64
+    state["page_materials_status"] = "pending"
+    taskbook = {
+        "use_scenario": "黄石市产业创新与母基金专业化管理建议汇报", "presenter": "尚融财富项目团队",
+        "primary_audience": "政府与基金决策者", "audience_prior_knowledge": "熟悉黄石产业与基金基础",
+        "desired_outcome": "评估合作建议与实施路径", "emphasis": "母基金、实施路径、前90天", "deemphasis": "背景性重复介绍",
+    }
+    state["director_confirmation"] = {
+        "template_id": "investment-committee", "template_version": "1.0",
+        "taskbook": taskbook, "taskbook_digest": taskbook_digest(taskbook),
+    }
+    create(project, state)
+
+    paginated = {"pages": []}
+    composition = {"artifact_version": "page-composition-v1", "page_count": 6, "warnings": [], "pages": []}
+    for output_number, selected in enumerate(selected_pages, start=1):
+        blocks = [dict(block) for block in selected["blocks"]]
+        paginated["pages"].append({**selected, "page_number": output_number, "source_page_number": selected["page_number"], "fixed_page_title": blocks[1]["text"], "fixed_page_title_source_block_id": blocks[1]["source_block_id"]})
+        composition["pages"].append({"output_page_number": output_number, "source_page_id": selected["page_number"], "page_role": "content", "role_source": "explicit", "chapter_title": "", "fixed_page_title": blocks[1]["text"], "source_page_number": output_number, "material_source_block_ids": [block["source_block_id"] for block in blocks], "visible_page_number": True})
+        effective = project / "02_v6/effective_pages" / f"page_{output_number:03d}.json"
+        effective.parent.mkdir(parents=True, exist_ok=True)
+        effective.write_text(json.dumps({"page_number": output_number, "word_original": _page_text(selected)}, ensure_ascii=False), encoding="utf-8")
+    (project / "02_v6/paginated_word_source.json").write_text(json.dumps(paginated, ensure_ascii=False), encoding="utf-8")
+    (project / "02_v6/page_composition.json").write_text(json.dumps(composition, ensure_ascii=False), encoding="utf-8")
+    (project / "02_v6/source_assets.json").write_text('{"assets":[]}', encoding="utf-8")
+    for output_number in range(1, 7):
+        publish_page_materials(project, output_number, project / "02_v6/awesome_page_materials" / f"page_{output_number:03d}.json")
+    return project, selected_pages
 
 
-def test_huangshi_controlled_acceptance_builds_six_editable_pages_without_ui() -> None:
+def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp_path: Path) -> None:
     if not WORD.is_file() or not LOGO.is_file():
         pytest.skip("user-supplied Huangshi acceptance files are not present")
     assert _sha256(WORD) == WORD_SHA256
     assert _sha256(LOGO) == LOGO_SHA256
-
     source = extract(WORD, DEFAULT_MARKER)
     assert source["page_count"] == 42
-    assert tuple(page["page_number"] for page in source["pages"] if page["page_number"] in SELECTED) == SELECTED
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     svg = OUTPUT / "shangrong-logo-test-wrapper.svg"
-    svg.write_text(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="220" height="46">'
-        f'<image width="220" height="46" href="data:image/png;base64,{base64.b64encode(LOGO.read_bytes()).decode("ascii")}"/>'
-        "</svg>",
-        encoding="utf-8",
-    )
-    assert _sha256(LOGO) == LOGO_SHA256
+    encoded_logo = base64.b64encode(LOGO.read_bytes()).decode("ascii")
+    svg.write_text(f'<svg xmlns="http://www.w3.org/2000/svg" width="220" height="46"><image width="220" height="46" href="data:image/png;base64,{encoded_logo}"/></svg>', encoding="utf-8")
+    project, selected_pages = _build_project(tmp_path, source, svg)
+    director_prompts = []
 
-    confirmation = {
-        "test_only": True,
-        "ui_bypassed": True,
-        "sealed": True,
-        "selected_pages": list(SELECTED),
-        "word_sha256": WORD_SHA256,
-        "logo_sha256": LOGO_SHA256,
-    }
-    (OUTPUT / "sealed-confirmation.json").write_text(json.dumps(confirmation, ensure_ascii=False, indent=2), encoding="utf-8")
+    for output_number, selected in enumerate(selected_pages, start=1):
+        source_number = SELECTED[output_number - 1]
+        relationship, fallback, labels = PAGE_CONTRACTS[source_number]
+        source_text = _page_text(selected)
+        assert all(label in source_text for label in labels)
+        workspace = open_live_page_workspace(project, output_number)
+        material_view = build_complete_page_material_view(workspace)
+        value = _director_value(output_number, material_view.material_ids, source_text)
+        artifact = direct_page(workspace, material_view, timeout=30, invoke=lambda *_args, v=value, **_kwargs: _director_result(v))
+        director_prompts.append(artifact.actual_prompt)
+
+        qualitative = {"title": selected["blocks"][1]["text"], "relationship": relationship, "source_wording": source_text, "disabled_primitive": "quantitative_encoding", "fallback": fallback, "series": []}
+        materials = project / "02_v6/page_materials" / f"page_{output_number:03d}.json"
+        materials.parent.mkdir(parents=True, exist_ok=True)
+        materials.write_text(json.dumps({"chart_facts": [qualitative]}, ensure_ascii=False), encoding="utf-8")
+        assert "numeric_authority" not in build_reconstruction_request(project, page_number=output_number)
+
+        manifest = _manifest(source_number, fallback, labels)
+        manifest_path = OUTPUT / f"page-{source_number:02d}-manifest.json"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        body = tmp_path / f"body-{output_number:03d}.pptx"
+        write_pptx(manifest, body, manifest_path)
+        finalize_reconstructed_page(project, page_number=output_number, reconstructed_body=body)
+        preview = OUTPUT / "previews" / f"page-{source_number:02d}.png"
+        preview.parent.mkdir(parents=True, exist_ok=True)
+        render_preview(manifest, manifest_path, preview, pptx_path=body)
+        assert Image.open(preview).size == (1200, 675)
+
+    assembly = assemble_v6_deck(project)
     deck_path = OUTPUT / "huangshi-selected-pages-v1.2.3.pptx"
-    _build_deck(source, deck_path)
-    _render_previews(deck_path, OUTPUT / "previews")
-
+    shutil.copy2(project / assembly["output"], deck_path)
     deck = Presentation(deck_path)
     assert len(deck.slides) == 6
     assert all(not any(shape.has_chart for shape in slide.shapes) for slide in deck.slides)
+    for slide, source_number in zip(deck.slides, SELECTED, strict=True):
+        fallback = PAGE_CONTRACTS[source_number][1]
+        names = {shape.name for shape in slide.shapes}
+        assert "fixed-frame-logo" in names
+        assert any(fallback in name for name in names)
+        assert not any(term in name.casefold() for name in names for term in ("axis", "gantt", "mekko", "target line", "difference arrow"))
+        slide_text = "\n".join(shape.text for shape in slide.shapes if getattr(shape, "has_text_frame", False))
+        assert all(label in slide_text for label in PAGE_CONTRACTS[source_number][2])
 
-    page5 = {shape.name: shape for shape in deck.slides[0].shapes}
-    assert len([name for name in page5 if name.startswith("page-5-independent-kpi-")]) == 4
-    assert len({page5[name].width for name in page5 if name.startswith("page-5-independent-kpi-")}) == 1
+    with zipfile.ZipFile(deck_path) as package:
+        embedded_svg = [package.read(name) for name in package.namelist() if name.startswith("ppt/media/") and name.endswith(".svg")]
+    assert svg.read_bytes() in embedded_svg
+    assert encoded_logo.encode("ascii") in svg.read_bytes()
+    assert all("exact eight-row dual-mode relationship mapping" in prompt and "numeric axes" in prompt for prompt in director_prompts)
 
-    page10 = {shape.name: shape for shape in deck.slides[1].shapes}
-    assert len([name for name in page10 if name.startswith("page-10-independent-kpi-")]) == 6
-    assert not any("bar" in name.lower() for name in page10)
-    assert "420亿元" in page10["page-10-independent-kpi-1"].text
-    assert "100亿元" in page10["page-10-independent-kpi-2"].text
-    assert "3—5家" in page10["page-10-independent-kpi-6"].text
-
-    page14 = {shape.name: shape for shape in deck.slides[2].shapes}
-    stages = [shape for name, shape in page14.items() if name.startswith("page-14-stage-")]
-    assert len(stages) == 7 and len({shape.width for shape in stages}) == 1
-    assert not any("axis" in name.lower() or "gantt" in name.lower() for name in page14)
-
-    page20 = {shape.name: shape for shape in deck.slides[3].shapes}
-    hierarchy = [shape for name, shape in page20.items() if name.startswith("page-20-node-")]
-    assert len(hierarchy) == 8 and len({shape.width for shape in hierarchy}) == 1
-    assert not any("mekko" in name.lower() or "treemap" in name.lower() for name in page20)
-
-    page21 = {shape.name: shape for shape in deck.slides[4].shapes}
-    assert page21["page-21-disclosed-fact-1"].width == page21["page-21-disclosed-fact-2"].width
-    assert "数据缺口" in page21["page-21-data-gap-warning"].text
-    assert not any("comparison" in name.lower() or "arithmetic" in name.lower() for name in page21)
-
-    page40 = {shape.name: shape for shape in deck.slides[5].shapes}
-    segments = [page40[f"page-40-segment-{index}"] for index in range(1, 4)]
-    assert len({shape.width for shape in segments}) == 1
-    assert "12个月" in page40["page-40-twelve-month-milestone"].text
-    assert page40["page-40-twelve-month-milestone"].top > max(shape.top + shape.height for shape in segments)
-
-    limitations = {
+    findings = {
         "unsupported_from_real_manuscript": ["line", "scatter", "bubble", "waterfall", "true_mekko"],
         "reason": "selected manuscript pages do not supply the complete comparable dimensions required for these quantitative encodings",
-        "deficiencies_fixed": [
-            "kept page 10 same-unit figures separate because their bases differ",
-            "made page 21 data-gap warning visible and prevented implied arithmetic",
-            "separated page 40 twelve-month milestone from the three source-backed 30-day segments",
-        ],
-        "remaining_limitations": ["acceptance previews are deterministic test renders, not Image2 stylistic judgments"],
+        "production_path": ["extract_docx_pages.extract", "build_complete_page_material_view", "direct_page", "build_reconstruction_request", "write_pptx", "finalize_reconstructed_page", "assemble_v6_deck", "render_preview"],
+        "remaining_limitations": ["external Image2 and director model calls are deterministic boundary stubs in this controlled acceptance"],
     }
-    (OUTPUT / "acceptance-findings.json").write_text(json.dumps(limitations, ensure_ascii=False, indent=2), encoding="utf-8")
-    assert all((OUTPUT / "previews" / f"page-{page:02d}.png").is_file() for page in SELECTED)
+    (OUTPUT / "acceptance-findings.json").write_text(json.dumps(findings, ensure_ascii=False, indent=2), encoding="utf-8")
+    assert load(project)["pages"][-1]["state"] == "page_complete"
