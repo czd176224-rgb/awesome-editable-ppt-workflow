@@ -177,6 +177,42 @@ Positioned build object requirements:
 - Every `images[]` item must have `box_px`.
 - Every non-line `shapes[]` item must have `box_px`.
 - Every line shape must have `points_px`.
+- Every optional `charts[]` item must have `object_id`, `name`, and an in-bounds `box_px`. Its `object_id` shares the same uniqueness scope as text boxes, tables, images, and shapes. Legacy centimeter `anchor` and inferred `chart_type` fields are rejected.
+
+### Optional quantitative `charts[]`
+
+`charts[]` consumes the sealed quantitative authority without choosing or inferring a chart form. Each item requires `rendering_primitive`, explicit `chart_variant`, `title`, `period`, and non-empty `series`. Supported standard pairs are exactly:
+
+- `column_bar` with `column` or `bar`
+- `line_point` with `line` or `dot`
+- `xy` with `scatter` or `bubble`
+
+`column`, `bar`, `line`, `scatter`, and `bubble` become native PowerPoint chart objects. `dot` becomes editable title, point, connector, category, and value shapes because PowerPoint has no stable dedicated dot-plot chart type.
+
+One-dimensional charts require one shared explicit `unit` and `basis`, either at chart level or repeated identically on every series. Every series requires renderer-ready `name`, string `categories`, and an equally sized numeric `values` list; all series in one categorical chart must use identical categories. XY charts require explicit `x_label`/`x_unit`/`x_basis` and `y_label`/`y_unit`/`y_basis`, plus aligned numeric `x_values` and `y_values` per named series. Bubble charts additionally require `size_label`/`size_unit`/`size_basis` and aligned non-negative `size_values`. The runtime renders every applicable basis as a named editable text object and requires exact basis readback; missing or changed basis text blocks validation.
+
+Example:
+
+```json
+{
+  "object_id": "chart-revenue",
+  "name": "Revenue chart",
+  "box_px": [190, 90, 1142, 620],
+  "rendering_primitive": "column_bar",
+  "chart_variant": "column",
+  "title": "Revenue",
+  "unit": "USD m",
+  "period": "FY2025",
+  "basis": "same portfolio companies",
+  "series": [
+    {"name": "Revenue", "categories": ["A", "B"], "values": [12, 18]}
+  ]
+}
+```
+
+`target_value` and `actual_value` are optional only as one explicit numeric pair on the shape-based `dot` variant. When both exist, the builder adds an editable target line, actual/target labels, and a difference arrow whose displayed value is the decimal-formatted direct subtraction `actual_value - target_value`. Native `column`, `bar`, `line`, `scatter`, and `bubble` charts with either mark are rejected because fixed chart-box percentages do not prove alignment with PowerPoint's plot area and axes. A lone value, inferred target, inferred actual, or additional derived metric is rejected.
+
+Core validation reopens both page and final PPTX files and checks the exact chart/object type, fixed-canvas box, object identity, title, labels, units, bases, period, series dimensions, target, actual, and displayed direct difference. Dot points/connectors plus target and difference marks have deterministic object descriptions; validation checks their expected ellipse/connector type and exact integer-EMU bounds or endpoints. The difference arrow must retain triangle arrowheads at both ends. OfficeCLI may add optional evidence but is not required for this readback.
 
 For `editable-image-v3`, every `tables[]` item is a native table and must also provide `rows`, `font_size`, `font_color`, `cell_fill`, and `cell_margin_px`. Both colors are explicit `#RRGGBB`; inheritance from an unresolved table style or theme is not accepted. The runtime writes the selected font size/color, fill, and margins into every cell so the verifier can calculate per-cell contrast and capacity from actual DrawingML rather than defaults.
 

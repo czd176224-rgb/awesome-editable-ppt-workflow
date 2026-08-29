@@ -145,6 +145,72 @@ def test_v6_reconstruction_request_has_no_exact_material_or_post_visual_qa(tmp_p
     assert request["sealed_text_repairs"] == []
 
 
+def test_reconstruction_request_preserves_numeric_authority(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    authority = {
+        "title": "项目计划",
+        "rendering_primitive": "time_interval",
+        "period": "2026-09",
+        "series": [{
+            "name": "计划",
+            "categories": ["尽调", "投决"],
+            "start_dates": ["2026-09-01", "2026-09-11"],
+            "end_dates": ["2026-09-10", "2026-09-15"],
+        }],
+    }
+    path = project / "02_v6/page_materials/page_001.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"chart_facts": [authority]}, ensure_ascii=False), encoding="utf-8")
+
+    request = build_reconstruction_request(project, page_number=1)
+
+    assert request["numeric_authority"] == authority
+
+
+def test_reconstruction_request_refuses_incomplete_or_ambiguous_authority(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    complete = {
+        "title": "Revenue",
+        "rendering_primitive": "column_bar",
+        "chart_variant": "column",
+        "unit": "USD m",
+        "basis": "FY2025 revenue",
+        "series": [{"name": "Revenue", "categories": ["A"], "values": [10]}],
+    }
+    incomplete = {
+        "title": "Priorities",
+        "disabled_primitive": "column_bar",
+        "fallback": "native_table",
+        "source_wording": "A is high priority and B is medium priority.",
+        "series": [{"name": "Priority", "categories": ["A", "B"], "values": ["high", "medium"]}],
+    }
+    path = project / "02_v6/page_materials/page_001.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    path.write_text(json.dumps({"chart_facts": [incomplete]}, ensure_ascii=False), encoding="utf-8")
+    assert "numeric_authority" not in build_reconstruction_request(project, page_number=1)
+    assert json.loads(path.read_text(encoding="utf-8"))["chart_facts"][0]["source_wording"]
+
+    path.write_text(json.dumps({"chart_facts": [complete, complete]}, ensure_ascii=False), encoding="utf-8")
+    assert "numeric_authority" not in build_reconstruction_request(project, page_number=1)
+
+
+def test_reconstruction_request_refuses_legacy_times_numeric_authority(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    legacy = {
+        "title": "Revenue trend", "rendering_primitive": "line_point", "chart_variant": "line",
+        "unit": "USD m", "basis": "FY2025 revenue",
+        "series": [{"name": "Revenue", "times": ["2024", "2025"], "values": [12, 18]}],
+    }
+    path = project / "02_v6/page_materials/page_001.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"chart_facts": [legacy]}, ensure_ascii=False), encoding="utf-8")
+
+    request = build_reconstruction_request(project, page_number=1)
+
+    assert "numeric_authority" not in request
+
+
 def test_reconstruction_request_carries_signed_text_repairs(tmp_path: Path):
     project = _project(tmp_path, 1)
     receipt_path = project / "04_v6/images/page_001.json"

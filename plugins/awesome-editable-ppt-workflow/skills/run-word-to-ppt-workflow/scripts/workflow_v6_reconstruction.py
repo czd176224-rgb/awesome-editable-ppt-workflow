@@ -26,6 +26,7 @@ from fixed_frame import apply_fixed_frame, inspect_fixed_frame
 from fixed_region_contract import fixed_frame_execution
 from director_taskbook import project_emphasis_pages
 from workflow_v6_contract import geometry_contract, transition_page, validate_project
+from workflow_v6_materials import select_numeric_authority
 from workflow_v6_composition import load_composition_authority
 from workflow_v6_state import mutation_lock, save
 import workflow_v6_secure_io as secure_io
@@ -290,6 +291,14 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
             "exact_reference_material_custody": False,
         },
     }
+    materials_path = root / "02_v6" / "page_materials" / f"page_{page_number:03d}.json"
+    if materials_path.is_file():
+        materials = json.loads(
+            secure_io.read_bytes(root, materials_path.relative_to(root)).decode("utf-8")
+        )
+        authority = select_numeric_authority(materials.get("chart_facts", []))
+        if authority:
+            request["numeric_authority"] = authority
     path = root / "05_v6" / "reconstruction_requests" / f"page_{page_number:03d}.json"
     _write_json(path, request)
     return request

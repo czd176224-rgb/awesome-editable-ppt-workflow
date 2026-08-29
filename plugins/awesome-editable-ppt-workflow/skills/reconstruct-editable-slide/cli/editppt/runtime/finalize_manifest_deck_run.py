@@ -11,6 +11,7 @@ import sys
 import uuid
 from pathlib import Path
 
+import build_pptx_from_manifest as manifest_builder
 from build_pptx_from_manifest import (
     output_path_from_deck_manifest,
     page_entries_from_deck_manifest,
@@ -44,6 +45,29 @@ def _manifest_hashes(run_dir: Path, jobs: dict) -> dict[str, str]:
     return hashes
 
 
+def _optional_officecli_validation(output: Path) -> dict[str, str]:
+    if os.getenv("EDITPPT_OPTIONAL_OFFICECLI_VALIDATION") != "1":
+        return {"status": "skipped", "detail": "set EDITPPT_OPTIONAL_OFFICECLI_VALIDATION=1 to enable"}
+    try:
+        executable = manifest_builder.officecli_executable()
+    except (OSError, RuntimeError) as exc:
+        return {"status": "skipped", "detail": str(exc)}
+    try:
+        completed = subprocess.run(
+            [executable, "validate", str(output), "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {"status": "warning", "detail": f"OfficeCLI validation timed out after {exc.timeout} seconds"}
+    except Exception as exc:
+        return {"status": "warning", "detail": str(exc)}
+    detail = completed.stdout.strip() or completed.stderr.strip()
+    return {"status": "passed" if completed.returncode == 0 else "warning", "detail": detail}
+
+
 def finalize_manifest_run(run: Path) -> dict:
     run_dir = run_dir_from_target(run)
     deck_path = run_dir / "deck_manifest.json"
@@ -63,7 +87,7 @@ def finalize_manifest_run(run: Path) -> dict:
     before = _manifest_hashes(run_dir, jobs)
     output = output_path_from_deck_manifest(deck_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.parent / f".{output.name}.{uuid.uuid4().hex}.tmp"
+    temporary = output.parent / f".{output.stem}.{uuid.uuid4().hex}.tmp.pptx"
     report_path = output.parent / "final_validation.json"
     temporary_report = output.parent / f".{report_path.name}.{uuid.uuid4().hex}.tmp"
     try:
@@ -127,6 +151,7 @@ def finalize_manifest_run(run: Path) -> dict:
             "output_sha256": output_hash,
             "validation": str(report_path),
             "assembly_authority": "recorded-page-manifests",
+            "officecli_validation": _optional_officecli_validation(output),
         }
         write_json(output.parent / "run_summary.json", summary)
         return summary

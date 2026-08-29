@@ -4,11 +4,13 @@ import html
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 
 try:
@@ -283,13 +285,167 @@ def fit_text_item(item, manifest):
     return item
 
 
+def _is_number(value):
+    return type(value) in (int, float) and math.isfinite(float(value))
+
+
+def _number_text(value):
+    number = Decimal(str(value))
+    if not number:
+        return "0"
+    return format(number.normalize(), "f")
+
+
+def _chart_categories(chart):
+    series = chart.get("series", [])
+    if not series:
+        raise ValueError("charts[].series must be a non-empty list")
+    categories = series[0].get("categories")
+    if not isinstance(categories, list) or not categories or any(not isinstance(value, str) or not value for value in categories):
+        raise ValueError("charts[].series[].categories must contain exact non-empty labels")
+    if any(item.get("categories") != categories for item in series[1:]):
+        raise ValueError("charts[].series categories must match for one native chart")
+    return categories
+
+
+def _chart_shared_text(chart, field):
+    values = [item.get(field, chart.get(field)) for item in chart.get("series", [])]
+    if not values or any(not isinstance(value, str) or not value.strip() for value in values) or len(set(values)) != 1:
+        raise ValueError(f"charts[].{field} must be one explicit shared value")
+    return values[0]
+
+
+def _chart_basis_labels(chart):
+    if chart["rendering_primitive"] != "xy":
+        return [("Basis", _chart_shared_text(chart, "basis"))]
+    labels = [("X Basis", chart["x_basis"]), ("Y Basis", chart["y_basis"])]
+    if chart["chart_variant"] == "bubble":
+        labels.append(("Size Basis", chart["size_basis"]))
+    return labels
+
+
+def _chart_shape_description(chart, role=None):
+    suffix = "" if role is None else f":{role.lower().replace(' ', '-')}"
+    return f"object_id:{chart['object_id']}{suffix};chart_variant:{chart['chart_variant']}"
+
+
+def _chart_mark_geometry(chart):
+    """Return the exact integer-EMU geometry consumed by direct chart marks."""
+    from pptx.util import Inches
+
+    left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
+    values = [float(value) for item in chart["series"] for value in item["values"]]
+    values.extend(float(chart[key]) for key in ("target_value", "actual_value") if chart.get(key) is not None)
+    low, high = min(values + [0.0]), max(values + [0.0])
+    if high == low:
+        high = low + 1.0
+
+    def value_position(value, horizontal):
+        ratio = (float(value) - low) / (high - low)
+        if horizontal:
+            return int(round(left + width * (0.15 + 0.75 * ratio)))
+        return int(round(top + height * (0.85 - 0.7 * ratio)))
+
+    geometry = {}
+    if chart["chart_variant"] == "dot":
+        points = [(category, value) for series in chart["series"] for category, value in zip(series["categories"], series["values"])]
+        row_height = height * 0.65 / len(points)
+        diameter = int(Inches(min(0.14, chart["height"] / 20)))
+        for index, (_category, value) in enumerate(points, start=1):
+            y = int(round(top + height * 0.18 + row_height * (index - 0.5)))
+            x = value_position(value, True)
+            geometry[f"Connector {index}"] = (int(round(left + width * 0.15)), y, x, y)
+            geometry[f"Point {index}"] = (int(round(x - diameter / 2)), int(round(y - diameter / 2)), diameter, diameter)
+
+    if chart.get("target_value") is not None and chart["chart_variant"] == "dot":
+        target = value_position(chart["target_value"], True)
+        actual = value_position(chart["actual_value"], True)
+        geometry["Target Line"] = (target, int(round(top + height * 0.15)), target, int(round(top + height * 0.85)))
+        geometry["Difference Arrow"] = (actual, int(round(top + height * 0.1)), target, int(round(top + height * 0.1)))
+    return geometry
+
+
+def _validate_chart(manifest, chart):
+    if "anchor" in chart or "chart_type" in chart:
+        raise ValueError("charts[] anchor/chart_type are unsupported; use fixed-canvas box_px and explicit chart_variant")
+    box = chart.get("box_px")
+    source = manifest.get("source", {})
+    if (
+        not isinstance(box, list)
+        or len(box) != 4
+        or any(not _is_number(value) for value in box)
+        or box[0] < 0
+        or box[1] < 0
+        or box[2] <= 0
+        or box[3] <= 0
+        or box[0] + box[2] > source.get("width_px", 0)
+        or box[1] + box[3] > source.get("height_px", 0)
+    ):
+        raise ValueError("charts[].box_px must be positive and within source bounds")
+    primitive = chart.get("rendering_primitive")
+    variant = chart.get("chart_variant")
+    allowed = {"column_bar": {"column", "bar"}, "line_point": {"line", "dot"}, "xy": {"scatter", "bubble"}}
+    if variant not in allowed.get(primitive, set()):
+        raise ValueError("charts[].chart_variant must explicitly match rendering_primitive")
+    for field in ("title", "period"):
+        if not isinstance(chart.get(field), str) or not chart[field].strip():
+            raise ValueError(f"charts[].{field} is required")
+    series = chart.get("series")
+    if not isinstance(series, list) or not series:
+        raise ValueError("charts[].series must be a non-empty list")
+    if primitive in {"column_bar", "line_point"}:
+        categories = _chart_categories(chart)
+        for field in ("unit", "basis"):
+            _chart_shared_text(chart, field)
+        for item in series:
+            values = item.get("values")
+            if (
+                not isinstance(item.get("name"), str)
+                or not item["name"].strip()
+                or not isinstance(values, list)
+                or len(values) != len(categories)
+                or any(not _is_number(value) for value in values)
+            ):
+                raise ValueError("charts[].series labels and numeric values must match categories exactly")
+    else:
+        for prefix in ("x", "y") + (("size",) if variant == "bubble" else ()):
+            for suffix in ("label", "unit", "basis"):
+                field = f"{prefix}_{suffix}"
+                if not isinstance(chart.get(field), str) or not chart[field].strip():
+                    raise ValueError(f"charts[].{field} is required")
+        for item in series:
+            x_values, y_values = item.get("x_values"), item.get("y_values")
+            if (
+                not isinstance(item.get("name"), str)
+                or not item["name"].strip()
+                or not isinstance(x_values, list)
+                or not isinstance(y_values, list)
+                or not x_values
+                or len(x_values) != len(y_values)
+                or any(not _is_number(value) for value in x_values + y_values)
+            ):
+                raise ValueError("charts[].series x/y values must be aligned numeric lists")
+            sizes = item.get("size_values")
+            if variant == "bubble" and (
+                not isinstance(sizes, list)
+                or len(sizes) != len(x_values)
+                or any(not _is_number(value) or value < 0 for value in sizes)
+            ):
+                raise ValueError("charts[].series bubble size_values must align and be non-negative")
+    target, actual = chart.get("target_value"), chart.get("actual_value")
+    if (target is None) != (actual is None) or target is not None and (
+        variant != "dot" or not _is_number(target) or not _is_number(actual)
+    ):
+        raise ValueError("charts[].target_value and actual_value require one explicit numeric pair on chart_variant dot")
+
+
 def normalize_manifest(manifest):
     """Return a manifest copy with pixel authoring fields resolved to inches."""
     validate_manifest_geometry(manifest)
     normalized = deepcopy(manifest)
     if normalized.get("reconstruction_contract_version") == "editable-image-v3":
         seen = set()
-        for section in ("text_boxes", "tables", "images", "shapes"):
+        for section in ("text_boxes", "tables", "images", "shapes", "charts"):
             for item in normalized.get(section, []):
                 object_id = item.get("object_id")
                 name = item.get("name")
@@ -300,6 +456,8 @@ def normalize_manifest(manifest):
                 seen.add(object_id)
                 if not isinstance(name, str) or not name.strip():
                     raise ValueError(f"editable-image-v3 {section} name is required")
+                if section == "charts":
+                    _validate_chart(normalized, item)
                 if section == "tables":
                     required = ("font_size", "font_color", "cell_fill", "cell_margin_px")
                     if any(field not in item for field in required):
@@ -316,6 +474,7 @@ def normalize_manifest(manifest):
     for key in ("images", "shapes"):
         normalized[key] = [normalize_position_item(normalized, item) for item in normalized.get(key, [])]
     normalized["tables"] = [normalize_position_item(normalized, item) for item in normalized.get("tables", [])]
+    normalized["charts"] = [normalize_position_item(normalized, item) for item in normalized.get("charts", [])]
     return normalized
 
 
@@ -788,6 +947,7 @@ def write_pptx(manifest, out_path, manifest_path):
                 src = base / src
             z.write(src, f"ppt/media/image{media_index}{image_ext(src)}")
             media_index += 1
+    apply_native_charts(out, [normalized])
 
 
 def deck_slide_size(deck, page_entries):
@@ -843,6 +1003,154 @@ def write_deck(deck, page_entries, out_path, notes_entries):
                 else:
                     z.writestr(f"ppt/notesSlides/notesSlide{notes_index}.xml", notes_slide_xml(note.get("text", "")))
                 z.writestr(f"ppt/notesSlides/_rels/notesSlide{notes_index}.xml.rels", notes_rels_xml(slide_index))
+    apply_native_charts(out, manifests)
+
+
+def officecli_executable():
+    found = shutil.which("officecli")
+    if found:
+        return found
+    bundled = Path.home() / ".codex" / "bin" / "officecli.CMD"
+    if bundled.is_file():
+        return str(bundled)
+    raise RuntimeError("officecli executable is unavailable")
+
+
+def apply_native_charts(pptx_path, manifests):
+    if not any(manifest.get("charts") for manifest in manifests):
+        return
+    from pptx import Presentation
+    from pptx.chart.data import BubbleChartData, ChartData, XyChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.enum.shapes import MSO_CONNECTOR_TYPE, MSO_SHAPE
+    from pptx.oxml.xmlchemy import OxmlElement
+    from pptx.util import Inches, Pt
+
+    chart_types = {
+        "column": XL_CHART_TYPE.COLUMN_CLUSTERED,
+        "bar": XL_CHART_TYPE.BAR_CLUSTERED,
+        "line": XL_CHART_TYPE.LINE,
+        "scatter": XL_CHART_TYPE.XY_SCATTER,
+        "bubble": XL_CHART_TYPE.BUBBLE,
+    }
+
+    def identify(shape, chart, role=None):
+        shape.name = chart["name"] if role is None else f"{chart['name']} {role}"
+        c_nv_pr = shape._element.xpath(".//p:cNvPr")[0]
+        c_nv_pr.set("descr", _chart_shape_description(chart, role))
+        return shape
+
+    def add_label(slide, chart, role, text, left, top, width, height):
+        shape = identify(slide.shapes.add_textbox(*(int(round(value)) for value in (left, top, width, height))), chart, role)
+        shape.text_frame.clear()
+        paragraph = shape.text_frame.paragraphs[0]
+        paragraph.text = str(text)
+        paragraph.font.size = Pt(9)
+        return shape
+
+    def unit_text(chart):
+        if chart["rendering_primitive"] != "xy":
+            return _chart_shared_text(chart, "unit")
+        value = f"x: {chart['x_unit']} | y: {chart['y_unit']}"
+        return value + (f" | size: {chart['size_unit']}" if chart["chart_variant"] == "bubble" else "")
+
+    def add_metadata(slide, chart):
+        left, top, width = (int(Inches(chart[key])) for key in ("left", "top", "width"))
+        label_height = int(Inches(min(0.25, chart["height"] / 10)))
+        labels = [("Unit", unit_text(chart)), ("Period", chart["period"]), *_chart_basis_labels(chart)]
+        for index, (role, text) in enumerate(labels):
+            add_label(slide, chart, role, text, left + width * 0.55, top + label_height * index, width * 0.45, label_height)
+
+    def add_arrowheads(connector):
+        line = connector._element.spPr.get_or_add_ln()
+        for tag in ("a:headEnd", "a:tailEnd"):
+            arrow = OxmlElement(tag)
+            arrow.set("type", "triangle")
+            line.append(arrow)
+
+    def add_target_marks(slide, chart):
+        if chart.get("target_value") is None:
+            return
+        geometry = _chart_mark_geometry(chart)
+        target_line = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *geometry["Target Line"])
+        difference = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *geometry["Difference Arrow"])
+        identify(target_line, chart, "Target Line")
+        identify(difference, chart, "Difference Arrow")
+        add_arrowheads(difference)
+        left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
+        label_width, label_height = width * 0.28, Inches(min(0.25, chart["height"] / 10))
+        add_label(slide, chart, "Target", f"Target: {_number_text(chart['target_value'])}", left, top + height - label_height, label_width, label_height)
+        add_label(slide, chart, "Actual", f"Actual: {_number_text(chart['actual_value'])}", left + label_width, top + height - label_height, label_width, label_height)
+        difference_value = Decimal(str(chart["actual_value"])) - Decimal(str(chart["target_value"]))
+        add_label(slide, chart, "Difference", f"Difference: {_number_text(difference_value)}", left + label_width * 2, top + height - label_height, label_width, label_height)
+
+    def add_dot(slide, chart):
+        left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
+        root = identify(slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, width, height), chart)
+        root.fill.background()
+        root.line.fill.background()
+        add_label(slide, chart, "Title", chart["title"], left, top, width * 0.5, int(Inches(min(0.25, chart["height"] / 10))))
+        points = [(series, category, value) for series in chart["series"] for category, value in zip(series["categories"], series["values"])]
+        series_width = width * 0.4 / len(chart["series"])
+        for series_index, series in enumerate(chart["series"], start=1):
+            add_label(slide, chart, f"Series {series_index}", series["name"], left + width * 0.15 + series_width * (series_index - 1), top + height * 0.08, series_width, height * 0.08)
+        geometry = _chart_mark_geometry(chart)
+        for index, (_series, category, value) in enumerate(points, start=1):
+            connector_geometry = geometry[f"Connector {index}"]
+            connector = slide.shapes.add_connector(MSO_CONNECTOR_TYPE.STRAIGHT, *connector_geometry)
+            identify(connector, chart, f"Connector {index}")
+            point_geometry = geometry[f"Point {index}"]
+            identify(slide.shapes.add_shape(MSO_SHAPE.OVAL, *point_geometry), chart, f"Point {index}")
+            x, y, diameter = point_geometry[0] + point_geometry[2] // 2, point_geometry[1] + point_geometry[3] // 2, point_geometry[2]
+            add_label(slide, chart, f"Category {index}", category, left, y - diameter, width * 0.12, diameter * 2)
+            add_label(slide, chart, f"Value {index}", _number_text(value), x + diameter, y - diameter, width * 0.12, diameter * 2)
+        add_metadata(slide, chart)
+        add_target_marks(slide, chart)
+
+    presentation = Presentation(pptx_path)
+    for slide_index, manifest in enumerate(manifests, start=1):
+        for chart in manifest.get("charts", []):
+            slide = presentation.slides[slide_index - 1]
+            variant = chart["chart_variant"]
+            if variant == "dot":
+                add_dot(slide, chart)
+                continue
+            if variant in {"column", "bar", "line"}:
+                data = ChartData()
+                data.categories = _chart_categories(chart)
+                for item in chart["series"]:
+                    data.add_series(item["name"], item["values"])
+            else:
+                data = BubbleChartData() if variant == "bubble" else XyChartData()
+                for item in chart["series"]:
+                    native_series = data.add_series(item["name"])
+                    for index, (x_value, y_value) in enumerate(zip(item["x_values"], item["y_values"])):
+                        if variant == "bubble":
+                            native_series.add_data_point(x_value, y_value, item["size_values"][index])
+                        else:
+                            native_series.add_data_point(x_value, y_value)
+            left, top, width, height = (Inches(chart[key]) for key in ("left", "top", "width", "height"))
+            chart_shape = identify(slide.shapes.add_chart(
+                chart_types[variant],
+                left,
+                top,
+                width,
+                height,
+                data,
+            ), chart)
+            native_chart = chart_shape.chart
+            title = chart.get("title")
+            native_chart.has_title = bool(title and title != "none")
+            if native_chart.has_title:
+                native_chart.chart_title.text_frame.text = str(title)
+            native_chart.has_legend = chart.get("legend", "none") != "none"
+            if chart["rendering_primitive"] == "xy":
+                native_chart.category_axis.has_title = True
+                native_chart.category_axis.axis_title.text_frame.text = chart["x_label"]
+                native_chart.value_axis.has_title = True
+                native_chart.value_axis.axis_title.text_frame.text = chart["y_label"]
+            add_metadata(slide, chart)
+    presentation.save(pptx_path)
 
 
 def page_entries_from_deck_manifest(deck_manifest_path):
@@ -884,7 +1192,7 @@ def output_path_from_deck_manifest(deck_manifest_path):
     return output
 
 
-def render_preview(manifest, manifest_path, out_path):
+def render_preview(manifest, manifest_path, out_path, *, pptx_path=None):
     from PIL import Image, ImageColor, ImageDraw, ImageFont
 
     manifest = normalize_manifest(manifest)
@@ -1003,6 +1311,117 @@ def render_preview(manifest, manifest_path, out_path):
             return
         draw.multiline_text((x, y), preview_text, fill=fill, font=font, spacing=4, align=align)
 
+    def render_chart(chart):
+        series = chart.get("series", [])
+        variant = chart["chart_variant"]
+        left = int(chart["left"] * scale)
+        top = int(chart["top"] * scale)
+        width = int(chart["width"] * scale)
+        height = int(chart["height"] * scale)
+        title_height = int(0.35 * scale) if chart.get("title") not in (None, "none") else 0
+        plot = (left + int(0.45 * scale), top + title_height, left + width, top + height - int(0.35 * scale))
+        if variant != "dot":
+            draw.line((plot[0], plot[1], plot[0], plot[3]), fill="#666666", width=1)
+            draw.line((plot[0], plot[3], plot[2], plot[3]), fill="#666666", width=1)
+        if title_height:
+            draw.text((left, top), str(chart["title"]), fill="#111111", font=ImageFont.load_default())
+        colors = ("#4472C4", "#ED7D31", "#A5A5A5", "#FFC000")
+        unit = _chart_shared_text(chart, "unit") if chart["rendering_primitive"] != "xy" else f"x: {chart['x_unit']} | y: {chart['y_unit']}"
+        if variant == "bubble":
+            unit += f" | size: {chart['size_unit']}"
+        metadata = [unit, chart["period"], *[text for _role, text in _chart_basis_labels(chart)]]
+        for index, text in enumerate(metadata):
+            draw.text((left + width * 0.55, top + index * 12), text, fill="#444444", font=ImageFont.load_default())
+
+        if variant == "dot":
+            points = [
+                (item, category, value)
+                for item in series
+                for category, value in zip(item["categories"], item["values"])
+            ]
+            values = [float(value) for _item, _category, value in points]
+            values.extend(float(chart[key]) for key in ("target_value", "actual_value") if chart.get(key) is not None)
+            low, high = min(values + [0.0]), max(values + [0.0])
+            span = high - low or 1.0
+
+            def value_x(value):
+                return left + width * (0.15 + 0.75 * (float(value) - low) / span)
+
+            for series_index, item in enumerate(series):
+                draw.text(
+                    (left + width * (0.15 + 0.2 * series_index), top + height * 0.08),
+                    item["name"], fill="#444444", font=ImageFont.load_default(),
+                )
+            row_height = height * 0.65 / len(points)
+            for index, (_item, category, value) in enumerate(points, start=1):
+                y = top + height * 0.18 + row_height * (index - 0.5)
+                x = value_x(value)
+                draw.line((left + width * 0.15, y, x, y), fill="#666666", width=1)
+                draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=colors[(index - 1) % len(colors)])
+                draw.text((left, y - 4), str(category), fill="#444444", font=ImageFont.load_default())
+                draw.text((x + 6, y - 4), _number_text(value), fill="#444444", font=ImageFont.load_default())
+            if chart.get("target_value") is not None:
+                target, actual = value_x(chart["target_value"]), value_x(chart["actual_value"])
+                draw.line((target, top + height * 0.15, target, top + height * 0.85), fill="#C00000", width=2)
+                arrow_y = top + height * 0.1
+                draw.line((actual, arrow_y, target, arrow_y), fill="#C00000", width=2)
+                direction = 1 if target >= actual else -1
+                draw.polygon(((actual, arrow_y), (actual + direction * 5, arrow_y - 3), (actual + direction * 5, arrow_y + 3)), fill="#C00000")
+                draw.polygon(((target, arrow_y), (target - direction * 5, arrow_y - 3), (target - direction * 5, arrow_y + 3)), fill="#C00000")
+                difference = Decimal(str(chart["actual_value"])) - Decimal(str(chart["target_value"]))
+                for index, text in enumerate((
+                    f"Target: {_number_text(chart['target_value'])}",
+                    f"Actual: {_number_text(chart['actual_value'])}",
+                    f"Difference: {_number_text(difference)}",
+                )):
+                    draw.text((left + width * 0.28 * index, top + height - 12), text, fill="#444444", font=ImageFont.load_default())
+            return
+
+        if variant in {"scatter", "bubble"}:
+            x_values = [float(value) for item in series for value in item["x_values"]]
+            y_values = [float(value) for item in series for value in item["y_values"]]
+            x_min, x_max = min(x_values), max(x_values)
+            y_min, y_max = min(y_values), max(y_values)
+            x_span, y_span = x_max - x_min or 1.0, y_max - y_min or 1.0
+            for series_index, item in enumerate(series):
+                sizes = item.get("size_values", [1] * len(item["x_values"]))
+                max_size = max([float(value) for value in sizes] + [1.0])
+                for x_value, y_value, size_value in zip(item["x_values"], item["y_values"], sizes):
+                    x = plot[0] + (float(x_value) - x_min) / x_span * (plot[2] - plot[0])
+                    y = plot[3] - (float(y_value) - y_min) / y_span * (plot[3] - plot[1])
+                    radius = 4 if variant == "scatter" else max(4, int(14 * (float(size_value) / max_size) ** 0.5))
+                    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=colors[series_index % len(colors)])
+            return
+
+        categories = _chart_categories(chart)
+        values = [float(value) for item in series for value in item["values"]]
+        maximum = max(values + [0.0])
+        minimum = min(values + [0.0])
+        span = maximum - minimum or 1.0
+        group_width = (plot[2] - plot[0]) / len(categories)
+        bar_width = group_width * 0.7 / len(series)
+        baseline = plot[1] + maximum / span * (plot[3] - plot[1])
+        for series_index, item in enumerate(series):
+            line_points = []
+            for category_index, value in enumerate(item["values"]):
+                x0 = plot[0] + category_index * group_width + group_width * 0.15 + series_index * bar_width
+                y = plot[1] + (maximum - float(value)) / span * (plot[3] - plot[1])
+                if variant == "bar":
+                    y0 = plot[1] + (category_index + 0.15 + series_index * 0.7 / len(series)) * (plot[3] - plot[1]) / len(categories)
+                    zero = plot[0] + (0.0 - minimum) / span * (plot[2] - plot[0])
+                    endpoint = plot[0] + (float(value) - minimum) / span * (plot[2] - plot[0])
+                    draw.rectangle((min(zero, endpoint), y0, max(zero, endpoint), y0 + (plot[3] - plot[1]) * 0.7 / len(categories) / len(series)), fill=colors[series_index % len(colors)])
+                elif variant in {"line", "dot"}:
+                    point = (plot[0] + (category_index + 0.5) * group_width, y)
+                    line_points.append(point)
+                    draw.ellipse((point[0] - 4, point[1] - 4, point[0] + 4, point[1] + 4), fill=colors[series_index % len(colors)])
+                else:
+                    draw.rectangle((x0, min(y, baseline), x0 + bar_width, max(y, baseline)), fill=colors[series_index % len(colors)])
+            if variant == "line" and len(line_points) > 1:
+                draw.line(line_points, fill=colors[series_index % len(colors)], width=2)
+        for index, category in enumerate(categories):
+            draw.text((plot[0] + (index + 0.5) * group_width, plot[3] + 2), str(category), fill="#444444", anchor="ma", font=ImageFont.load_default())
+
     layered = []
     for index, item in enumerate(manifest.get("shapes", [])):
         layered.append((float(item.get("z_index", 100)), index, render_shape, item))
@@ -1010,6 +1429,8 @@ def render_preview(manifest, manifest_path, out_path):
         layered.append((float(item.get("z_index", 200)), index, render_image, item))
     for index, item in enumerate(manifest.get("text_boxes", [])):
         layered.append((float(item.get("z_index", 300)), index, render_text, item))
+    for index, item in enumerate(manifest.get("charts", [])):
+        layered.append((float(item.get("z_index", 250)), index, render_chart, item))
     for _z_index, _order, renderer, item in sorted(layered, key=lambda entry: (entry[0], entry[1])):
         renderer(item)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -1072,7 +1493,7 @@ def main():
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     write_pptx(manifest, args.out, args.manifest)
     if args.preview:
-        render_preview(manifest, args.manifest, args.preview)
+        render_preview(manifest, args.manifest, args.preview, pptx_path=args.out)
     print(f"Wrote {args.out}")
     if args.preview:
         print(f"Wrote {args.preview}")

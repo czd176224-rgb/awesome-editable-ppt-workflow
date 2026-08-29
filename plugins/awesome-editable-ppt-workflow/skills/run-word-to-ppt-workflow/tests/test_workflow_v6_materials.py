@@ -590,3 +590,414 @@ def test_chart_facts_preserve_singular_time_value_and_series_labels():
         "trend": "up",
         "relationship": "Enterprise leads SMB by 3",
     }]
+
+
+def _one_dimensional_chart(primitive: str, variant: str) -> dict[str, object]:
+    return {
+        "title": f"{variant} authority",
+        "rendering_primitive": primitive,
+        "chart_variant": variant,
+        "unit": "USD m",
+        "basis": "same portfolio companies",
+        "period": "FY2025",
+        "source_page": 7,
+        "series": [{
+            "name": "Revenue",
+            "categories": ["A", "B"],
+            "values": [12, 18],
+        }],
+    }
+
+
+@pytest.mark.parametrize(
+    ("primitive", "variant"),
+    [
+        ("column_bar", "column"),
+        ("column_bar", "bar"),
+        ("line_point", "line"),
+        ("line_point", "dot"),
+    ],
+)
+def test_numeric_authority_requires_and_preserves_each_one_dimensional_variant(
+    primitive: str, variant: str,
+):
+    chart = _one_dimensional_chart(primitive, variant)
+
+    assert workflow_v6_materials.select_numeric_authority([chart]) == chart
+
+
+@pytest.mark.parametrize("variant", ["scatter", "bubble"])
+def test_numeric_authority_requires_and_preserves_each_xy_variant(variant: str):
+    series = {
+        "name": "Companies",
+        "x_values": [1.2, 2.4],
+        "y_values": [8.0, 11.0],
+    }
+    chart = {
+        "title": f"{variant} authority",
+        "rendering_primitive": "xy",
+        "chart_variant": variant,
+        "x_label": "Growth",
+        "x_unit": "%",
+        "x_basis": "FY2025 revenue growth",
+        "y_label": "Margin",
+        "y_unit": "%",
+        "y_basis": "FY2025 EBITDA margin",
+        "period": "FY2025",
+        "series": [series],
+    }
+    if variant == "bubble":
+        chart.update({
+            "size_label": "Revenue",
+            "size_unit": "USD m",
+            "size_basis": "FY2025 revenue",
+        })
+        series["size_values"] = [30, 50]
+
+    assert workflow_v6_materials.select_numeric_authority([chart]) == chart
+
+
+@pytest.mark.parametrize(
+    "chart",
+    [
+        {
+            "title": "Value bridge",
+            "rendering_primitive": "cumulative_bridge",
+            "unit": "USD m",
+            "basis": "FY2025 EBITDA",
+            "period": "FY2025",
+            "series": [{
+                "name": "Bridge",
+                "categories": ["Pricing", "Volume"],
+                "start": 100,
+                "changes": [20, -5],
+                "end": 115,
+            }],
+        },
+        {
+            "title": "Project schedule",
+            "rendering_primitive": "time_interval",
+            "period": "FY2025",
+            "series": [{
+                "name": "Plan",
+                "categories": ["Diligence", "IC"],
+                "start_dates": ["2026-09-01", "2026-09-11"],
+                "end_dates": ["2026-09-10", "2026-09-15"],
+            }],
+        },
+        {
+            "title": "Market size and share",
+            "rendering_primitive": "variable_rectangle",
+            "period": "FY2025",
+            "series": [{
+                "name": "Markets",
+                "categories": ["A", "B"],
+                "width_values": [40, 60],
+                "width_label": "Market size",
+                "width_unit": "USD m",
+                "width_basis": "2025 addressable market",
+                "share_values": [[25, 75], [40, 60]],
+                "share_label": "Portfolio share",
+                "share_unit": "%",
+                "share_basis": "2025 market composition",
+                "share_denominator": 100,
+            }],
+        },
+    ],
+)
+def test_numeric_authority_accepts_each_special_primitive(chart: dict[str, object]):
+    assert workflow_v6_materials.select_numeric_authority([chart]) == chart
+
+
+@pytest.mark.parametrize(
+    ("relationship", "chart"),
+    [
+        ("increase_decrease_drivers", {
+            "title": "Drivers", "rendering_primitive": "cumulative_bridge",
+            "unit": "USD m", "basis": "same EBITDA basis", "period": "FY2025",
+            "series": [{"name": "Drivers", "categories": ["Price"], "start": 10, "changes": [2], "end": 12}],
+        }),
+        ("change_over_time", _one_dimensional_chart("line_point", "line")),
+        ("two_variable_relationship", {
+            "title": "Risk return", "rendering_primitive": "xy", "chart_variant": "scatter",
+            "x_label": "Risk", "x_unit": "%", "x_basis": "annualized volatility",
+            "y_label": "Return", "y_unit": "%", "y_basis": "annualized return",
+            "period": "FY2025",
+            "series": [{"name": "Funds", "x_values": [5, 8], "y_values": [7, 12]}],
+        }),
+        ("third_variable_size", {
+            "title": "Portfolio", "rendering_primitive": "xy", "chart_variant": "bubble",
+            "x_label": "Growth", "x_unit": "%", "x_basis": "FY2025 growth",
+            "y_label": "Margin", "y_unit": "%", "y_basis": "FY2025 margin",
+            "size_label": "Revenue", "size_unit": "USD m", "size_basis": "FY2025 revenue",
+            "period": "FY2025",
+            "series": [{"name": "Companies", "x_values": [5], "y_values": [8], "size_values": [20]}],
+        }),
+        ("market_size_share", {
+            "title": "Markets", "rendering_primitive": "variable_rectangle", "period": "FY2025",
+            "series": [{"name": "Markets", "categories": ["A"], "width_values": [40],
+                "width_label": "Size", "width_unit": "USD m", "width_basis": "2025 market",
+                "share_values": [[30, 70]], "share_label": "Share", "share_unit": "%",
+                "share_basis": "2025 composition", "share_denominator": 100}],
+        }),
+        ("project_stage_time", {
+            "title": "Plan", "rendering_primitive": "time_interval", "period": "FY2025",
+            "series": [{"name": "Plan", "categories": ["IC"], "start_dates": ["2026-09-01"], "end_dates": ["2026-09-10"]}],
+        }),
+        ("option_comparison", _one_dimensional_chart("column_bar", "bar")),
+        ("target_actual_variance", {
+            **_one_dimensional_chart("line_point", "dot"),
+            "target_value": 20,
+            "actual_value": 18,
+        }),
+    ],
+)
+def test_each_relationship_can_seal_complete_quantitative_authority(
+    relationship: str, chart: dict[str, object],
+):
+    chart["relationship"] = relationship
+    assert workflow_v6_materials.select_numeric_authority([chart]) == chart
+
+
+@pytest.mark.parametrize(
+    "chart",
+    [
+        {**_one_dimensional_chart("column_bar", "column"), "series": [{"name": "Revenue", "categories": ["A"], "values": [1, 2]}]},
+        {key: value for key, value in _one_dimensional_chart("column_bar", "bar").items() if key != "unit"},
+        {
+            "title": "Bubble", "rendering_primitive": "xy", "chart_variant": "bubble",
+            "x_label": "Growth", "x_unit": "%", "x_basis": "2025 growth",
+            "y_label": "Margin", "y_unit": "%", "y_basis": "2025 margin",
+            "size_label": "Revenue", "size_unit": "USD m", "size_basis": "2025 revenue",
+            "series": [{"name": "Companies", "x_values": [1], "y_values": [2]}],
+        },
+        {
+            "title": "Schedule", "rendering_primitive": "time_interval",
+            "series": [{"name": "Plan", "categories": ["IC"], "start_dates": ["2026-09-01"], "end_dates": []}],
+        },
+        {
+            "title": "Bridge", "rendering_primitive": "cumulative_bridge", "unit": "USD m", "basis": "same basis",
+            "series": [{"name": "Bridge", "categories": ["Price"], "start": 10, "changes": [2], "end": 99}],
+        },
+        {
+            "title": "Priority", "rendering_primitive": "column_bar", "chart_variant": "bar",
+            "unit": "priority", "basis": "qualitative assessment", "source_wording": "High priority, then medium priority",
+            "series": [{"name": "Priority", "categories": ["A", "B"], "values": ["high", "medium"]}],
+        },
+        {key: value for key, value in _one_dimensional_chart("column_bar", "column").items() if key != "chart_variant"},
+        {
+            "title": "Markets", "rendering_primitive": "variable_rectangle",
+            "series": [{"name": "Markets", "categories": ["A"], "width_values": [40],
+                "width_label": "Size", "width_unit": "USD m", "width_basis": "2025 market",
+                "share_values": [[30, 60]], "share_label": "Share", "share_unit": "%",
+                "share_basis": "2025 composition", "share_denominator": 100}],
+        },
+        {
+            "title": "Incompatible comparison", "rendering_primitive": "column_bar", "chart_variant": "bar",
+            "series": [
+                {"name": "Revenue", "unit": "USD m", "basis": "FY2025 revenue", "categories": ["A"], "values": [10]},
+                {"name": "EBITDA", "unit": "USD m", "basis": "FY2025 EBITDA", "categories": ["B"], "values": [8]},
+            ],
+        },
+    ],
+)
+def test_incomplete_or_qualitative_charts_are_retained_but_not_authorized(chart: dict[str, object]):
+    assert workflow_v6_materials.select_numeric_authority([chart]) is None
+    assert chart["title"]
+
+
+def test_multiple_complete_charts_are_ambiguous_and_produce_no_authority():
+    first = _one_dimensional_chart("column_bar", "column")
+    second = _one_dimensional_chart("line_point", "line")
+
+    assert workflow_v6_materials.select_numeric_authority([first, second]) is None
+
+
+def test_legacy_times_remain_fallback_text_and_never_authorize_one_dimensional_chart():
+    chart = _one_dimensional_chart("line_point", "line")
+    chart["series"] = [{"name": "Revenue", "times": ["2024", "2025"], "values": [12, 18]}]
+
+    facts = chart_to_facts(chart)
+
+    assert facts["series"][0]["times"] == ["2024", "2025"]
+    assert workflow_v6_materials.select_numeric_authority([facts]) is None
+
+
+@pytest.mark.parametrize(
+    "series",
+    [
+        {
+            "name": "Revenue", "categories": ["A", "B"], "category_indices": [0, 2],
+            "values": [10, 20], "value_indices": [0, 1],
+        },
+        {
+            "name": "Companies", "x_values": [1, 2], "x_indices": [0, 2],
+            "y_values": [3, 4], "y_indices": [0, 1], "size_values": [5, 6], "size_indices": [0, 2],
+        },
+    ],
+)
+def test_mismatched_source_point_indices_refuse_numeric_authority(series: dict[str, object]):
+    chart = (
+        {**_one_dimensional_chart("column_bar", "column"), "series": [series]}
+        if "categories" in series
+        else {
+            "title": "Portfolio", "rendering_primitive": "xy", "chart_variant": "bubble",
+            "x_label": "Growth", "x_unit": "%", "x_basis": "FY2025 growth",
+            "y_label": "Margin", "y_unit": "%", "y_basis": "FY2025 margin",
+            "size_label": "Revenue", "size_unit": "USD m", "size_basis": "FY2025 revenue",
+            "series": [series],
+        }
+    )
+
+    assert workflow_v6_materials.select_numeric_authority([chart]) is None
+
+
+@pytest.mark.parametrize(
+    "relationship",
+    [
+        "increase_decrease_drivers",
+        "change_over_time",
+        "two_variable_relationship",
+        "third_variable_size",
+        "market_size_share",
+        "project_stage_time",
+        "option_comparison",
+        "target_actual_variance",
+    ],
+)
+def test_each_relationship_retains_qualitative_source_without_numeric_authority(relationship: str):
+    chart = {
+        "title": relationship.replace("_", " ").title(),
+        "relationship": relationship,
+        "source_wording": f"Source describes {relationship} qualitatively without complete numeric dimensions.",
+        "disabled_primitive": "column_bar",
+        "fallback": "native_table",
+        "series": [],
+    }
+
+    assert workflow_v6_materials.select_numeric_authority([chart]) is None
+    assert chart["source_wording"].startswith("Source describes")
+
+
+def test_target_and_actual_values_survive_only_on_compatible_quantitative_record():
+    chart = {
+        **_one_dimensional_chart("line_point", "dot"),
+        "target_value": 20,
+        "actual_value": 18,
+    }
+
+    facts = chart_to_facts(chart)
+
+    assert facts["target_value"] == 20
+    assert facts["actual_value"] == 18
+    assert workflow_v6_materials.select_numeric_authority([facts]) == facts
+
+
+def test_selector_canonicalizes_source_values_labels_and_series_name_for_renderer():
+    chart = {
+        "title": "Revenue",
+        "rendering_primitive": "column_bar",
+        "chart_variant": "column",
+        "unit": "USD m",
+        "basis": "same portfolio companies",
+        "period": "FY2025",
+        "series": [{
+            "series": "Revenue",
+            "categories": [2024, 2025.0],
+            "times": [2024, 2025],
+            "values": ["12", "18.5"],
+        }],
+    }
+
+    authority = workflow_v6_materials.select_numeric_authority([chart])
+
+    assert authority is not None
+    assert authority["series"] == [{
+        "name": "Revenue",
+        "categories": ["2024", "2025.0"],
+        "values": [12, 18.5],
+    }]
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        {"title": "Missing series"},
+        {"title": "Scalar series", "series": "not-a-list"},
+        {"title": "Scalar member", "series": ["not-an-object"]},
+    ],
+)
+def test_selector_safely_refuses_malformed_canonical_series(
+    malformed_result: dict[str, object], monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        workflow_v6_materials,
+        "chart_to_facts",
+        lambda _chart: malformed_result,
+    )
+
+    assert workflow_v6_materials.select_numeric_authority([{"title": "Source"}]) is None
+
+
+def test_selector_requires_period_and_identical_multi_series_categories():
+    missing_period = _one_dimensional_chart("column_bar", "column")
+    missing_period.pop("period")
+    mismatched_categories = _one_dimensional_chart("column_bar", "column")
+    mismatched_categories["series"].append({
+        "name": "EBITDA",
+        "categories": ["A", "C"],
+        "values": [8, 9],
+    })
+
+    assert workflow_v6_materials.select_numeric_authority([missing_period]) is None
+    assert workflow_v6_materials.select_numeric_authority([mismatched_categories]) is None
+
+
+@pytest.mark.parametrize(
+    "chart",
+    [
+        {**_one_dimensional_chart("column_bar", "column"), "target_value": 20, "actual_value": 18},
+        {**_one_dimensional_chart("column_bar", "bar"), "target_value": 20, "actual_value": 18},
+        {**_one_dimensional_chart("line_point", "line"), "target_value": 20, "actual_value": 18},
+        {
+            "title": "Scatter", "rendering_primitive": "xy", "chart_variant": "scatter",
+            "period": "FY2025", "x_label": "Risk", "x_unit": "%", "x_basis": "FY2025 risk",
+            "y_label": "Return", "y_unit": "%", "y_basis": "FY2025 return",
+            "target_value": 20, "actual_value": 18,
+            "series": [{"name": "Funds", "x_values": [1], "y_values": [2]}],
+        },
+        {
+            "title": "Bubble", "rendering_primitive": "xy", "chart_variant": "bubble",
+            "period": "FY2025", "x_label": "Risk", "x_unit": "%", "x_basis": "FY2025 risk",
+            "y_label": "Return", "y_unit": "%", "y_basis": "FY2025 return",
+            "size_label": "AUM", "size_unit": "USD m", "size_basis": "FY2025 AUM",
+            "target_value": 20, "actual_value": 18,
+            "series": [{"name": "Funds", "x_values": [1], "y_values": [2], "size_values": [3]}],
+        },
+    ],
+)
+def test_native_chart_variants_refuse_target_and_difference_marks(chart: dict[str, object]):
+    assert workflow_v6_materials.select_numeric_authority([chart]) is None
+
+
+def test_variable_rectangle_refuses_zero_total_width():
+    chart = {
+        "title": "Markets",
+        "rendering_primitive": "variable_rectangle",
+        "period": "FY2025",
+        "series": [{
+            "name": "Markets",
+            "categories": ["A", "B"],
+            "width_values": [0, 0],
+            "width_label": "Market size",
+            "width_unit": "USD m",
+            "width_basis": "FY2025 addressable market",
+            "share_values": [[25, 75], [40, 60]],
+            "share_label": "Portfolio share",
+            "share_unit": "%",
+            "share_basis": "FY2025 market composition",
+            "share_denominator": 100,
+        }],
+    }
+
+    assert workflow_v6_materials.select_numeric_authority([chart]) is None
