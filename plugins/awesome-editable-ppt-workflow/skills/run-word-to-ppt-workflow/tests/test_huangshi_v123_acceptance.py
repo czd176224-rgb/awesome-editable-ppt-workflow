@@ -22,7 +22,6 @@ RUNTIME = PLUGIN / "skills/reconstruct-editable-slide/cli/editppt/runtime"
 sys.path[:0] = [str(SCRIPTS), str(RUNTIME)]
 
 from awesome_page_materials import publish_page_materials  # noqa: E402
-from awesome_attachment_render import _office_to_pdf, _render_pdf  # noqa: E402
 from build_pptx_from_manifest import write_pptx  # noqa: E402
 from codex_subscription_runtime import CodexStructuredResult  # noqa: E402
 from complex_page_experiment.director import direct_page  # noqa: E402
@@ -272,21 +271,11 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
     assert assembly["page_order"] == list(range(1, 43))
     deck_path = OUTPUT / "huangshi-full-42-pages-v1.2.3.pptx"
     shutil.copy2(project / assembly["output"], deck_path)
-    rendered_pdf = tmp_path / "huangshi-assembled.pdf"
-    rendered_pages = tmp_path / "assembled-previews"
-    rendered_pages.mkdir()
-    _office_to_pdf(deck_path, ".pptx", rendered_pdf)
-    preview_paths = _render_pdf(rendered_pdf, rendered_pages)
     deck = Presentation(deck_path)
     assert len(deck.slides) == 42
-    assert len(preview_paths) == 42
     assert all(not any(shape.has_chart for shape in slide.shapes) for slide in deck.slides)
     for source_number in SELECTED:
         slide = deck.slides[source_number - 1]
-        preview = Image.open(preview_paths[source_number - 1]).convert("RGB")
-        preview_path = OUTPUT / "previews" / f"page-{source_number:02d}.png"
-        preview_path.parent.mkdir(parents=True, exist_ok=True)
-        preview.save(preview_path)
         fallback = PAGE_CONTRACTS[source_number][1]
         by_name = {shape.name: shape for shape in slide.shapes}
         names = set(by_name)
@@ -297,12 +286,9 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
         assert all(label in slide_text for label in PAGE_CONTRACTS[source_number][2])
         assert by_name["fixed-frame-title"].text == source_pages[source_number]["blocks"][1]["text"]
         assert by_name["fixed-frame-page-number"].text == str(source_number)
-        assert _preview_has_ink(preview, by_name["fixed-frame-title"], deck.slide_width, deck.slide_height)
-        assert _preview_has_ink(preview, by_name["fixed-frame-logo"], deck.slide_width, deck.slide_height)
-        assert _preview_has_ink(preview, by_name["fixed-frame-page-number"], deck.slide_width, deck.slide_height)
         label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{fallback}-label-")]
         assert len(label_shapes) == len(PAGE_CONTRACTS[source_number][2])
-        assert all(shape.has_text_frame and _preview_has_ink(preview, shape, deck.slide_width, deck.slide_height) for shape in label_shapes)
+        assert all(shape.has_text_frame for shape in label_shapes)
 
     with zipfile.ZipFile(deck_path) as package:
         embedded_svg = [package.read(name) for name in package.namelist() if name.startswith("ppt/media/") and name.endswith(".svg")]
@@ -313,8 +299,45 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
     findings = {
         "unsupported_from_real_manuscript": ["line", "scatter", "bubble", "waterfall", "true_mekko"],
         "reason": "selected manuscript pages do not supply the complete comparable dimensions required for these quantitative encodings",
-        "production_path": ["extract_docx_pages.extract", "build_complete_page_material_view", "direct_page", "build_reconstruction_request", "write_pptx", "finalize_reconstructed_page", "assemble_v6_deck", "awesome_attachment_render._office_to_pdf", "awesome_attachment_render._render_pdf"],
+        "production_path": ["extract_docx_pages.extract", "build_complete_page_material_view", "direct_page", "build_reconstruction_request", "write_pptx", "finalize_reconstructed_page", "assemble_v6_deck"],
+        "optional_preview": "set EDITPPT_OPTIONAL_OFFICECLI_VALIDATION=1 and run the optional assembled-preview test",
         "remaining_limitations": ["external Image2 and director model calls are deterministic boundary stubs in this controlled acceptance"],
     }
     (OUTPUT / "acceptance-findings.json").write_text(json.dumps(findings, ensure_ascii=False, indent=2), encoding="utf-8")
     assert all(page["state"] == "page_complete" for page in load(project)["pages"])
+
+
+def test_huangshi_optional_assembled_powerpoint_preview(tmp_path: Path) -> None:
+    if os.getenv("EDITPPT_OPTIONAL_OFFICECLI_VALIDATION") != "1":
+        pytest.skip("set EDITPPT_OPTIONAL_OFFICECLI_VALIDATION=1 to enable assembled PowerPoint previews")
+    if not WORD.is_file() or not LOGO.is_file():
+        pytest.skip("user-supplied Huangshi acceptance files are not present")
+    from awesome_attachment_render import _office_to_pdf, _render_pdf
+    from doctor import powerpoint_status
+
+    status = powerpoint_status()
+    if not status["available"]:
+        pytest.skip(f"assembled PowerPoint preview unavailable: {status['detail']}")
+    deck_path = OUTPUT / "huangshi-full-42-pages-v1.2.3.pptx"
+    if not deck_path.is_file():
+        pytest.skip("run the core Huangshi assembled acceptance first")
+    rendered_pdf = tmp_path / "huangshi-assembled.pdf"
+    rendered_pages = tmp_path / "assembled-previews"
+    rendered_pages.mkdir()
+    _office_to_pdf(deck_path, ".pptx", rendered_pdf)
+    preview_paths = _render_pdf(rendered_pdf, rendered_pages)
+    deck = Presentation(deck_path)
+    assert len(preview_paths) == len(deck.slides) == 42
+    for source_number in SELECTED:
+        slide = deck.slides[source_number - 1]
+        preview = Image.open(preview_paths[source_number - 1]).convert("RGB")
+        preview_path = OUTPUT / "previews" / f"page-{source_number:02d}.png"
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        preview.save(preview_path)
+        by_name = {shape.name: shape for shape in slide.shapes}
+        fallback = PAGE_CONTRACTS[source_number][1]
+        assert _preview_has_ink(preview, by_name["fixed-frame-title"], deck.slide_width, deck.slide_height)
+        assert _preview_has_ink(preview, by_name["fixed-frame-logo"], deck.slide_width, deck.slide_height)
+        assert _preview_has_ink(preview, by_name["fixed-frame-page-number"], deck.slide_width, deck.slide_height)
+        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{fallback}-label-")]
+        assert all(_preview_has_ink(preview, shape, deck.slide_width, deck.slide_height) for shape in label_shapes)
