@@ -12,6 +12,8 @@ v1.2.3 will absorb two transferable capabilities without depending on either pro
 - think-cell contributes a quantitative chart grammar: choose a visual encoding from the verified relationship among real values, then deliver it as editable PowerPoint objects.
 - Training The Street contributes financial analysis discipline: preserve subject, period, unit, actual/forecast status, assumptions, arithmetic relationships, source, and the boundary between fact and judgment.
 
+The chart grammar is dual-mode. Complete numeric dimensions produce quantitative charts whose geometry is data-backed. Qualitative relationships may use a named editable substitute—such as a driver bridge, roadmap, comparison table, or goal-gap structure—but must not use height, length, area, coordinate, slope, or bubble size to imply measurements that the source does not provide.
+
 Neither source becomes a factual authority. The Word document remains the content authority, the confirmed V6 materials remain the sealed factual input, and the accepted page image remains the visual authority. The upgrade adds no Agent, model call, external dependency, financial-modeling engine, Excel input, or think-cell object.
 
 The published `v1.2.2` tag remains immutable. This design is implemented only in `v1.2.3`.
@@ -62,10 +64,10 @@ No parallel chart pipeline is introduced.
 For a page with confirmed `chart_facts`:
 
 1. Material extraction validates that every quantitative encoding has real values and corresponding labels.
-2. Local deterministic code derives only permitted presentation annotations when all required inputs are complete and compatible.
+2. Local deterministic code computes only renderer-consumed geometry or target-versus-actual difference when all required inputs are complete and compatible.
 3. The page director receives allowed chart semantics and verified annotations. It selects the analytical layout but never calculates a value.
 4. Image2 renders the accepted visual composition under the existing prompt and review loop.
-5. The existing `page_request.json` receives one optional `numeric_authority` field containing confirmed `chart_facts`, one explicit `rendering_primitive`, and permitted derivations. Page dispatch already seals and later verifies the whole request by SHA-256, so no second sidecar or hashing protocol is added.
+5. The existing `page_request.json` receives one optional `numeric_authority` field containing confirmed `chart_facts`, one explicit `rendering_primitive`, one explicit standard `chart_variant` when applicable, and only renderer-consumed inputs. Page dispatch already seals and later verifies the whole request by SHA-256, so no second sidecar or hashing protocol is added.
 6. The reconstruction worker uses `source.png` for chart container geometry, hierarchy, palette, spacing, and visual rhythm. It uses `numeric_authority` for series, categories, values, periods, units, calculated labels, and the exact geometry of quantitative marks.
 7. Local validation compares reconstructed chart data and labels against `numeric_authority` before the page can complete.
 
@@ -89,15 +91,37 @@ Minimum rules:
 
 Extend the existing `chart_facts` payload with optional explicit dimensions rather than inferring them from free text:
 
-- `x_values`, `y_values`, and `size_values` for XY and bubble charts;
+- `x_values`, `x_label`, `x_unit`, and `x_basis`; `y_values`, `y_label`, `y_unit`, and `y_basis` for XY charts;
+- `size_values`, `size_label`, `size_unit`, and `size_basis` for bubble size;
 - `start_dates` and `end_dates` for time intervals;
-- `width_values` and `share_values` for variable rectangles.
+- `width_values`, `width_label`, `width_unit`, and `width_basis` for variable-rectangle width;
+- `share_values`, `share_label`, `share_unit`, `share_basis`, and `share_denominator` for internal composition;
+- `period` and `source_page`, plus a shared `basis` only for one-dimensional charts whose source explicitly states one common comparison basis.
+
+Every encoded dimension must preserve its own label, unit, and basis. A shared unit may be inherited only when the Word chart or table states it unambiguously. The extractor must retain OOXML `xVal`, `yVal`, bubble-size, axis-title, and unit semantics rather than collapsing them into generic time/value fields. Missing dimension metadata disables the affected quantitative form.
 
 The current `name`, `value(s)`, `time(s)`, `unit`, `trend`, and `relationship` fields remain unchanged. Missing explicit dimensions disable only the chart family that needs them; they do not trigger model inference or a new schema.
 
 `numeric_authority.rendering_primitive` must be exactly one of `column_bar`, `line_point`, `xy`, `cumulative_bridge`, `time_interval`, or `variable_rectangle`. Local conservative mapping selects it before reconstruction. The reconstruction worker must not infer or replace it from the accepted image. An ambiguous mapping falls back to the recoverable source chart type or a native table.
 
+For the three standard primitive families, `numeric_authority.chart_variant` is explicit: `column`, `bar`, `line`, `dot`, `scatter`, or `bubble`. Target-versus-actual data retains explicit `target_value` and `actual_value`; the renderer may add only a target line or a difference arrow derived directly from those two values.
+
 If the conditions are incomplete or ambiguous, retain the source chart type when it is recoverable; otherwise fall back to a native table. Never invent missing numbers to keep a chart.
+
+### 5.1 Eight relationship contracts
+
+| Source relationship | Complete quantitative evidence | Qualitative or incomplete evidence |
+| --- | --- | --- |
+| Increase/decrease drivers | Scaled cumulative bridge/waterfall with verified start, changes, and end | Equal-weight positive/negative driver bridge; no cumulative baseline or computed end value |
+| Change over time | Line or column chart with explicit periods and values | Timeline or stage-evolution roadmap; no implied slope or magnitude |
+| Relationship between two variables | Scatter plot with numeric x/y values | Clearly labelled qualitative quadrant only when the source supplies the two qualitative axes and item classifications; otherwise comparison table |
+| Third variable | Bubble size from a real non-negative third numeric variable | Uniform-size nodes; no size ranking |
+| Market size plus internal share | Mekko/variable rectangle with complete width and share values | Equal-width hierarchy or portfolio matrix; no area-based claim |
+| Project stage plus time | Gantt with explicit start/end or start/duration | Ordered roadmap or milestone sequence when dates/durations are absent |
+| Horizontal option comparison | Bar/dot plot when comparable values or source ratings exist | Native comparison table with source-backed criteria and wording |
+| Target, actual, and variance | Bar/dot plus target line or difference arrow when both values share a unit/basis | Goal-current-gap narrative structure; no target line, arrow magnitude, or calculated variance |
+
+The right-hand column is not a degraded quantitative chart. It is a separate semantic layout contract. It never creates `numeric_authority`, and its labels must visibly avoid numerical implications such as axis ticks, proportional areas, or scaled lengths.
 
 ## 6. Six Rendering Primitives
 
@@ -133,44 +157,26 @@ These are implementation families, not new user-facing template choices. The cur
 
 Do not add a seventh or eighth prompt section. Add two conditional contracts inside the existing six-part prompt.
 
-Quantitative chart grammar:
+Dual-mode chart grammar:
 
-> When the source contains real quantitative data, choose a professional chart backbone that matches the verified data relationship. Restore source-backed labels, legends, periods, units, totals, and permitted annotations. Never turn qualitative information into quantitative visual encoding.
+> First identify the source relationship. When complete numeric dimensions exist, choose the matching quantitative chart and restore source-backed labels, legends, periods, units, totals, and permitted annotations. When only qualitative or incomplete evidence exists, use the corresponding non-scaled editable substitute from the eight relationship contracts. Never use height, length, area, coordinate, slope, bubble size, target line, or difference magnitude without the required source values.
 
 Financial analysis discipline:
 
 > When a page contains financial, valuation, investment, or operating data, preserve subject, period, unit, basis, actual/forecast status, assumptions, and total-to-component relationships. Keep facts, assumptions, calculated results, analytical judgments, and recommendations distinct. Do not calculate or add a financial metric unless the sealed source inputs fully authorize a deterministic presentation calculation.
 
-The grammar maps relationships conservatively:
+The prompt includes the eight-row mapping in Section 5.1 verbatim. When more than one encoding is valid, prefer the simpler one. When the relationship or evidence is unclear, use a native comparison table or retain the recoverable source structure.
 
-- change drivers -> cumulative bridge;
-- time trend -> line or column;
-- comparison or ranking -> bar/column or point;
-- two numeric variables -> scatter;
-- a verified third variable -> bubble size;
-- size plus internal share -> variable rectangle;
-- task plus explicit time interval -> Gantt;
-- target, actual, and variance -> bar/point plus target line or variance annotation.
+## 8. Renderer-Consumed Calculations Only
 
-When more than one encoding is valid, prefer the simpler primitive. When the relationship is unclear, keep the source chart or table.
+The model never calculates. Local code computes only geometry or labels immediately consumed by a supported renderer:
 
-## 8. Deterministic Presentation Calculations
+- cumulative waterfall levels from verified start and change values, checked against the verified end value;
+- Gantt duration and position from explicit valid dates;
+- normalized Mekko widths and internal shares from complete source values;
+- target-versus-actual difference from two compatible explicit values.
 
-The model must not calculate. Small local pure functions may produce only presentation annotations whose inputs are complete and compatible:
-
-- total and subtotal;
-- absolute difference;
-- percentage share with a complete denominator;
-- percentage change with valid comparable periods and a non-zero base;
-- arithmetic mean for compatible values;
-- minimum and maximum;
-- CAGR with explicit start value, end value, period count, compatible units, and a mathematically valid domain;
-- cumulative waterfall positions;
-- Gantt duration from valid dates.
-
-Do not build a formula registry, generic derivation engine, or user-defined formula layer. Each rendering primitive calls only the direct helper it needs, such as `difference`, `share`, `cagr`, or `duration`. The helper stores its input values, displayed result, unit, period, and source page directly in `numeric_authority`. A missing subject, unit, period, denominator, base, or required endpoint disables the derivation. The page then renders without that annotation.
-
-The feature does not calculate IRR, DCF, valuation multiples, market size, forecasts, scenarios, or investment returns unless the exact displayed result is already present in the Word source. It does not make investment judgments.
+Do not add `presentation_annotations`, CAGR, percentage-change, mean/min/max helpers, a formula registry, a generic derivation engine, or user-defined formulas. Missing subject, unit, period, denominator, endpoint, or compatible basis disables the quantitative form and selects its qualitative/table substitute. The feature does not calculate IRR, DCF, valuation multiples, market size, forecasts, scenarios, or investment returns.
 
 ## 9. Financial Analysis Discipline
 
@@ -235,7 +241,7 @@ The reviewer rejects when:
 - a financial judgment or metric is added beyond the Word source;
 - decorative spectacle, card fragmentation, or imagery displaces the analytical chart.
 
-The reviewer checks chart-family suitability and semantic misuse, not precise bar length, area, bubble size, point position, or arithmetic. Post-reconstruction local validation proves exact values, quantitative geometry, derivations, and object editability.
+The reviewer checks chart-family suitability and semantic misuse, not precise bar length, area, bubble size, point position, or arithmetic. Post-reconstruction local validation proves exact values, renderer-consumed calculations, quantitative geometry, and object editability.
 
 ## 13. Failure and Degradation
 
@@ -254,13 +260,14 @@ No failure path adds a director, reviewer, candidate-selection UI, model call, o
 
 Keep the diff within the current workflow wherever practical:
 
-- `workflow_v6_materials.py`: eligibility, conservative relationship mapping, and deterministic presentation annotations;
+- `source_assets.py`: preserve OOXML x/y/bubble dimensions, axis labels, and dimension units without collapsing their meaning;
+- `workflow_v6_materials.py`: quantitative eligibility, conservative relationship mapping, and renderer-consumed inputs;
 - `consulting_prompt.py`: conditional quantitative and financial clauses inside the existing six sections;
 - `review.py`: extend existing factual, relational, and unusable-composition definitions;
-- `workflow_v6_reconstruction.py`: place existing chart facts and direct derivations into the optional `page_request.numeric_authority` field;
+- `workflow_v6_reconstruction.py`: place existing chart facts and direct renderer inputs into the optional `page_request.numeric_authority` field;
 - `page-worker.md`: define the limited numeric-authority exception to accepted-image visual authority;
 - existing reconstruction/Office helpers: create native charts or editable shape groups;
-- existing tests: contract, refusal, reconstruction, validation, and regression coverage.
+- existing tests plus one focused chart-XML test: 8×2 relationship contract, dimension preservation, refusal, reconstruction, validation, call-topology, real-document acceptance, release identity, and ordinary-page regression coverage.
 
 Do not introduce a chart framework, finance library, new runtime service, standalone chart schema system, parallel manifest, or new top-level workflow. Phase 0 may authorize one optional `charts` field in the existing page manifest only if the existing Office post-build path cannot pass the complete build/render/validate/assembly gate.
 
@@ -308,31 +315,54 @@ The spike implements only the single standard-chart lifecycle and the single exp
 
 ## 15. Verification and Release Gate
 
-Six real paginated-Word representative pages are required, one per rendering primitive:
+The synthetic gate contains ten explicit quantitative cases so no promised form hides behind a combined test:
 
 1. column/bar comparison;
-2. line/point historical-versus-forecast;
-3. XY scatter or bubble;
-4. waterfall/value bridge;
-5. Gantt/time interval;
-6. Mekko-like size-and-share.
+2. line trend;
+3. scatter with labelled x/y units;
+4. bubble with labelled x/y/size units;
+5. dot comparison;
+6. waterfall/value bridge;
+7. Gantt/time interval;
+8. Mekko-like size-and-share with denominator;
+9. target line;
+10. difference arrow.
 
-Add one purely qualitative control page to prove that qualitative language is not numerically encoded.
+Add a separate `8 relationships × 2 modes` contract matrix. Each quantitative row asserts required dimensions and its allowed renderer; each qualitative row asserts the named non-scaled substitute and absence of `numeric_authority`. Qualitative cases may share fixtures because they reuse existing editable shapes and tables rather than eight new rendering engines.
+
+After the synthetic gate, run a real-document acceptance lane using the user-supplied Huangshi Word manuscript and logo. Assert 42 logical pages and these SHA-256 values before processing: Word `519FC2C5DAA0B4A2E65954E6FA20DF461E04587749C69AFB5952C6535A4A4A11`; PNG `9681840BACFBA51E87E47D687C1CA1F9C542F9C235577280447E96070726BCF0`. Select pages 5, 10, 14, 20, 21, and 40. Bypass the confirmation UI only in this controlled harness by sealing deterministic confirmation data directly.
+
+The six real pages have fixed expected structures and refusal rules:
+
+| Page | Required output | Explicitly forbidden |
+| --- | --- | --- |
+| 5 | Four independent source-backed KPI facts | Any bar length or shared proportional axis across achievements, events, projects/teams, and registrations |
+| 10 | Six independent KPI facts grouped visually by economic target versus implementation target | A shared bar group for `420亿元增加值` and `100亿元人工智能产业` without proof of identical basis; mixing `亿元`, `家`, `个`, and the `3–5` range; treating the range as one exact value |
+| 14 | Seven equal-weight ordered roadmap stages | Date axis, duration-scaled Gantt bars, or inferred stage lengths |
+| 20 | Equal-width `1+4+N` hierarchy/lifecycle structure | Mekko/treemap area encoding or invented fund-size/share values |
+| 21 | Two separately labelled disclosed-amount facts plus a prominent data-gap statement | A shared comparison bar or implied arithmetic between “百亿元合作” and “68.2亿元招商项目” because subject/basis differ |
+| 40 | Proportional 0–30, 31–60, 61–90 day timeline/Gantt segments plus a separate 12-month outcome milestone | Extending an assumed task bar through 12 months or inventing dates/tasks |
+
+The run must explicitly report that the manuscript lacks sufficient real data for line trend, scatter/bubble, waterfall, and true Mekko rather than inventing values.
 
 Required checks:
 
 - exact source series, categories, values, periods, and units survive extraction;
-- every permitted derivation equals the local formula result and records its inputs;
+- every renderer-consumed calculation equals its direct source-input result;
 - invalid or incomplete inputs disable the corresponding chart/annotation;
 - standard outputs contain actual PowerPoint chart objects;
 - special outputs contain editable grouped shapes and no whole-chart screenshot fallback;
 - output values and quantitative geometry equal `numeric_authority` item by item;
 - source and output page counts and pagination semantics remain unchanged;
 - ordinary consulting-page prompt and reconstruction behavior do not regress;
-- the run retains one director, one initial Image2 call, one reviewer, and at most two existing corrections;
-- Office validation and the existing targeted/full test suites pass.
+- every one of the eight relationships chooses either its quantitative form or its named qualitative substitute based on evidence completeness;
+- qualitative substitutes contain no numeric axis, proportional geometry, target-line magnitude, or bubble-size implication without source values;
+- selected Huangshi pages preserve their original wording, units, page identity, and evidence limitations while skipping only the UI interaction;
+- the run adds no calls relative to v1.2.2 in each existing path: first-candidate success; one or two review-directed corrections; correction-model fallback; Paddle-assisted reconstruction; accepted-page recovery. Preserve each path's current director, Image2/provider, reviewer, correction-model, reconstruction-worker, and assembly counts, including zero-new-call recovery and the existing Paddle path that may invoke reconstruction twice;
+- core targeted/full tests, python-pptx readback, preview generation, and final assembly pass without OfficeCLI;
+- optional OfficeCLI/PowerPoint validation is recorded as additional Windows evidence only and never changes the core pass/fail result.
 
-Run the seven-page representative A/B gate before a full deck. Any wrong number, wrong unit/period/entity, qualitative-to-quantitative invention, non-editable chart fallback, additional model call, or ordinary-page regression blocks release.
+Run the synthetic primitive gate and eight-relationship contract matrix before the selected Huangshi acceptance pages. Any wrong number, wrong unit/period/entity, qualitative-to-quantitative invention, non-editable chart fallback, additional model call, or ordinary-page regression blocks release.
 
 ## 16. Non-Goals
 
@@ -370,6 +400,9 @@ Do not copy proprietary software behavior, UI, templates, source code, course sl
 - Record one explicit `rendering_primitive` in `numeric_authority`; reconstruction never guesses it from the accepted image.
 - Support 20-30 business chart names through six rendering primitives.
 - Deliver all six primitives in v1.2.3.
+- Support the eight relationship contracts in dual mode: quantitative chart when evidence is complete, named non-scaled editable substitute when it is not.
+- Support source-backed dot comparison, target line, and difference arrow without adding a generic annotation engine.
+- Use the selected Huangshi manuscript pages as the final real-document acceptance lane and report unsupported chart families explicitly.
 - Require Phase 0 native-chart lifecycle and real-Word complex-dimension spikes before the implementation plan; allow one optional `charts` field in the existing page manifest only if the Office post-build path fails.
 - Use content-driven page composition rather than mandatory full-page or card-based layouts.
 - Add no Agent, model call, external dependency, financial engine, standalone chart schema, or parallel manifest.
