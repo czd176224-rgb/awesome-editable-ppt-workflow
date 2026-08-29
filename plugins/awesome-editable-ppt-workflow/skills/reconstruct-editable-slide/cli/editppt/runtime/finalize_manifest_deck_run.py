@@ -58,8 +58,11 @@ def _optional_officecli_validation(output: Path) -> dict[str, str]:
             capture_output=True,
             text=True,
             check=False,
+            timeout=30,
         )
-    except OSError as exc:
+    except subprocess.TimeoutExpired as exc:
+        return {"status": "warning", "detail": f"OfficeCLI validation timed out after {exc.timeout} seconds"}
+    except Exception as exc:
         return {"status": "warning", "detail": str(exc)}
     detail = completed.stdout.strip() or completed.stderr.strip()
     return {"status": "passed" if completed.returncode == 0 else "warning", "detail": detail}

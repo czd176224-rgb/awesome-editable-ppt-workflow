@@ -14,6 +14,7 @@ RUNTIME = Path(__file__).resolve().parents[1] / "editppt" / "runtime"
 sys.path.insert(0, str(RUNTIME))
 
 import build_pptx_from_manifest  # noqa: E402
+import finalize_manifest_deck_run  # noqa: E402
 from build_pptx_from_manifest import render_preview, write_pptx  # noqa: E402
 from deck_run_state import sha256_file  # noqa: E402
 from finalize_manifest_deck_run import finalize_manifest_run  # noqa: E402
@@ -208,6 +209,7 @@ def test_native_chart_manifest_survives_final_assembly_without_officecli(
         "officecli_executable",
         lambda: (_ for _ in ()).throw(RuntimeError("OfficeCLI unavailable")),
     )
+    monkeypatch.setenv("EDITPPT_OPTIONAL_OFFICECLI_VALIDATION", "1")
     authority = {
         "rendering_primitive": "column_bar",
         "categories": ["2023", "2024", "2025"],
@@ -256,8 +258,29 @@ def test_native_chart_manifest_survives_final_assembly_without_officecli(
     record_manifest_page(run, page_id="page_001", agent_id="worker-1")
     summary = finalize_manifest_run(run)
     assert summary["officecli_validation"]["status"] == "skipped"
+    assert summary["officecli_validation"]["detail"] == "OfficeCLI unavailable"
     final_chart = next(shape.chart for shape in Presentation(summary["output"]).slides[0].shapes if shape.has_chart)
     assert [item.label for item in final_chart.plots[0].categories] == authority["categories"]
     assert list(final_chart.series[0].values) == authority["series"][0]["values"]
     assert final_chart.chart_title.text_frame.text == "Revenue (USD m)"
     assert json.loads(Path(summary["validation"]).read_text(encoding="utf-8"))["passed"] is True
+
+
+def test_optional_officecli_validation_times_out_as_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    timeouts = []
+
+    def timeout_run(command, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+
+    monkeypatch.setenv("EDITPPT_OPTIONAL_OFFICECLI_VALIDATION", "1")
+    monkeypatch.setattr(build_pptx_from_manifest, "officecli_executable", lambda: "officecli")
+    monkeypatch.setattr(finalize_manifest_deck_run.subprocess, "run", timeout_run)
+
+    result = finalize_manifest_deck_run._optional_officecli_validation(tmp_path / "deck.pptx")
+
+    assert timeouts == [30]
+    assert result["status"] == "warning"
+    assert "timed out" in result["detail"]
