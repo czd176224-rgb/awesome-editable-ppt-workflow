@@ -22,7 +22,8 @@ RUNTIME = PLUGIN / "skills/reconstruct-editable-slide/cli/editppt/runtime"
 sys.path[:0] = [str(SCRIPTS), str(RUNTIME)]
 
 from awesome_page_materials import publish_page_materials  # noqa: E402
-from build_pptx_from_manifest import render_preview, write_pptx  # noqa: E402
+from awesome_attachment_render import _office_to_pdf, _render_pdf  # noqa: E402
+from build_pptx_from_manifest import write_pptx  # noqa: E402
 from codex_subscription_runtime import CodexStructuredResult  # noqa: E402
 from complex_page_experiment.director import direct_page  # noqa: E402
 from complex_page_experiment.materials import build_complete_page_material_view  # noqa: E402
@@ -68,6 +69,14 @@ def _page_text(page: dict) -> str:
         if block["type"] == "table" else block.get("text", "")
         for block in page["blocks"]
     )
+
+
+def _page_title(page: dict) -> tuple[str, str]:
+    for block in page["blocks"][1:]:
+        text = block.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip(), block["source_block_id"]
+    return f"Source page {page['page_number']}", page["blocks"][0]["source_block_id"]
 
 
 def _style() -> dict:
@@ -152,25 +161,26 @@ def _manifest(source_page: int, fallback: str, labels: tuple[str, ...]) -> dict:
     }
 
 
-def _build_project(root: Path, source: dict, logo_svg: Path) -> tuple[Path, list[dict]]:
+def _build_project(root: Path, source: dict, logo_svg: Path) -> Path:
     project = root / "project"
     (project / "00_source").mkdir(parents=True)
     shutil.copy2(WORD, project / "00_source/source.docx")
     shutil.copy2(logo_svg, project / "00_source/logo.svg")
-    selected_pages = [next(page for page in source["pages"] if page["page_number"] == number) for number in SELECTED]
     pages = []
-    for output_number, selected in enumerate(selected_pages, start=1):
-        page = new_page(output_number, title=selected["blocks"][1]["text"])
+    for source_page in source["pages"]:
+        page_number = source_page["page_number"]
+        title, _title_block = _page_title(source_page)
+        page = new_page(page_number, title=title)
         page["state"] = "accepted"
-        image = project / "04_v6/images" / f"page_{output_number:03d}.png"
+        image = project / "04_v6/images" / f"page_{page_number:03d}.png"
         image.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (1904, 896), "white").save(image)  # external Image2 boundary stub
         digest = hashlib.sha256(image.read_bytes()).hexdigest()
         candidate = {"path": image.relative_to(project).as_posix(), "attempt": 1, "operation": "generate"}
         page["first_candidate"] = dict(candidate)
         page["selected_candidate"] = dict(candidate)
-        (project / "04_v6/images" / f"page_{output_number:03d}.json").write_text(
-            json.dumps({"page_number": output_number, "selected": {**candidate, "sha256": digest}}), encoding="utf-8",
+        (project / "04_v6/images" / f"page_{page_number:03d}.json").write_text(
+            json.dumps({"page_number": page_number, "selected": {**candidate, "sha256": digest}}), encoding="utf-8",
         )
         pages.append(page)
 
@@ -191,20 +201,31 @@ def _build_project(root: Path, source: dict, logo_svg: Path) -> tuple[Path, list
     create(project, state)
 
     paginated = {"pages": []}
-    composition = {"artifact_version": "page-composition-v1", "page_count": 6, "warnings": [], "pages": []}
-    for output_number, selected in enumerate(selected_pages, start=1):
-        blocks = [dict(block) for block in selected["blocks"]]
-        paginated["pages"].append({**selected, "page_number": output_number, "source_page_number": selected["page_number"], "fixed_page_title": blocks[1]["text"], "fixed_page_title_source_block_id": blocks[1]["source_block_id"]})
-        composition["pages"].append({"output_page_number": output_number, "source_page_id": selected["page_number"], "page_role": "content", "role_source": "explicit", "chapter_title": "", "fixed_page_title": blocks[1]["text"], "source_page_number": output_number, "material_source_block_ids": [block["source_block_id"] for block in blocks], "visible_page_number": True})
-        effective = project / "02_v6/effective_pages" / f"page_{output_number:03d}.json"
+    composition = {"artifact_version": "page-composition-v1", "page_count": source["page_count"], "warnings": [], "pages": []}
+    for source_page in source["pages"]:
+        page_number = source_page["page_number"]
+        blocks = [dict(block) for block in source_page["blocks"]]
+        title, title_block = _page_title(source_page)
+        paginated["pages"].append({**source_page, "fixed_page_title": title, "fixed_page_title_source_block_id": title_block})
+        composition["pages"].append({"output_page_number": page_number, "source_page_id": page_number, "page_role": "content", "role_source": "explicit", "chapter_title": "", "fixed_page_title": title, "source_page_number": page_number, "material_source_block_ids": [block["source_block_id"] for block in blocks], "visible_page_number": True})
+        effective = project / "02_v6/effective_pages" / f"page_{page_number:03d}.json"
         effective.parent.mkdir(parents=True, exist_ok=True)
-        effective.write_text(json.dumps({"page_number": output_number, "word_original": _page_text(selected)}, ensure_ascii=False), encoding="utf-8")
+        effective.write_text(json.dumps({"page_number": page_number, "word_original": _page_text(source_page)}, ensure_ascii=False), encoding="utf-8")
     (project / "02_v6/paginated_word_source.json").write_text(json.dumps(paginated, ensure_ascii=False), encoding="utf-8")
     (project / "02_v6/page_composition.json").write_text(json.dumps(composition, ensure_ascii=False), encoding="utf-8")
     (project / "02_v6/source_assets.json").write_text('{"assets":[]}', encoding="utf-8")
-    for output_number in range(1, 7):
-        publish_page_materials(project, output_number, project / "02_v6/awesome_page_materials" / f"page_{output_number:03d}.json")
-    return project, selected_pages
+    for page_number in range(1, source["page_count"] + 1):
+        publish_page_materials(project, page_number, project / "02_v6/awesome_page_materials" / f"page_{page_number:03d}.json")
+    return project
+
+
+def _preview_has_ink(image: Image.Image, shape, slide_width: int, slide_height: int) -> bool:
+    left = max(0, round(shape.left / slide_width * image.width))
+    top = max(0, round(shape.top / slide_height * image.height))
+    right = min(image.width, round((shape.left + shape.width) / slide_width * image.width))
+    bottom = min(image.height, round((shape.top + shape.height) / slide_height * image.height))
+    crop = image.crop((left, top, right, bottom)).convert("RGB")
+    return any(max(pixel) - min(pixel) > 12 or sum(pixel) < 690 for pixel in crop.get_flattened_data())
 
 
 def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp_path: Path) -> None:
@@ -219,51 +240,69 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
     svg = OUTPUT / "shangrong-logo-test-wrapper.svg"
     encoded_logo = base64.b64encode(LOGO.read_bytes()).decode("ascii")
     svg.write_text(f'<svg xmlns="http://www.w3.org/2000/svg" width="220" height="46"><image width="220" height="46" href="data:image/png;base64,{encoded_logo}"/></svg>', encoding="utf-8")
-    project, selected_pages = _build_project(tmp_path, source, svg)
+    project = _build_project(tmp_path, source, svg)
+    source_pages = {page["page_number"]: page for page in source["pages"]}
     director_prompts = []
 
-    for output_number, selected in enumerate(selected_pages, start=1):
-        source_number = SELECTED[output_number - 1]
-        relationship, fallback, labels = PAGE_CONTRACTS[source_number]
-        source_text = _page_text(selected)
-        assert all(label in source_text for label in labels)
-        workspace = open_live_page_workspace(project, output_number)
-        material_view = build_complete_page_material_view(workspace)
-        value = _director_value(output_number, material_view.material_ids, source_text)
-        artifact = direct_page(workspace, material_view, timeout=30, invoke=lambda *_args, v=value, **_kwargs: _director_result(v))
-        director_prompts.append(artifact.actual_prompt)
-
-        qualitative = {"title": selected["blocks"][1]["text"], "relationship": relationship, "source_wording": source_text, "disabled_primitive": "quantitative_encoding", "fallback": fallback, "series": []}
-        materials = project / "02_v6/page_materials" / f"page_{output_number:03d}.json"
-        materials.parent.mkdir(parents=True, exist_ok=True)
-        materials.write_text(json.dumps({"chart_facts": [qualitative]}, ensure_ascii=False), encoding="utf-8")
-        assert "numeric_authority" not in build_reconstruction_request(project, page_number=output_number)
-
-        manifest = _manifest(source_number, fallback, labels)
-        manifest_path = OUTPUT / f"page-{source_number:02d}-manifest.json"
+    for page_number, source_page in source_pages.items():
+        if page_number in SELECTED:
+            relationship, fallback, labels = PAGE_CONTRACTS[page_number]
+            source_text = _page_text(source_page)
+            assert all(label in source_text for label in labels)
+            workspace = open_live_page_workspace(project, page_number)
+            material_view = build_complete_page_material_view(workspace)
+            value = _director_value(page_number, material_view.material_ids, source_text)
+            artifact = direct_page(workspace, material_view, timeout=30, invoke=lambda *_args, v=value, **_kwargs: _director_result(v))
+            director_prompts.append(artifact.actual_prompt)
+            qualitative = {"title": source_page["blocks"][1]["text"], "relationship": relationship, "source_wording": source_text, "disabled_primitive": "quantitative_encoding", "fallback": fallback, "series": []}
+            materials = project / "02_v6/page_materials" / f"page_{page_number:03d}.json"
+            materials.parent.mkdir(parents=True, exist_ok=True)
+            materials.write_text(json.dumps({"chart_facts": [qualitative]}, ensure_ascii=False), encoding="utf-8")
+            assert "numeric_authority" not in build_reconstruction_request(project, page_number=page_number)
+            manifest = _manifest(page_number, fallback, labels)
+        else:
+            manifest = _manifest(page_number, "source_page", (source_page["blocks"][2].get("text", "Source page"),))
+        manifest_path = tmp_path / f"page-{page_number:02d}-manifest.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-        body = tmp_path / f"body-{output_number:03d}.pptx"
+        body = tmp_path / f"body-{page_number:03d}.pptx"
         write_pptx(manifest, body, manifest_path)
-        finalize_reconstructed_page(project, page_number=output_number, reconstructed_body=body)
-        preview = OUTPUT / "previews" / f"page-{source_number:02d}.png"
-        preview.parent.mkdir(parents=True, exist_ok=True)
-        render_preview(manifest, manifest_path, preview, pptx_path=body)
-        assert Image.open(preview).size == (1200, 675)
+        finalize_reconstructed_page(project, page_number=page_number, reconstructed_body=body)
 
     assembly = assemble_v6_deck(project)
-    deck_path = OUTPUT / "huangshi-selected-pages-v1.2.3.pptx"
+    assert assembly["page_order"] == list(range(1, 43))
+    deck_path = OUTPUT / "huangshi-full-42-pages-v1.2.3.pptx"
     shutil.copy2(project / assembly["output"], deck_path)
+    rendered_pdf = tmp_path / "huangshi-assembled.pdf"
+    rendered_pages = tmp_path / "assembled-previews"
+    rendered_pages.mkdir()
+    _office_to_pdf(deck_path, ".pptx", rendered_pdf)
+    preview_paths = _render_pdf(rendered_pdf, rendered_pages)
     deck = Presentation(deck_path)
-    assert len(deck.slides) == 6
+    assert len(deck.slides) == 42
+    assert len(preview_paths) == 42
     assert all(not any(shape.has_chart for shape in slide.shapes) for slide in deck.slides)
-    for slide, source_number in zip(deck.slides, SELECTED, strict=True):
+    for source_number in SELECTED:
+        slide = deck.slides[source_number - 1]
+        preview = Image.open(preview_paths[source_number - 1]).convert("RGB")
+        preview_path = OUTPUT / "previews" / f"page-{source_number:02d}.png"
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        preview.save(preview_path)
         fallback = PAGE_CONTRACTS[source_number][1]
-        names = {shape.name for shape in slide.shapes}
+        by_name = {shape.name: shape for shape in slide.shapes}
+        names = set(by_name)
         assert "fixed-frame-logo" in names
         assert any(fallback in name for name in names)
         assert not any(term in name.casefold() for name in names for term in ("axis", "gantt", "mekko", "target line", "difference arrow"))
         slide_text = "\n".join(shape.text for shape in slide.shapes if getattr(shape, "has_text_frame", False))
         assert all(label in slide_text for label in PAGE_CONTRACTS[source_number][2])
+        assert by_name["fixed-frame-title"].text == source_pages[source_number]["blocks"][1]["text"]
+        assert by_name["fixed-frame-page-number"].text == str(source_number)
+        assert _preview_has_ink(preview, by_name["fixed-frame-title"], deck.slide_width, deck.slide_height)
+        assert _preview_has_ink(preview, by_name["fixed-frame-logo"], deck.slide_width, deck.slide_height)
+        assert _preview_has_ink(preview, by_name["fixed-frame-page-number"], deck.slide_width, deck.slide_height)
+        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{fallback}-label-")]
+        assert len(label_shapes) == len(PAGE_CONTRACTS[source_number][2])
+        assert all(shape.has_text_frame and _preview_has_ink(preview, shape, deck.slide_width, deck.slide_height) for shape in label_shapes)
 
     with zipfile.ZipFile(deck_path) as package:
         embedded_svg = [package.read(name) for name in package.namelist() if name.startswith("ppt/media/") and name.endswith(".svg")]
@@ -274,8 +313,8 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
     findings = {
         "unsupported_from_real_manuscript": ["line", "scatter", "bubble", "waterfall", "true_mekko"],
         "reason": "selected manuscript pages do not supply the complete comparable dimensions required for these quantitative encodings",
-        "production_path": ["extract_docx_pages.extract", "build_complete_page_material_view", "direct_page", "build_reconstruction_request", "write_pptx", "finalize_reconstructed_page", "assemble_v6_deck", "render_preview"],
+        "production_path": ["extract_docx_pages.extract", "build_complete_page_material_view", "direct_page", "build_reconstruction_request", "write_pptx", "finalize_reconstructed_page", "assemble_v6_deck", "awesome_attachment_render._office_to_pdf", "awesome_attachment_render._render_pdf"],
         "remaining_limitations": ["external Image2 and director model calls are deterministic boundary stubs in this controlled acceptance"],
     }
     (OUTPUT / "acceptance-findings.json").write_text(json.dumps(findings, ensure_ascii=False, indent=2), encoding="utf-8")
-    assert load(project)["pages"][-1]["state"] == "page_complete"
+    assert all(page["state"] == "page_complete" for page in load(project)["pages"])

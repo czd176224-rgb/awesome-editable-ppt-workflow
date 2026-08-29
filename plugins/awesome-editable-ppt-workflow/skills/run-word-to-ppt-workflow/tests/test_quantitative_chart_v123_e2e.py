@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
+import zipfile
 from copy import deepcopy
 from pathlib import Path
 
 import pytest
 from PIL import Image
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE
 
 
 TESTS = Path(__file__).resolve().parent
@@ -56,7 +59,7 @@ def _qualitative_manifest(relationship: str, fallback: str) -> dict:
     manifest = _manifest({})
     manifest["charts"] = []
     layouts = {
-        "driver_bridge": [(0.8, 2.8, 1.8, 0.9), (3.0, 2.1, 1.8, 0.9), (5.2, 2.6, 1.8, 0.9), (7.4, 1.7, 1.8, 0.9)],
+        "driver_bridge": [(0.8 + index * 2.2, 2.4, 1.8, 0.9) for index in range(4)],
         "timeline_roadmap": [(0.8 + index * 2.2, 2.4, 1.8, 0.9) for index in range(4)],
         "qualitative_quadrant_or_comparison_table": [(1.2 + column * 4.2, 1.5 + row * 1.8, 3.2, 1.2) for row in range(2) for column in range(2)],
         "uniform_nodes": [(0.8 + index * 2.2, 2.4, 1.8, 0.9) for index in range(4)],
@@ -99,7 +102,7 @@ def _qualitative_manifest(relationship: str, fallback: str) -> dict:
                 "top": top + 0.25,
                 "width": width - 0.3,
                 "height": min(0.7, height - 0.3),
-                "text": f"Source-backed item {index + 1}",
+                "text": f"Source-backed item {chr(65 + index)}",
                 "font_size": 14,
                 "align": "center",
             }
@@ -277,12 +280,26 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
     reopened = Presentation(path)
     assert len(reopened.slides) == 8
     assert all(not any(shape.has_chart for shape in slide.shapes) for slide in reopened.slides)
+    with zipfile.ZipFile(path) as package:
+        assert not any(name.startswith("ppt/charts/") for name in package.namelist())
+        assert not any(b"<c:chart" in package.read(name) for name in package.namelist() if name.endswith(".xml"))
     expected_counts = (4, 4, 4, 4, 4, 4, 2, 3)
-    for slide, (_relationship, quantitative, fallback), expected_count in zip(reopened.slides, MATRIX, expected_counts, strict=True):
+    for slide, (relationship, _quantitative, fallback), expected_count in zip(reopened.slides, MATRIX, expected_counts, strict=True):
         names = {shape.name for shape in slide.shapes}
         assert any(fallback in name for name in names)
         nodes = [shape for shape in slide.shapes if shape.name.startswith(f"{fallback} node")]
         assert len(nodes) == expected_count
-        forbidden = {"axis", "scaled", "bubble size", "target line", "difference arrow"}
-        assert not any(term in name.casefold() for name in names for term in forbidden)
-        assert quantitative["rendering_primitive"] not in " ".join(names)
+        assert len({shape.width for shape in nodes}) == 1
+        assert len({shape.height for shape in nodes}) == 1
+        assert len({shape.width * shape.height for shape in nodes}) == 1
+        assert all(shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE and shape.auto_shape_type == MSO_SHAPE.ROUNDED_RECTANGLE for shape in nodes)
+        assert {shape.name for shape in slide.shapes if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE} == {shape.name for shape in nodes}
+        assert all(shape.shape_type not in {MSO_SHAPE_TYPE.LINE, MSO_SHAPE_TYPE.CHART} for shape in slide.shapes)
+        slide_text = "\n".join(shape.text for shape in slide.shapes if getattr(shape, "has_text_frame", False))
+        assert not re.search(r"\d", slide_text)
+        if relationship in {"drivers", "time_change", "third_variable", "project_stage_time", "goal_current_gap"}:
+            assert len({shape.top for shape in nodes}) == 1
+        if relationship == "two_variables":
+            assert len({shape.left for shape in nodes}) == 2 and len({shape.top for shape in nodes}) == 2
+        if relationship == "market_size_share":
+            assert len({shape.top for shape in nodes}) == 2 and len([shape for shape in nodes if shape.top == min(node.top for node in nodes)]) == 1
