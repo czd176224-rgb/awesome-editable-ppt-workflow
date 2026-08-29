@@ -1,6 +1,6 @@
 # Quantitative Chart Discipline v1.2.3 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add source-backed professional quantitative charts and financial-analysis discipline to v1.2.3 while preserving the v1.2.2 Word+SVG input, model-call count, editability, and ordinary-page behavior.
 
@@ -9,6 +9,8 @@
 **Tech Stack:** Python 3, python-docx, python-pptx, existing OfficeCLI/PowerPoint runtime, JSON, pytest.
 
 **Spec:** `docs/plans/2026-08-29-quantitative-chart-discipline-v1.2.3-design.md`
+
+**Starting point:** branch `spike/chart-feasibility-v1.2.3`, commit `47848f3`. Phase 0 is already complete: the optional manifest `charts` field, native PowerPoint preview path, final-assembly survival, real Word time-interval extraction, incomplete-data table fallback, and `numeric_authority` transport are proved. Production work hardens and generalizes that spike; it must not recreate it in a parallel path.
 
 ## Global Constraints
 
@@ -19,6 +21,7 @@
 - No new Agent, model call, reviewer, retry, service, schema system, Excel input, or dependency installation.
 - Standard charts are native PowerPoint chart objects; special charts are editable shapes and text, never whole-chart screenshots.
 - Every production change follows red-green-refactor and keeps the published v1.2.2 tag unchanged.
+- Stop after any task whose focused tests or ordinary-page regression tests remain red. Do not hide a failure with a screenshot, extra model call, or permissive fallback.
 
 ---
 
@@ -40,15 +43,16 @@
 
 ```python
 @pytest.mark.parametrize(("facts", "expected"), [
-    ({"categories": ["A", "B"], "series": [{"name": "Revenue", "values": [1, 2]}]}, "column_bar"),
-    ({"times": ["2025", "2026"], "series": [{"name": "Revenue", "values": [1, 2]}]}, "line_point"),
-    ({"x_values": [1, 2], "y_values": [3, 4]}, "xy"),
-    ({"start_value": 10, "changes": [2, -1], "end_value": 11}, "cumulative_bridge"),
-    ({"times": ["A"], "start_dates": ["2026-09-01"], "end_dates": ["2026-09-10"]}, "time_interval"),
-    ({"width_values": [60, 40], "share_values": [[70, 30], [20, 80]]}, "variable_rectangle"),
+    ({"unit": "USD m", "categories": ["A", "B"], "series": [{"name": "Revenue", "values": [1, 2]}]}, "column_bar"),
+    ({"unit": "USD m", "series": [{"name": "Revenue", "times": ["2025", "2026"], "values": [1, 2]}]}, "line_point"),
+    ({"unit": "%", "series": [{"name": "Assets", "x_values": [1, 2], "y_values": [3, 4]}]}, "xy"),
+    ({"unit": "USD m", "start_value": 10, "changes": [2, -1], "end_value": 11}, "cumulative_bridge"),
+    ({"series": [{"name": "Plan", "times": ["A"], "start_dates": ["2026-09-01"], "end_dates": ["2026-09-10"]}]}, "time_interval"),
+    ({"unit": "%", "width_values": [60, 40], "share_values": [[70, 30], [20, 80]]}, "variable_rectangle"),
 ])
 def test_numeric_authority_selects_only_complete_primitive(facts, expected):
-    assert numeric_authority_from_chart_facts([facts])["rendering_primitive"] == expected
+    authority = numeric_authority_from_chart_facts([facts])
+    assert authority["rendering_primitive"] == expected
 ```
 
 - [ ] **Step 2: Run the new tests and confirm they fail because the selector is absent**
@@ -65,25 +69,26 @@ RENDERING_PRIMITIVES = {
 def numeric_authority_from_chart_facts(chart_facts):
     eligible = []
     for item in chart_facts:
-        primitive = item.get("rendering_primitive")
+        primitive = conservative_rendering_primitive(item)
         if primitive not in RENDERING_PRIMITIVES:
             continue
-        if primitive == "column_bar" and item.get("categories") and item.get("series"):
-            eligible.append(copy.deepcopy(item))
-        elif primitive == "line_point" and item.get("times") and item.get("series"):
-            eligible.append(copy.deepcopy(item))
-        elif primitive == "xy" and item.get("x_values") and item.get("y_values"):
-            eligible.append(copy.deepcopy(item))
+        series = item.get("series", [])
+        if primitive == "column_bar" and item.get("categories") and series:
+            eligible.append({**copy.deepcopy(item), "rendering_primitive": primitive})
+        elif primitive == "line_point" and series and all(s.get("times") for s in series):
+            eligible.append({**copy.deepcopy(item), "rendering_primitive": primitive})
+        elif primitive == "xy" and series and all(s.get("x_values") and s.get("y_values") for s in series):
+            eligible.append({**copy.deepcopy(item), "rendering_primitive": primitive})
         elif primitive == "cumulative_bridge" and all(key in item for key in ("start_value", "changes", "end_value")):
-            eligible.append(copy.deepcopy(item))
-        elif primitive == "time_interval" and all(key in item for key in ("start_dates", "end_dates")):
-            eligible.append(copy.deepcopy(item))
+            eligible.append({**copy.deepcopy(item), "rendering_primitive": primitive})
+        elif primitive == "time_interval" and series and all(s.get("start_dates") and s.get("end_dates") for s in series):
+            eligible.append({**copy.deepcopy(item), "rendering_primitive": primitive})
         elif primitive == "variable_rectangle" and all(key in item for key in ("width_values", "share_values")):
-            eligible.append(copy.deepcopy(item))
+            eligible.append({**copy.deepcopy(item), "rendering_primitive": primitive})
     return eligible[0] if len(eligible) == 1 else None
 ```
 
-Keep direct per-family eligibility branches in the existing materials module. Do not add a registry or generic rule engine.
+`conservative_rendering_primitive()` is one direct ordered `if` chain. It honors a valid source-backed primitive from Phase 0, otherwise maps only complete explicit dimensions. Keep both functions in the existing materials module; do not add a registry or generic rule engine.
 
 - [ ] **Step 4: Add refusal tests**
 
@@ -199,7 +204,7 @@ git commit -m "feat: add quantitative and financial prompt discipline"
 - Modify: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/build_pptx_from_manifest.py`
 - Modify: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/validate_pptx.py`
 - Test: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_manifest_run_record_finalize.py`
-- Test: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_quantitative_charts.py`
+- Create: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_quantitative_charts.py`
 
 **Interfaces:**
 - Consumes: `manifest.charts[]` entries with `object_id`, `rendering_primitive`, `box_px`, categories/series/dimensions, labels, unit, and source digest.
@@ -239,7 +244,6 @@ git commit -m "feat: validate native chart manifests"
 ### Task 5: Render the Three Special Primitives as Editable Shapes
 
 **Files:**
-- Create: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/quantitative_shapes.py`
 - Modify: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/build_pptx_from_manifest.py`
 - Modify: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/validate_pptx.py`
 - Test: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_quantitative_charts.py`
@@ -274,7 +278,7 @@ if width_total <= 0:
     raise ValueError("variable rectangle widths must sum to a positive value")
 ```
 
-Use the existing rectangle, line, and text manifest fields. Do not add a chart class hierarchy, renderer interface, or generic geometry engine.
+Keep the three short expansion functions beside the existing manifest normalization code. Use the existing rectangle, line, and text manifest fields. Extract a separate module only if this file would otherwise exceed the repository's current maintainability threshold during review; do not add a chart class hierarchy, renderer interface, or generic geometry engine.
 
 - [ ] **Step 4: Expand special charts during manifest normalization**
 
@@ -291,7 +295,7 @@ Run: `python -m pytest plugins/awesome-editable-ppt-workflow/skills/reconstruct-
 - [ ] **Step 7: Commit**
 
 ```bash
-git add plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/quantitative_shapes.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/build_pptx_from_manifest.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/validate_pptx.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_quantitative_charts.py
+git add plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/build_pptx_from_manifest.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/validate_pptx.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_quantitative_charts.py
 git commit -m "feat: render editable special charts"
 ```
 
@@ -301,7 +305,7 @@ git commit -m "feat: render editable special charts"
 - Modify: `plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction_worker.py`
 - Modify: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/prompts/page-worker.md`
 - Modify: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/scripts/build-page-worker-prompt.py`
-- Test: `plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_reconstruction_worker.py`
+- Test: `plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_accepted_image_worker_reconstruction.py`
 - Test: `plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_current_editable_page_package.py`
 
 **Interfaces:**
@@ -314,7 +318,7 @@ Assert byte-for-byte semantic equality of `numeric_authority`, inclusion in the 
 
 - [ ] **Step 2: Run the two test files and confirm failure**
 
-Run: `python -m pytest plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_reconstruction_worker.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_current_editable_page_package.py -q`
+Run: `python -m pytest plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_accepted_image_worker_reconstruction.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_current_editable_page_package.py -q`
 
 - [ ] **Step 3: Copy the optional authority into the existing page request before dispatch**
 
@@ -326,12 +330,12 @@ Require native charts/special shapes from `numeric_authority`, prohibit chart sc
 
 - [ ] **Step 5: Run the request, prompt, and dispatch tests**
 
-Run: `python -m pytest plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_reconstruction_worker.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_current_editable_page_package.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_manifest_run_record_finalize.py -q`
+Run: `python -m pytest plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_accepted_image_worker_reconstruction.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_current_editable_page_package.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_manifest_run_record_finalize.py -q`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction_worker.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/prompts/page-worker.md plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/scripts/build-page-worker-prompt.py plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_reconstruction_worker.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_current_editable_page_package.py
+git add plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction_worker.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/prompts/page-worker.md plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/scripts/build-page-worker-prompt.py plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_accepted_image_worker_reconstruction.py plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_current_editable_page_package.py
 git commit -m "feat: seal chart authority into reconstruction"
 ```
 
@@ -340,7 +344,7 @@ git commit -m "feat: seal chart authority into reconstruction"
 **Files:**
 - Modify: plugin version metadata files identified by `rg -n '1\.2\.2' plugins/awesome-editable-ppt-workflow`
 - Modify: `docs/plans/2026-08-29-quantitative-chart-discipline-v1.2.3-design.md`
-- Test: `plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_quantitative_chart_v123_e2e.py`
+- Create: `plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_quantitative_chart_v123_e2e.py`
 
 **Interfaces:**
 - Consumes: six complete Word fixtures and one qualitative control fixture.
@@ -383,6 +387,8 @@ git commit -m "feat: complete quantitative chart discipline v1.2.3"
 - Placeholder scan: no placeholder markers, generic error-handling instruction, or undefined follow-up step remains.
 - Type consistency: all downstream tasks consume the same `numeric_authority` and six-value `rendering_primitive`; `charts[]` remains inside the existing manifest; special renderers return existing `shapes[]` and `text_boxes[]` records.
 
-## Execution Mode
+## Execution Handoff
 
-Use inline execution with `superpowers:executing-plans` in this existing isolated worktree. Subagent execution is not required for this plan because the production files overlap heavily and Ponytail favors the smallest coordinated diff.
+Preferred: execute sequentially in this existing isolated worktree with `superpowers:executing-plans`; the production files overlap heavily, so one owner and per-task checkpoints are simpler.
+
+Alternative: use `superpowers:subagent-driven-development` in this session, but dispatch only independent test/review slices and keep the overlapping production files under one owner.
