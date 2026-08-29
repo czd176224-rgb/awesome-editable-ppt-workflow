@@ -65,11 +65,11 @@ For a page with confirmed `chart_facts`:
 2. Local deterministic code derives only permitted presentation annotations when all required inputs are complete and compatible.
 3. The page director receives allowed chart semantics and verified annotations. It selects the analytical layout but never calculates a value.
 4. Image2 renders the accepted visual composition under the existing prompt and review loop.
-5. The confirmed `chart_facts` payload and permitted derivations are copied into the reconstruction page directory as a sealed sidecar, with source page and SHA-256 recorded in existing page request/result metadata. This is an optional extension of existing records, not a new standalone schema or schema version.
-6. The reconstruction worker uses `source.png` for geometry, hierarchy, palette, spacing, and visual rhythm. It uses the sealed sidecar only for series, categories, values, periods, units, and permitted formula results.
-7. Local validation compares reconstructed chart data and labels against the sealed sidecar before the page can complete.
+5. The existing `page_request.json` receives one optional `numeric_authority` field containing confirmed `chart_facts` and permitted derivations. Page dispatch already seals and later verifies the whole request by SHA-256, so no second sidecar or hashing protocol is added.
+6. The reconstruction worker uses `source.png` for chart container geometry, hierarchy, palette, spacing, and visual rhythm. It uses `numeric_authority` for series, categories, values, periods, units, calculated labels, and the exact geometry of quantitative marks.
+7. Local validation compares reconstructed chart data and labels against `numeric_authority` before the page can complete.
 
-The sidecar cannot authorize new wording, new assumptions, new periods, new subjects, or a different visual argument.
+`numeric_authority` cannot authorize new wording, new assumptions, new periods, new subjects, or a different visual argument. It may override only the accepted image's approximate chart-mark geometry or numeric transcription when exact data requires it.
 
 ## 5. Chart Eligibility
 
@@ -86,6 +86,14 @@ Minimum rules:
 - Gantt requires source-backed start/end dates or start/duration values;
 - Mekko-like encoding requires complete values for both width and internal composition;
 - qualitative importance, priority, confidence, risk, or sequence must never become height, width, area, position, bubble size, or proportion unless the Word source provides the numeric encoding.
+
+Extend the existing `chart_facts` payload with optional explicit dimensions rather than inferring them from free text:
+
+- `x_values`, `y_values`, and `size_values` for XY and bubble charts;
+- `start_dates` and `end_dates` for time intervals;
+- `width_values` and `share_values` for variable rectangles.
+
+The current `name`, `value(s)`, `time(s)`, `unit`, `trend`, and `relationship` fields remain unchanged. Missing explicit dimensions disable only the chart family that needs them; they do not trigger model inference or a new schema.
 
 If the conditions are incomplete or ambiguous, retain the source chart type when it is recoverable; otherwise fall back to a native table. Never invent missing numbers to keep a chart.
 
@@ -146,7 +154,7 @@ When more than one encoding is valid, prefer the simpler primitive. When the rel
 
 ## 8. Deterministic Presentation Calculations
 
-The model must not calculate. Existing local Python code may produce only presentation annotations whose inputs and formula are complete and compatible:
+The model must not calculate. Small local pure functions may produce only presentation annotations whose inputs are complete and compatible:
 
 - total and subtotal;
 - absolute difference;
@@ -158,7 +166,7 @@ The model must not calculate. Existing local Python code may produce only presen
 - cumulative waterfall positions;
 - Gantt duration from valid dates.
 
-Each derivation records its input values, formula identifier, displayed result, unit, period, and source page. A missing subject, unit, period, denominator, base, or required endpoint disables the derivation. The page then renders without that annotation.
+Do not build a formula registry, generic derivation engine, or user-defined formula layer. Each rendering primitive calls only the direct helper it needs, such as `difference`, `share`, `cagr`, or `duration`. The helper stores its input values, displayed result, unit, period, and source page directly in `numeric_authority`. A missing subject, unit, period, denominator, base, or required endpoint disables the derivation. The page then renders without that annotation.
 
 The feature does not calculate IRR, DCF, valuation multiples, market size, forecasts, scenarios, or investment returns unless the exact displayed result is already present in the Word source. It does not make investment judgments.
 
@@ -211,7 +219,7 @@ Reconstruction has three ordered outcomes:
 
 The worker must never use a raster screenshot of a whole chart merely to pass visual QA. Every visible number and label remains editable. Complex non-data visual texture may remain raster only under the existing accepted-image rules, never as a substitute for chart structure.
 
-The accepted image remains the sole visual authority. The sealed chart sidecar may correct numeric transcription and populate editable chart data, but it must not redesign the accepted page.
+The accepted image remains the authority for the chart container, composition, hierarchy, palette, spacing, and visual rhythm. `numeric_authority` is the authority for quantitative marks, labels, and editable chart data. Exact data may therefore correct an approximate bar length, point position, rectangle size, or numeric transcription without redesigning the accepted page.
 
 ## 12. Reviewer Contract
 
@@ -219,22 +227,20 @@ Use the existing independent reviewer and existing problem categories. Extend th
 
 The reviewer rejects when:
 
-- length, position, area, width, height, or bubble size contradicts the sealed data relationship;
 - a label, unit, period, entity, actual/forecast status, or total relationship changes;
 - a qualitative statement becomes quantitative encoding;
-- a derived annotation contradicts the sealed local formula result;
 - a chart loses the evidence-to-interpretation-to-conclusion path required by the page;
 - a financial judgment or metric is added beyond the Word source;
 - decorative spectacle, card fragmentation, or imagery displaces the analytical chart.
 
-Post-reconstruction local validation proves exact values and object editability. The model reviewer is not the authority for arithmetic equality.
+The reviewer checks chart-family suitability and semantic misuse, not precise bar length, area, bubble size, point position, or arithmetic. Post-reconstruction local validation proves exact values, quantitative geometry, derivations, and object editability.
 
 ## 13. Failure and Degradation
 
 - uncertain chart mapping -> retain source chart type or table;
 - incomplete calculation inputs -> omit the annotation;
-- Image2 encoding conflicts with source data -> existing reviewer rejects the candidate;
-- reconstructed values differ from sealed data -> local validation fails and blocks page completion;
+- Image2 uses the wrong chart family, changes a source label/unit/period/entity, or quantifies qualitative content -> the existing reviewer rejects the candidate;
+- reconstructed values or quantitative geometry differ from `numeric_authority` -> local validation fails and blocks page completion;
 - unsupported native chart -> use grouped editable shapes;
 - unreliable special-chart reconstruction -> use a native table;
 - missing required data -> never call another model and never invent a substitute;
@@ -249,8 +255,8 @@ Keep the diff within the current workflow wherever practical:
 - `workflow_v6_materials.py`: eligibility, conservative relationship mapping, and deterministic presentation annotations;
 - `consulting_prompt.py`: conditional quantitative and financial clauses inside the existing six sections;
 - `review.py`: extend existing factual, relational, and unusable-composition definitions;
-- `workflow_v6_reconstruction.py`: seal and route existing chart facts to reconstruction;
-- `page-worker.md`: permit the sealed chart sidecar as numeric authority only;
+- `workflow_v6_reconstruction.py`: place existing chart facts and direct derivations into the optional `page_request.numeric_authority` field;
+- `page-worker.md`: define the limited numeric-authority exception to accepted-image visual authority;
 - existing reconstruction/Office helpers: create native charts or editable shape groups;
 - existing tests: contract, refusal, reconstruction, validation, and regression coverage.
 
@@ -276,7 +282,7 @@ Required checks:
 - invalid or incomplete inputs disable the corresponding chart/annotation;
 - standard outputs contain actual PowerPoint chart objects;
 - special outputs contain editable grouped shapes and no whole-chart screenshot fallback;
-- output values equal the sealed chart sidecar item by item;
+- output values and quantitative geometry equal `numeric_authority` item by item;
 - source and output page counts and pagination semantics remain unchanged;
 - ordinary consulting-page prompt and reconstruction behavior do not regress;
 - the run retains one director, one initial Image2 call, one reviewer, and at most two existing corrections;
@@ -294,6 +300,7 @@ Run the seven-page representative A/B gate before a full deck. Any wrong number,
 - dozens of independent chart implementations;
 - new user-facing chart-selection UI;
 - new Agent, model call, reviewer, error category, dependency, or formal schema.
+- independent chart sidecars, duplicate hashing protocols, generic formula registries, or free-text inference of required chart dimensions.
 
 ## 17. External Reference Boundary
 
@@ -315,7 +322,7 @@ Do not copy proprietary software behavior, UI, templates, source code, course sl
 - Use native PowerPoint Chart objects for standard charts and editable shape groups for special charts.
 - Permit only deterministic presentation calculations with complete source inputs.
 - Show a light source/period/unit indication on the page and retain full provenance in existing project records.
-- Preserve the accepted image as visual authority and route sealed `chart_facts` as numeric authority.
+- Preserve the accepted image as container/style authority and route existing `chart_facts` through `page_request.numeric_authority` for exact marks and labels.
 - Support 20-30 business chart names through six rendering primitives.
 - Deliver all six primitives in v1.2.3.
 - Use content-driven page composition rather than mandatory full-page or card-based layouts.
