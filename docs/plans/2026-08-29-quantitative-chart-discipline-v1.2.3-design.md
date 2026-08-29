@@ -65,7 +65,7 @@ For a page with confirmed `chart_facts`:
 2. Local deterministic code derives only permitted presentation annotations when all required inputs are complete and compatible.
 3. The page director receives allowed chart semantics and verified annotations. It selects the analytical layout but never calculates a value.
 4. Image2 renders the accepted visual composition under the existing prompt and review loop.
-5. The existing `page_request.json` receives one optional `numeric_authority` field containing confirmed `chart_facts` and permitted derivations. Page dispatch already seals and later verifies the whole request by SHA-256, so no second sidecar or hashing protocol is added.
+5. The existing `page_request.json` receives one optional `numeric_authority` field containing confirmed `chart_facts`, one explicit `rendering_primitive`, and permitted derivations. Page dispatch already seals and later verifies the whole request by SHA-256, so no second sidecar or hashing protocol is added.
 6. The reconstruction worker uses `source.png` for chart container geometry, hierarchy, palette, spacing, and visual rhythm. It uses `numeric_authority` for series, categories, values, periods, units, calculated labels, and the exact geometry of quantitative marks.
 7. Local validation compares reconstructed chart data and labels against `numeric_authority` before the page can complete.
 
@@ -94,6 +94,8 @@ Extend the existing `chart_facts` payload with optional explicit dimensions rath
 - `width_values` and `share_values` for variable rectangles.
 
 The current `name`, `value(s)`, `time(s)`, `unit`, `trend`, and `relationship` fields remain unchanged. Missing explicit dimensions disable only the chart family that needs them; they do not trigger model inference or a new schema.
+
+`numeric_authority.rendering_primitive` must be exactly one of `column_bar`, `line_point`, `xy`, `cumulative_bridge`, `time_interval`, or `variable_rectangle`. Local conservative mapping selects it before reconstruction. The reconstruction worker must not infer or replace it from the accepted image. An ambiguous mapping falls back to the recoverable source chart type or a native table.
 
 If the conditions are incomplete or ambiguous, retain the source chart type when it is recoverable; otherwise fall back to a native table. Never invent missing numbers to keep a chart.
 
@@ -260,7 +262,35 @@ Keep the diff within the current workflow wherever practical:
 - existing reconstruction/Office helpers: create native charts or editable shape groups;
 - existing tests: contract, refusal, reconstruction, validation, and regression coverage.
 
-Do not introduce a chart framework, finance library, new runtime service, new formal schema, or new top-level workflow.
+Do not introduce a chart framework, finance library, new runtime service, standalone chart schema system, parallel manifest, or new top-level workflow. Phase 0 may authorize one optional `charts` field in the existing page manifest only if the existing Office post-build path cannot pass the complete build/render/validate/assembly gate.
+
+## 14.1 Phase 0 Feasibility Gate
+
+Phase 0 is a hard prerequisite to the implementation plan. It proves the two integration points that v1.2.2 does not currently guarantee; it does not implement the six production primitives.
+
+### Spike A: native PowerPoint Chart lifecycle
+
+Use one real paginated Word page with a standard chart and the current V6/reconstruction runtime.
+
+1. Extract exact source labels, series, values, period, and unit into `numeric_authority`.
+2. Set an explicit `rendering_primitive`.
+3. Create one native PowerPoint Chart with the existing Office capability after the current deterministic page build.
+4. Regenerate the page preview.
+5. Run the existing page validation, final assembly, and Office validation.
+6. Reopen the assembled PPTX and prove that it contains a real chart object whose categories and values equal `numeric_authority` item by item.
+7. Prove that the run added no Agent, model call, reviewer, or correction opportunity.
+
+If this complete lifecycle passes, reuse the Office post-build path. If it fails because the current manifest/build lifecycle cannot own or reproduce the chart, extend the existing page manifest with one optional `charts` field and rerun the same gate. Do not create a parallel chart manifest.
+
+### Spike B: complex Word dimensions
+
+Use at least one real Word source containing explicit time-interval or variable-rectangle data.
+
+1. Prove that the source extractor can populate `start_dates`/`end_dates` or `width_values`/`share_values` without free-text model inference.
+2. Prove that incomplete dimensions disable the corresponding primitive and fall back to a native table.
+3. Prove that the explicit dimensions and selected `rendering_primitive` survive through `page_request.numeric_authority` unchanged.
+
+Phase 0 passes only when both spikes pass. A failed spike blocks the implementation plan and triggers a design revision; it must not be hidden behind a screenshot, heuristic inference, best-effort chart object, or additional model call.
 
 ## 15. Verification and Release Gate
 
@@ -299,7 +329,7 @@ Run the seven-page representative A/B gate before a full deck. Any wrong number,
 - DCF, three-statement, LBO, M&A, valuation, forecasting, or scenario engines;
 - dozens of independent chart implementations;
 - new user-facing chart-selection UI;
-- new Agent, model call, reviewer, error category, dependency, or formal schema.
+- new Agent, model call, reviewer, error category, dependency, standalone chart schema, or parallel manifest.
 - independent chart sidecars, duplicate hashing protocols, generic formula registries, or free-text inference of required chart dimensions.
 
 ## 17. External Reference Boundary
@@ -323,7 +353,9 @@ Do not copy proprietary software behavior, UI, templates, source code, course sl
 - Permit only deterministic presentation calculations with complete source inputs.
 - Show a light source/period/unit indication on the page and retain full provenance in existing project records.
 - Preserve the accepted image as container/style authority and route existing `chart_facts` through `page_request.numeric_authority` for exact marks and labels.
+- Record one explicit `rendering_primitive` in `numeric_authority`; reconstruction never guesses it from the accepted image.
 - Support 20-30 business chart names through six rendering primitives.
 - Deliver all six primitives in v1.2.3.
+- Require Phase 0 native-chart lifecycle and real-Word complex-dimension spikes before the implementation plan; allow one optional `charts` field in the existing page manifest only if the Office post-build path fails.
 - Use content-driven page composition rather than mandatory full-page or card-based layouts.
-- Add no Agent, model call, external dependency, financial engine, or formal schema.
+- Add no Agent, model call, external dependency, financial engine, standalone chart schema, or parallel manifest.
