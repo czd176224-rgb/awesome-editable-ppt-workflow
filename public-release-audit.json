@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v2-source-text-custody",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "dc226000102bae5f82d5a78708ab76cff977afd83c7287ab5bb7b6bc635adedb",
+  "sourceManifestSha256": "10d7fe34af27db3ad1e555d8a3d311d38f9ec455aa337c0dd326478be111d2b1",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -213,8 +213,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/build_pptx_from_manifest.py",
-      "bytes": 95681,
-      "sha256": "07133cc8e0d8fe762006eaa26664551924cb08d6ddde2991a65a3a75ea781304"
+      "bytes": 96590,
+      "sha256": "b3858aa57bd225c5579437986a87d016e5cee1cd9b81ac260860ced4c9565c92"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/configure_image_backend.py",
@@ -338,8 +338,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/validate_pptx.py",
-      "bytes": 43329,
-      "sha256": "ee5b5b134a7a0d8c98420620fd741009b882e33c76a5df3ec3ea7ffbaf78c916"
+      "bytes": 43355,
+      "sha256": "b1407aee7c23af4b46d4750e8fa1d87631319cebff1ef9b09de88168d444d0ad"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/workflow_metrics.py",
@@ -383,8 +383,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_quantitative_charts.py",
-      "bytes": 37527,
-      "sha256": "af22fd9562b4197ea35f1e67e85dc15b43a1ba72d47d7100901bdb918c941178"
+      "bytes": 37644,
+      "sha256": "5b6421ef53ecca705a92cb10e1493cd97328a6e7e87e4a7c46e75dd3d49755a6"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_v4_manifest_runtime.py",
@@ -403,8 +403,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/references/manifest-schema.md",
-      "bytes": 18253,
-      "sha256": "76fcba64a16798873b10ca7ca4c707572efd181ae3a345330b04a8c562bd56b0"
+      "bytes": 18304,
+      "sha256": "5a7e12deea53a55878c32bb76e7e2dedc362d50e8160d9d5765c72f12d3cfab4"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/references/page-decision-tree.md",
@@ -848,8 +848,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_materials.py",
-      "bytes": 41039,
-      "sha256": "037f6d44a4383d8d30ba9be4c817a709ef2654ec4145cb629a7783c3bf7d98e6"
+      "bytes": 41310,
+      "sha256": "8f0d65b2e8cd00621d1f27a4ce708250d169df00344d19d4702056682ba42d8d"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_media.py",
@@ -1063,8 +1063,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_huangshi_v123_acceptance.py",
-      "bytes": 12752,
-      "sha256": "49f488513909db393eb5757fec1ada7abeff745699167d1b62a53b40064cd0e1"
+      "bytes": 27354,
+      "sha256": "e0c03e830fa3582b484c9103afb0b1fa2754572d164c8252d8bde8a87298c27d"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_internal_closed_design_plan.py",
@@ -1083,8 +1083,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_quantitative_chart_v123_e2e.py",
-      "bytes": 9225,
-      "sha256": "79bb831d69687329a26fef77a794c23da849337c39f64a20d532d220d9deb4d3"
+      "bytes": 18232,
+      "sha256": "bc2cef718cb40e53cbe85a8a36499c70d420235a6193c1011a6d96e87f4b5364"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_source_assets_chart_dimensions.py",
@@ -1194,7 +1194,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 48156,
-      "sha256": "dc226000102bae5f82d5a78708ab76cff977afd83c7287ab5bb7b6bc635adedb"
+      "sha256": "10d7fe34af27db3ad1e555d8a3d311d38f9ec455aa337c0dd326478be111d2b1"
     },
     {
       "path": "README.md",
@@ -1263,8 +1263,8 @@
     },
     {
       "path": "tests/test_release_hardening_v2.py",
-      "bytes": 19852,
-      "sha256": "a5b5915eef04297c56e6e48da37559e5c6423dd1272f29b4b2618dd2d7ec8c11"
+      "bytes": 20586,
+      "sha256": "22e533e3ccd05b53ddaa9ea9a0e69ecb583f08f52b4a1f112236df74e0320592"
     },
     {
       "path": "tests/test_runtime_install_safety.py",
