@@ -87,3 +87,22 @@ Additional verification:
 ## Concerns
 
 None blocking.
+
+## Independent Review Fixes
+
+The four independent-review findings are resolved with one shared-path fix and prompt-contract corrections:
+
+- `_prepare_run()` now validates the immutable accepted reconstruction request before touching `page_request.json`, then synchronizes `numeric_authority` in both directions. Interrupted qualitative recovery removes stale authority instead of leaking quantitative instructions.
+- The six-section director now carries the complete eight-row Section 5.1 semantics, including each quantitative prerequisite and named non-scaled substitute.
+- The existing content section now preserves subject, unit, period, basis, actual/forecast status, source-stated assumptions, total/component relationships, and the separation of facts, assumptions, calculated results, analytical judgments, and recommendations.
+- The existing worker template and prompt builder now state that the source image owns chart-container placement/composition/style, while sealed authority owns quantitative mark size/position/labels.
+
+Review-fix TDD and regression evidence:
+
+```text
+RED: 11 failed in 6.19s
+Focused GREEN: 11 passed in 5.30s
+Task 5 worker/package/prompt/reviewer gate: 68 passed in 223.28s
+Renderer gate: 58 passed in 8.36s
+Materials/reconstruction regression: 105 passed in 11.68s
+```

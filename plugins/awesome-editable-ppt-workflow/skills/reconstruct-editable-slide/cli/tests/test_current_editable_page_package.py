@@ -124,8 +124,8 @@ def test_page_worker_prompt_seals_composition_and_numeric_ownership(tmp_path):
 
     prompt = _worker_prompt(tmp_path, authority)
 
-    assert "accepted source image owns composition and style" in prompt
-    assert "sealed numeric authority owns quantitative marks and labels" in prompt
+    assert "accepted source image owns chart container placement, composition, and style" in prompt
+    assert "sealed numeric authority owns quantitative mark size, position, and labels" in prompt
     assert "must not change its rendering_primitive or chart_variant" in prompt
     assert "must not calculate new metrics" in prompt
     assert json.dumps(authority, ensure_ascii=False, sort_keys=True) in prompt

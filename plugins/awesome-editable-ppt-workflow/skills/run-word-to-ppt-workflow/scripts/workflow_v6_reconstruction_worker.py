@@ -102,21 +102,23 @@ def _prepare_run(project: Path, reconstruction_request: dict[str, Any], page_num
         raise RuntimeError(
             "previous Codex page worker ended without validation; explicit reset required before resubmission"
         )
-    page_request_path = page_dir / "page_request.json"
-    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
-    numeric_authority = reconstruction_request.get("numeric_authority")
-    if numeric_authority is not None:
-        page_request["numeric_authority"] = numeric_authority
-        page_request_path.write_text(
-            json.dumps(page_request, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
     request_copy = page_dir / "accepted_reconstruction_request.json"
     encoded = (json.dumps(reconstruction_request, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if request_copy.exists() and request_copy.read_bytes() != encoded:
         raise RuntimeError("accepted reconstruction request changed after preparation")
     if not request_copy.exists():
         request_copy.write_bytes(encoded)
+    page_request_path = page_dir / "page_request.json"
+    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    numeric_authority = reconstruction_request.get("numeric_authority")
+    if numeric_authority is None:
+        page_request.pop("numeric_authority", None)
+    else:
+        page_request["numeric_authority"] = numeric_authority
+    page_request_path.write_text(
+        json.dumps(page_request, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     prompt_file = page_dir / "worker-prompt.md"
     _run_script(PROMPT_BUILDER, run_dir, "--page", "page_001", "--out", prompt_file)
     runtime_command = f'"{_python()}" "{RUNTIME / "main.py"}"'

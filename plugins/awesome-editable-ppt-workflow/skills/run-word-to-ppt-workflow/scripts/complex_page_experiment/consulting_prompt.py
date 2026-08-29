@@ -65,7 +65,11 @@ _QUANTITATIVE_CONTENT_CONSTRAINT = (
     "subject, unit, period, basis, categories, and values required by that form. Preserve every "
     "source value and label exactly; do not calculate new metrics, infer missing values, or mix "
     "incompatible subjects, units, periods, or bases. When those dimensions are incomplete, use "
-    "the named qualitative substitute and make the source-stated relationship visibly legible."
+    "the named qualitative substitute and make the source-stated relationship visibly legible. "
+    "When a page contains financial, valuation, investment, or operating data, preserve subject, "
+    "unit, period, basis, actual/forecast status, source-stated assumptions, and total-to-component "
+    "relationships. Keep facts, assumptions, calculated results, analytical judgments, and "
+    "recommendations distinct."
 )
 
 _VISIBLE_TEXT_CUSTODY = (
@@ -88,14 +92,14 @@ _ARCHITECTURE_CONSTRAINT = (
 )
 
 _DUAL_MODE_RELATIONSHIP_CONSTRAINT = """Apply this exact eight-row dual-mode relationship mapping:
-increase_decrease_drivers: use a cumulative bridge only when source evidence is complete; otherwise use a driver bridge.
-change_over_time: use a line or point chart only when source evidence is complete; otherwise use a timeline/roadmap.
-two_variable_relationship: use a scatter plot only when source evidence is complete; otherwise use a source-labelled qualitative quadrant or table.
-third_variable_size: use a bubble chart only when source evidence is complete; otherwise use uniform nodes.
-market_size_share: use a variable-width hierarchy only when source evidence is complete; otherwise use an equal-width hierarchy.
-project_stage_time: use a time-interval chart only when source evidence is complete; otherwise use a roadmap/milestones.
-option_comparison: use a bar or column chart only when source evidence is complete; otherwise use a comparison table.
-target_actual_variance: use a target-versus-actual chart only when source evidence is complete; otherwise use a goal-current-gap."""
+increase_decrease_drivers: use a scaled cumulative bridge/waterfall only with verified start, changes, and end; otherwise use an equal-weight positive/negative driver bridge with no cumulative baseline or computed end value.
+change_over_time: use a line or column chart only with explicit periods and values; otherwise use a timeline or stage-evolution roadmap with no implied slope or magnitude.
+two_variable_relationship: use a scatter plot only with numeric x/y values; use a clearly labelled qualitative quadrant only when the source supplies the two qualitative axes and item classifications; otherwise use a comparison table.
+third_variable_size: encode bubble size only from a real non-negative third numeric variable; otherwise use uniform-size nodes with no size ranking.
+market_size_share: use a Mekko/variable rectangle only with complete width and share values; otherwise use an equal-width hierarchy or portfolio matrix with no area-based claim.
+project_stage_time: use a Gantt only with explicit start/end or start/duration; otherwise use an ordered roadmap or milestone sequence when dates/durations are absent.
+option_comparison: use a bar/dot plot only when comparable values or source ratings exist; otherwise use a native comparison table with source-backed criteria and wording.
+target_actual_variance: use bar/dot plus target line or difference arrow only when both values share a unit/basis; otherwise use a goal-current-gap narrative structure with no target line, arrow magnitude, or calculated variance."""
 
 _TYPOGRAPHY_CONSTRAINT = (
     "Render source-authorized Simplified Chinese accurately and legibly, with presentation-scale "

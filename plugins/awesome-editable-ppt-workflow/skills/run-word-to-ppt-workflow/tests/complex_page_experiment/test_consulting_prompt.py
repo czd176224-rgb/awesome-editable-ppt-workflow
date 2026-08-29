@@ -185,20 +185,84 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
 
 
 @pytest.mark.parametrize(
-    ("relationship", "quantitative_form", "qualitative_substitute"),
+    ("relationship", "required_semantics"),
     [
-        ("increase_decrease_drivers", "cumulative bridge", "driver bridge"),
-        ("change_over_time", "line or point chart", "timeline/roadmap"),
-        ("two_variable_relationship", "scatter plot", "source-labelled qualitative quadrant or table"),
-        ("third_variable_size", "bubble chart", "uniform nodes"),
-        ("market_size_share", "variable-width hierarchy", "equal-width hierarchy"),
-        ("project_stage_time", "time-interval chart", "roadmap/milestones"),
-        ("option_comparison", "bar or column chart", "comparison table"),
-        ("target_actual_variance", "target-versus-actual chart", "goal-current-gap"),
+        (
+            "increase_decrease_drivers",
+            (
+                "scaled cumulative bridge/waterfall",
+                "verified start, changes, and end",
+                "equal-weight positive/negative driver bridge",
+                "no cumulative baseline or computed end value",
+            ),
+        ),
+        (
+            "change_over_time",
+            (
+                "line or column chart",
+                "explicit periods and values",
+                "timeline or stage-evolution roadmap",
+                "no implied slope or magnitude",
+            ),
+        ),
+        (
+            "two_variable_relationship",
+            (
+                "scatter plot",
+                "numeric x/y values",
+                "source supplies the two qualitative axes and item classifications",
+                "otherwise use a comparison table",
+            ),
+        ),
+        (
+            "third_variable_size",
+            (
+                "bubble size",
+                "real non-negative third numeric variable",
+                "uniform-size nodes",
+                "no size ranking",
+            ),
+        ),
+        (
+            "market_size_share",
+            (
+                "Mekko/variable rectangle",
+                "complete width and share values",
+                "equal-width hierarchy or portfolio matrix",
+                "no area-based claim",
+            ),
+        ),
+        (
+            "project_stage_time",
+            (
+                "Gantt",
+                "explicit start/end or start/duration",
+                "ordered roadmap or milestone sequence",
+                "dates/durations are absent",
+            ),
+        ),
+        (
+            "option_comparison",
+            (
+                "bar/dot plot",
+                "comparable values or source ratings",
+                "native comparison table",
+                "source-backed criteria and wording",
+            ),
+        ),
+        (
+            "target_actual_variance",
+            (
+                "bar/dot plus target line or difference arrow",
+                "both values share a unit/basis",
+                "goal-current-gap narrative structure",
+                "no target line, arrow magnitude, or calculated variance",
+            ),
+        ),
     ],
 )
 def test_compiler_emits_exact_dual_mode_relationship_mapping(
-    relationship: str, quantitative_form: str, qualitative_substitute: str,
+    relationship: str, required_semantics: tuple[str, ...],
 ) -> None:
     module = _load_compiler_module()
 
@@ -207,10 +271,8 @@ def test_compiler_emits_exact_dual_mode_relationship_mapping(
     )
 
     row = next(line for line in prompt.splitlines() if line.startswith(f"{relationship}:"))
-    assert quantitative_form in row
-    assert qualitative_substitute in row
-    assert "only when source evidence is complete" in row
-    assert "otherwise" in row
+    for semantic in required_semantics:
+        assert semantic in row
 
 
 def test_compiler_keeps_quantitative_and_qualitative_discipline_inside_six_sections() -> None:
@@ -222,8 +284,24 @@ def test_compiler_keeps_quantitative_and_qualitative_discipline_inside_six_secti
 
     assert len([line for line in prompt.splitlines() if line.startswith("## ")]) == 6
     assert "numeric_authority" not in prompt
-    for label_dimension in ("subject", "unit", "period", "basis"):
+    for label_dimension in (
+        "subject",
+        "unit",
+        "period",
+        "basis",
+        "actual/forecast status",
+        "source-stated assumptions",
+        "total-to-component relationships",
+    ):
         assert label_dimension in prompt
+    for analysis_layer in (
+        "facts",
+        "assumptions",
+        "calculated results",
+        "analytical judgments",
+        "recommendations",
+    ):
+        assert analysis_layer in prompt
     for forbidden_geometry in (
         "numeric axes",
         "proportional geometry",

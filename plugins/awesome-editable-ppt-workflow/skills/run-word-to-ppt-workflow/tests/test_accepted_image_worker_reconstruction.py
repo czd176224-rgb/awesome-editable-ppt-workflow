@@ -214,6 +214,43 @@ def test_qualitative_relationship_never_creates_numeric_authority_in_page_reques
     assert "numeric_authority" not in page_request
 
 
+def test_interrupted_prepare_validates_accepted_request_before_resyncing_authority(
+    tmp_path: Path,
+):
+    project = _project(tmp_path, 1)
+    accepted_request = worker_module.build_reconstruction_request(project, page_number=1)
+    run_dir, page_dir, _prompt_file = worker_module._prepare_run(
+        project, accepted_request, 1
+    )
+    page_request_path = page_dir / "page_request.json"
+    stale_authority = _numeric_authority()
+    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    page_request["numeric_authority"] = stale_authority
+    page_request_path.write_text(
+        json.dumps(page_request, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    changed_request = {
+        **accepted_request,
+        "numeric_authority": {**stale_authority, "unit": "EUR m"},
+    }
+    with pytest.raises(RuntimeError, match="accepted reconstruction request changed"):
+        worker_module._prepare_run(project, changed_request, 1)
+    assert json.loads(page_request_path.read_text(encoding="utf-8"))[
+        "numeric_authority"
+    ] == stale_authority
+
+    recovered_run, recovered_page, _prompt_file = worker_module._prepare_run(
+        project, accepted_request, 1
+    )
+    assert recovered_run == run_dir
+    assert recovered_page == page_dir
+    assert "numeric_authority" not in json.loads(
+        page_request_path.read_text(encoding="utf-8")
+    )
+
+
 def test_unreadable_text_uses_paddle_once_then_same_page_worker(tmp_path: Path):
     project = _project(tmp_path, 1)
     worker_calls: list = []

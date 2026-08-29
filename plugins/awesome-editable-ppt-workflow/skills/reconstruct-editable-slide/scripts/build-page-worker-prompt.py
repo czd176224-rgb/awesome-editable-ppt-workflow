@@ -92,8 +92,9 @@ def build_prompt(run_dir: Path, page: dict, page_dir: Path) -> str:
     else:
         numeric_contract = (
             "SEALED NUMERIC AUTHORITY\n"
-            "The accepted source image owns composition and style; the sealed numeric authority "
-            "owns quantitative marks and labels. Copy it unchanged, must not change its "
+            "The accepted source image owns chart container placement, composition, and style; "
+            "the sealed numeric authority owns quantitative mark size, position, and labels. "
+            "Copy it unchanged, must not change its "
             "rendering_primitive or chart_variant, and must not calculate new metrics.\n"
             + json.dumps(authority, ensure_ascii=False, sort_keys=True)
         )
