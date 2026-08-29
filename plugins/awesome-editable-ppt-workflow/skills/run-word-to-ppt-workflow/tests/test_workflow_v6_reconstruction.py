@@ -152,7 +152,7 @@ def test_reconstruction_request_preserves_numeric_authority(tmp_path: Path):
         "rendering_primitive": "time_interval",
         "series": [{
             "name": "计划",
-            "times": ["尽调", "投决"],
+            "categories": ["尽调", "投决"],
             "start_dates": ["2026-09-01", "2026-09-11"],
             "end_dates": ["2026-09-10", "2026-09-15"],
         }],
@@ -192,6 +192,22 @@ def test_reconstruction_request_refuses_incomplete_or_ambiguous_authority(tmp_pa
 
     path.write_text(json.dumps({"chart_facts": [complete, complete]}, ensure_ascii=False), encoding="utf-8")
     assert "numeric_authority" not in build_reconstruction_request(project, page_number=1)
+
+
+def test_reconstruction_request_refuses_legacy_times_numeric_authority(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    legacy = {
+        "title": "Revenue trend", "rendering_primitive": "line_point", "chart_variant": "line",
+        "unit": "USD m", "basis": "FY2025 revenue",
+        "series": [{"name": "Revenue", "times": ["2024", "2025"], "values": [12, 18]}],
+    }
+    path = project / "02_v6/page_materials/page_001.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"chart_facts": [legacy]}, ensure_ascii=False), encoding="utf-8")
+
+    request = build_reconstruction_request(project, page_number=1)
+
+    assert "numeric_authority" not in request
 
 
 def test_reconstruction_request_carries_signed_text_repairs(tmp_path: Path):

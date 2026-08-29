@@ -807,6 +807,45 @@ def test_multiple_complete_charts_are_ambiguous_and_produce_no_authority():
     assert workflow_v6_materials.select_numeric_authority([first, second]) is None
 
 
+def test_legacy_times_remain_fallback_text_and_never_authorize_one_dimensional_chart():
+    chart = _one_dimensional_chart("line_point", "line")
+    chart["series"] = [{"name": "Revenue", "times": ["2024", "2025"], "values": [12, 18]}]
+
+    facts = chart_to_facts(chart)
+
+    assert facts["series"][0]["times"] == ["2024", "2025"]
+    assert workflow_v6_materials.select_numeric_authority([facts]) is None
+
+
+@pytest.mark.parametrize(
+    "series",
+    [
+        {
+            "name": "Revenue", "categories": ["A", "B"], "category_indices": [0, 2],
+            "values": [10, 20], "value_indices": [0, 1],
+        },
+        {
+            "name": "Companies", "x_values": [1, 2], "x_indices": [0, 2],
+            "y_values": [3, 4], "y_indices": [0, 1], "size_values": [5, 6], "size_indices": [0, 2],
+        },
+    ],
+)
+def test_mismatched_source_point_indices_refuse_numeric_authority(series: dict[str, object]):
+    chart = (
+        {**_one_dimensional_chart("column_bar", "column"), "series": [series]}
+        if "categories" in series
+        else {
+            "title": "Portfolio", "rendering_primitive": "xy", "chart_variant": "bubble",
+            "x_label": "Growth", "x_unit": "%", "x_basis": "FY2025 growth",
+            "y_label": "Margin", "y_unit": "%", "y_basis": "FY2025 margin",
+            "size_label": "Revenue", "size_unit": "USD m", "size_basis": "FY2025 revenue",
+            "series": [series],
+        }
+    )
+
+    assert workflow_v6_materials.select_numeric_authority([chart]) is None
+
+
 @pytest.mark.parametrize(
     "relationship",
     [

@@ -554,7 +554,9 @@ def chart_to_facts(chart: Mapping[str, Any]) -> dict[str, Any]:
         for key in (
             "series", "name", "unit", "value", "values", "time", "times",
             "categories", "basis", "trend", "relationship", "source_wording",
+            "category_indices", "value_indices",
             "x_values", "x_label", "x_unit", "x_basis",
+            "x_indices", "y_indices", "size_indices",
             "y_values", "y_label", "y_unit", "y_basis",
             "size_values", "size_label", "size_unit", "size_basis",
             "start", "changes", "end", "start_dates", "end_dates",
@@ -618,6 +620,26 @@ def _series(chart: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return value
 
 
+def _aligned_indices(item: Mapping[str, Any], dimensions: Sequence[tuple[str, str]]) -> bool:
+    index_values = [item.get(index_key) for _value_key, index_key in dimensions]
+    if not any(value is not None for value in index_values):
+        return True
+    if any(not isinstance(value, list) for value in index_values):
+        return False
+    for value_key, index_key in dimensions:
+        values = item.get(value_key)
+        indices = item.get(index_key)
+        if (
+            not isinstance(values, list)
+            or not isinstance(indices, list)
+            or len(values) != len(indices)
+            or any(type(index) is not int or index < 0 for index in indices)
+            or len(indices) != len(set(indices))
+        ):
+            return False
+    return all(value == index_values[0] for value in index_values[1:])
+
+
 def _one_dimensional_complete(chart: Mapping[str, Any]) -> bool:
     primitive = chart.get("rendering_primitive")
     variants = {"column_bar": {"column", "bar"}, "line_point": {"line", "dot"}}
@@ -628,13 +650,14 @@ def _one_dimensional_complete(chart: Mapping[str, Any]) -> bool:
         return False
     comparison_basis: set[tuple[str, str]] = set()
     for item in series:
-        categories = item.get("categories", item.get("times"))
+        categories = item.get("categories")
         values = item.get("values")
         if (
             not _text(item, {}, "name") and not _text(item, {}, "series")
             or not _labels(categories)
             or not _numeric_list(values)
             or len(categories) != len(values)
+            or not _aligned_indices(item, (("categories", "category_indices"), ("values", "value_indices")))
         ):
             return False
         unit = _text_value(item, chart, "unit")
@@ -666,10 +689,14 @@ def _xy_complete(chart: Mapping[str, Any]) -> bool:
         y_values = item.get("y_values")
         if not _numeric_list(x_values) or not _numeric_list(y_values) or len(x_values) != len(y_values):
             return False
+        dimensions = [("x_values", "x_indices"), ("y_values", "y_indices")]
         if variant == "bubble":
             sizes = item.get("size_values")
             if not _numeric_list(sizes, non_negative=True) or len(sizes) != len(x_values):
                 return False
+            dimensions.append(("size_values", "size_indices"))
+        if not _aligned_indices(item, dimensions):
+            return False
     return bool(series)
 
 
@@ -697,7 +724,7 @@ def _cumulative_complete(chart: Mapping[str, Any]) -> bool:
 def _time_interval_complete(chart: Mapping[str, Any]) -> bool:
     series = _series(chart)
     for item in series:
-        categories = item.get("categories", item.get("times"))
+        categories = item.get("categories")
         starts = item.get("start_dates")
         ends = item.get("end_dates")
         if not _labels(categories) or not isinstance(starts, list) or not isinstance(ends, list):

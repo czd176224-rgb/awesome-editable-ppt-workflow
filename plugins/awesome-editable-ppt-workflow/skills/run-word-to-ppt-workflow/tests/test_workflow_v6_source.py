@@ -455,6 +455,41 @@ def test_initialize_v6_project_wires_source_chart_records_as_text_facts_only(tmp
     assert materials["reference_images"] == []
 
 
+def test_initialize_v6_project_retains_untitled_chart_fallback_evidence(tmp_path: Path, monkeypatch):
+    word = tmp_path / "input.docx"
+    logo = tmp_path / "logo.svg"
+    project = tmp_path / "project"
+    document = Document()
+    document.add_paragraph("Page 1")
+    document.add_paragraph("Evidence")
+    document.save(word)
+    logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
+
+    monkeypatch.setattr(workflow_v6_source, "extract_source_assets", lambda *_args: {
+        "assets": [], "chart_records": [{
+            "page_numbers": [1], "title": "Untitled source chart",
+            "disabled_primitive": "column_bar", "fallback": "native_table",
+            "series": [{"series": "Revenue", "categories": ["2025"], "values": ["20"]}],
+        }],
+    })
+    monkeypatch.setattr(workflow_v6_source, "extract_auto", lambda *_args, **_kwargs: {
+        "pagination_mode": "marker", "pages": [{
+            "page_number": 1, "blocks": [{
+                "type": "paragraph", "text": "Evidence", "source_block_index": 0,
+                "source_block_id": "word-block-000000",
+            }],
+            "page_comments": [],
+        }],
+    })
+
+    initialize_v6_project(word, logo, project)
+
+    facts = json.loads((project / "02_v6/page_materials/page_001.json").read_text(encoding="utf-8"))["chart_facts"][0]
+    assert facts["title"] == "Untitled source chart"
+    assert facts["fallback"] == "native_table"
+    assert facts["series"][0]["values"] == ["20"]
+
+
 def test_real_word_schedule_table_extracts_dates_or_falls_back(tmp_path: Path):
     logo = tmp_path / "logo.svg"
     logo.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"/>', encoding="utf-8")
