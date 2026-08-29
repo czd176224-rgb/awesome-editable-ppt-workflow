@@ -17,7 +17,7 @@ sys.path.insert(0, str(RUNTIME))
 WORKFLOW_SCRIPTS = Path(__file__).resolve().parents[3] / "run-word-to-ppt-workflow" / "scripts"
 sys.path.insert(0, str(WORKFLOW_SCRIPTS))
 
-from build_pptx_from_manifest import px_to_inches, render_preview, write_deck, write_pptx  # noqa: E402
+from build_pptx_from_manifest import normalize_manifest, px_to_inches, render_preview, write_deck, write_pptx  # noqa: E402
 from fixed_region_runtime import CONTENT_BOX, SLIDE  # noqa: E402
 from source_assets import _chart_record  # noqa: E402
 from workflow_v6_materials import select_numeric_authority  # noqa: E402
@@ -287,6 +287,76 @@ def test_variable_rectangle_uses_exact_normalized_widths_shares_and_labels(tmp_p
     ] == expected_segments
     texts = {shape.text for shape in slide.shapes if shape.has_text_frame}
     assert {"Market composition", "Markets", "A", "B", "40", "60", "25", "75", "100", "Market size", "USD m", "2025 addressable market", "Portfolio share", "%", "2025 composition", "FY2025"}.issubset(texts)
+    assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
+
+
+@pytest.mark.parametrize(
+    ("chart", "expected"),
+    [
+        ({**_cumulative_bridge(), "series": [{
+            **_cumulative_bridge()["series"][0], "end": 115.00000001,
+        }]}, "end"),
+        ({**_variable_rectangle(), "series": [{
+            **_variable_rectangle()["series"][0], "share_values": [[25, 75.00000001], [40, 60]],
+        }]}, "share_denominator"),
+    ],
+)
+def test_special_source_totals_require_exact_decimal_equality(
+    tmp_path: Path, chart: dict, expected: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected):
+        write_pptx(_manifest(chart), tmp_path / "decimal-mismatch.pptx", tmp_path / "manifest.json")
+
+
+def test_zero_waterfall_values_use_boundary_markers_and_positive_external_labels(tmp_path: Path) -> None:
+    chart = _cumulative_bridge()
+    chart["series"][0].update({
+        "categories": ["No change", "Increase", "Decrease"],
+        "start": 0,
+        "changes": [0, 5, -5],
+        "end": 0,
+    })
+    manifest = _manifest(chart)
+    normalized = normalize_manifest(manifest)
+    named_shapes = {item["name"]: item for item in normalized["shapes"]}
+    named_text = {item["name"]: item for item in normalized["text_boxes"]}
+
+    assert {"Value bridge Boundary 1", "Value bridge Boundary 2", "Value bridge Boundary 5"}.issubset(named_shapes)
+    assert all(named_shapes[name]["type"] == "line" and named_shapes[name]["width"] > 0 for name in (
+        "Value bridge Boundary 1", "Value bridge Boundary 2", "Value bridge Boundary 5",
+    ))
+    assert all(item["width"] > 0 and item["height"] > 0 for item in normalized["shapes"] if item["type"] == "rect")
+    assert all(item["width"] > 0 and item["height"] > 0 for item in normalized["text_boxes"])
+    assert named_text["Value bridge Value 1"]["text"] == "0"
+    assert named_text["Value bridge Value 2"]["text"] == "0"
+    assert named_text["Value bridge Value 5"]["text"] == "0"
+    assert named_text["Value bridge Value 1"]["top"] + named_text["Value bridge Value 1"]["height"] <= named_shapes["Value bridge Boundary 1"]["top"]
+
+    out = tmp_path / "zero-bridge.pptx"
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+    assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
+
+
+def test_zero_share_uses_boundary_marker_and_positive_external_label(tmp_path: Path) -> None:
+    chart = _variable_rectangle()
+    chart["series"][0]["share_values"][0] = [0, 100]
+    manifest = _manifest(chart)
+    normalized = normalize_manifest(manifest)
+    named_shapes = {item["name"]: item for item in normalized["shapes"]}
+    named_text = {item["name"]: item for item in normalized["text_boxes"]}
+
+    assert "Market composition Segment 1" not in named_shapes
+    assert named_shapes["Market composition Boundary 1"]["type"] == "line"
+    assert named_shapes["Market composition Boundary 1"]["width"] > 0
+    assert named_text["Market composition Share 1"]["text"] == "0"
+    assert named_text["Market composition Share 1"]["width"] > 0
+    assert named_text["Market composition Share 1"]["height"] > 0
+    assert named_text["Market composition Share 1"]["left"] >= named_shapes["Market composition Boundary 1"]["left"] + named_shapes["Market composition Boundary 1"]["width"]
+    assert all(item["width"] > 0 and item["height"] > 0 for item in normalized["shapes"] if item["type"] == "rect")
+    assert all(item["width"] > 0 and item["height"] > 0 for item in normalized["text_boxes"])
+
+    out = tmp_path / "zero-share.pptx"
+    write_pptx(manifest, out, tmp_path / "manifest.json")
     assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
 
 
