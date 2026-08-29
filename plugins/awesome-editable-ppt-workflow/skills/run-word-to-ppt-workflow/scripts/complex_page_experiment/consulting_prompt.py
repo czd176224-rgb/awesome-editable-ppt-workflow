@@ -105,7 +105,7 @@ _TYPOGRAPHY_CONSTRAINT = (
     "Render source-authorized Simplified Chinese accurately and legibly, with presentation-scale "
     "hierarchy for explanatory lead, analytical labels, evidence, interpretation, and takeaway. "
     "Apply TTS-style quantitative label discipline: every quantitative mark must identify its "
-    "subject and keep its unit, period, and basis explicit through the title, subtitle, axis, "
+    "subject and keep its unit, period, and basis explicit through the chart heading, secondary heading, axis, "
     "legend, data label, or adjacent source-exact annotation."
 )
 

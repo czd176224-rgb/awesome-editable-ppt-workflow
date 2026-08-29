@@ -18,11 +18,11 @@ def test_public_metadata_exposes_only_the_awesome_v1_product():
     assert manifest == {
         **manifest,
         "name": "awesome-editable-ppt-workflow",
-        "version": "1.2.2",
+        "version": "1.2.3",
     }
     assert package["plugin"] == "awesome-editable-ppt-workflow"
-    assert package["pluginVersion"] == manifest["version"] == "1.2.2"
-    assert package["releaseTag"] == "v1.2.2"
+    assert package["pluginVersion"] == manifest["version"] == "1.2.3"
+    assert package["releaseTag"] == "v1.2.3"
     assert package["workflowContractVersion"] == "awesome-word-ppt-workflow-v1"
     assert package["promptContractVersion"] == "consulting-page-director-v2-source-text-custody"
     assert package["qaPolicyVersion"] == "sole-independent-consulting-visual-review-v2"
