@@ -96,6 +96,76 @@ def _xy(variant: str) -> dict:
     return chart
 
 
+def _cumulative_bridge() -> dict:
+    return {
+        "object_id": "chart-1",
+        "name": "Value bridge",
+        "box_px": [190, 90, 1142, 620],
+        "rendering_primitive": "cumulative_bridge",
+        "title": "Value bridge",
+        "unit": "USD m",
+        "basis": "FY2025 EBITDA",
+        "period": "FY2025",
+        "series": [{
+            "name": "Bridge",
+            "categories": ["Pricing", "Volume"],
+            "start": 100,
+            "changes": [20, -5],
+            "end": 115,
+        }],
+    }
+
+
+def _time_interval() -> dict:
+    return {
+        "object_id": "chart-1",
+        "name": "Project schedule",
+        "box_px": [190, 90, 1142, 620],
+        "rendering_primitive": "time_interval",
+        "title": "Project schedule",
+        "period": "September 2026",
+        "series": [{
+            "name": "Plan",
+            "categories": ["Diligence", "IC"],
+            "start_dates": ["2026-09-01", "2026-09-11"],
+            "end_dates": ["2026-09-10", "2026-09-15"],
+        }],
+    }
+
+
+def _variable_rectangle() -> dict:
+    return {
+        "object_id": "chart-1",
+        "name": "Market composition",
+        "box_px": [190, 90, 1142, 620],
+        "rendering_primitive": "variable_rectangle",
+        "title": "Market composition",
+        "period": "FY2025",
+        "series": [{
+            "name": "Markets",
+            "categories": ["A", "B"],
+            "width_values": [40, 60],
+            "width_label": "Market size",
+            "width_unit": "USD m",
+            "width_basis": "2025 addressable market",
+            "share_values": [[25, 75], [40, 60]],
+            "share_label": "Portfolio share",
+            "share_unit": "%",
+            "share_basis": "2025 composition",
+            "share_denominator": 100,
+        }],
+    }
+
+
+def _description(shape) -> str | None:
+    return shape._element.xpath(".//p:cNvPr")[0].get("descr")
+
+
+def _preset(shape) -> str | None:
+    geometry = shape._element.xpath(".//a:prstGeom")
+    return geometry[0].get("prst") if geometry else None
+
+
 @pytest.mark.parametrize(
     ("chart", "expected_type"),
     [
@@ -137,6 +207,158 @@ def test_native_variants_preserve_exact_type_data_labels_and_fixed_canvas_box(
     assert metadata[f"{chart['name']} Unit"] == chart.get("unit", "x: % | y: % pts | size: USD m" if chart["chart_variant"] == "bubble" else "x: % | y: % pts")
     assert metadata[f"{chart['name']} Period"] == "FY2025"
     assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
+
+
+def test_cumulative_bridge_uses_exact_editable_waterfall_geometry_and_labels(tmp_path: Path) -> None:
+    chart = _cumulative_bridge()
+    manifest = _manifest(chart)
+    out = tmp_path / "bridge.pptx"
+
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+
+    slide = Presentation(out).slides[0]
+    named = {shape.name: shape for shape in slide.shapes}
+    assert not any(shape.has_chart for shape in slide.shapes)
+    assert _description(named[chart["name"]]) == "object_id:chart-1"
+    assert _preset(named[chart["name"]]) == "rect"
+    assert (named[chart["name"]].left, named[chart["name"]].top, named[chart["name"]].width, named[chart["name"]].height) == (
+        1145882, 1232277, 5134682, 2785018,
+    )
+    assert (named["Value bridge Bar 1"].left, named["Value bridge Bar 1"].top, named["Value bridge Bar 1"].width, named["Value bridge Bar 1"].height) == (
+        2108634, 2021365, 577652, 1438926,
+    )
+    assert (named["Value bridge Bar 3"].left, named["Value bridge Bar 3"].top, named["Value bridge Bar 3"].width, named["Value bridge Bar 3"].height) == (
+        4034140, 1733580, 577652, 71946,
+    )
+    assert _preset(named["Value bridge Connector 2"]) == "line"
+    assert (named["Value bridge Connector 2"].left, named["Value bridge Connector 2"].top, named["Value bridge Connector 2"].width, named["Value bridge Connector 2"].height) == (
+        3649039, 1733580, 385101, 0,
+    )
+    texts = {shape.text for shape in slide.shapes if shape.has_text_frame}
+    assert {"Value bridge", "Bridge", "Start", "Pricing", "Volume", "End", "100", "20", "-5", "115", "USD m", "FY2025", "FY2025 EBITDA"}.issubset(texts)
+    assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
+
+
+def test_time_interval_uses_exact_editable_gantt_geometry_dates_and_labels(tmp_path: Path) -> None:
+    chart = _time_interval()
+    manifest = _manifest(chart)
+    out = tmp_path / "gantt.pptx"
+
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+
+    slide = Presentation(out).slides[0]
+    named = {shape.name: shape for shape in slide.shapes}
+    assert not any(shape.has_chart for shape in slide.shapes)
+    assert (named["Project schedule Bar 1"].left, named["Project schedule Bar 1"].top, named["Project schedule Bar 1"].width, named["Project schedule Bar 1"].height) == (
+        2429552, 1998157, 2396185, 417753,
+    )
+    assert (named["Project schedule Bar 2"].left, named["Project schedule Bar 2"].top, named["Project schedule Bar 2"].width, named["Project schedule Bar 2"].height) == (
+        4825737, 2833662, 1198092, 417753,
+    )
+    assert (named["Project schedule Axis"].left, named["Project schedule Axis"].top, named["Project schedule Axis"].width, named["Project schedule Axis"].height) == (
+        2429552, 3460291, 3594277, 0,
+    )
+    assert _preset(named["Project schedule Axis"]) == "line"
+    texts = {shape.text for shape in slide.shapes if shape.has_text_frame}
+    assert {"Project schedule", "Plan", "Diligence", "IC", "2026-09-01 – 2026-09-10", "2026-09-11 – 2026-09-15", "September 2026"}.issubset(texts)
+    assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
+
+
+def test_variable_rectangle_uses_exact_normalized_widths_shares_and_labels(tmp_path: Path) -> None:
+    chart = _variable_rectangle()
+    manifest = _manifest(chart)
+    out = tmp_path / "variable-rectangle.pptx"
+
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+
+    slide = Presentation(out).slides[0]
+    named = {shape.name: shape for shape in slide.shapes}
+    expected_segments = [
+        (1762043, 1789280, 1643098, 431678),
+        (1762043, 2220958, 1643098, 1295033),
+        (3405141, 1789280, 2464647, 690684),
+        (3405141, 2479965, 2464647, 1036027),
+    ]
+    assert not any(shape.has_chart for shape in slide.shapes)
+    assert [
+        (named[f"Market composition Segment {index}"].left, named[f"Market composition Segment {index}"].top,
+         named[f"Market composition Segment {index}"].width, named[f"Market composition Segment {index}"].height)
+        for index in range(1, 5)
+    ] == expected_segments
+    texts = {shape.text for shape in slide.shapes if shape.has_text_frame}
+    assert {"Market composition", "Markets", "A", "B", "40", "60", "25", "75", "100", "Market size", "USD m", "2025 addressable market", "Portfolio share", "%", "2025 composition", "FY2025"}.issubset(texts)
+    assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
+
+
+@pytest.mark.parametrize(
+    ("chart", "mutate", "expected"),
+    [
+        (_cumulative_bridge(), lambda chart: chart["series"][0].update({"end": 999}), "end"),
+        (_cumulative_bridge(), lambda chart: chart.pop("basis"), "basis"),
+        (_time_interval(), lambda chart: chart["series"][0]["start_dates"].__setitem__(0, "09/01/2026"), "ISO"),
+        (_time_interval(), lambda chart: chart["series"][0]["end_dates"].__setitem__(0, "2026-08-31"), "before"),
+        (_variable_rectangle(), lambda chart: chart["series"][0]["width_values"].__setitem__(0, 0), "positive"),
+        (_variable_rectangle(), lambda chart: chart["series"][0]["share_values"].__setitem__(0, [25, 70]), "share_denominator"),
+    ],
+)
+def test_special_quantitative_forms_reject_unreadable_source_dimensions(
+    tmp_path: Path, chart: dict, mutate, expected: str,
+) -> None:
+    chart = deepcopy(chart)
+    mutate(chart)
+
+    with pytest.raises(ValueError, match=expected):
+        write_pptx(_manifest(chart), tmp_path / "invalid-special.pptx", tmp_path / "manifest.json")
+
+
+@pytest.mark.parametrize(
+    ("chart", "shape_name", "damage", "field"),
+    [
+        (_cumulative_bridge(), "Value bridge Bar 1", "type", "charts[0].bars[0].type"),
+        (_time_interval(), "Project schedule Bar 1", "geometry", "charts[0].bars[0].geometry"),
+        (_variable_rectangle(), "Market composition Segment 1", "identity", "charts[0].segments[0].object_id"),
+        (_cumulative_bridge(), "Value bridge Value 2", "label", "charts[0].values[1]"),
+    ],
+)
+def test_special_chart_readback_rejects_wrong_type_geometry_identity_or_label(
+    tmp_path: Path, chart: dict, shape_name: str, damage: str, field: str,
+) -> None:
+    manifest = _manifest(chart)
+    out = tmp_path / f"special-{damage}.pptx"
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+    presentation = Presentation(out)
+    shape = next(item for item in presentation.slides[0].shapes if item.name == shape_name)
+    if damage == "type":
+        shape._element.xpath(".//a:prstGeom")[0].set("prst", "ellipse")
+    elif damage == "geometry":
+        off = shape._element.xpath(".//a:xfrm/a:off")[0]
+        off.set("x", str(int(off.get("x")) + 1000))
+    elif damage == "identity":
+        shape._element.xpath(".//p:cNvPr")[0].set("descr", "object_id:wrong")
+    else:
+        shape.text = "999"
+    presentation.save(out)
+
+    violations = validate_pptx.quantitative_chart_readback_violations(out, [manifest])
+
+    assert any(item["field"] == field for item in violations)
+
+
+def test_final_deck_rebuild_preserves_all_special_chart_readback(tmp_path: Path) -> None:
+    manifests = [_manifest(chart) for chart in (_cumulative_bridge(), _time_interval(), _variable_rectangle())]
+    out = tmp_path / "special-final.pptx"
+
+    write_deck(
+        {"workflow_contract_version": "fixed-canvas-cm-v2", "slide": dict(SLIDE)},
+        [
+            {"manifest": deepcopy(manifest), "manifest_path": tmp_path / f"manifest-{index}.json"}
+            for index, manifest in enumerate(manifests, start=1)
+        ],
+        out,
+        [],
+    )
+
+    assert validate_pptx.quantitative_chart_readback_violations(out, manifests) == []
 
 
 def test_dot_uses_editable_points_connectors_and_exact_source_labels(tmp_path: Path) -> None:
