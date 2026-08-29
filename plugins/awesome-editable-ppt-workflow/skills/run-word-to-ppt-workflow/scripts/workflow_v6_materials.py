@@ -563,7 +563,7 @@ def chart_to_facts(chart: Mapping[str, Any]) -> dict[str, Any]:
             "start", "start_label", "changes", "end", "end_label", "start_dates", "end_dates",
             "width_values", "width_label", "width_unit", "width_basis",
             "share_values", "share_label", "share_unit", "share_basis",
-            "share_denominator", "target_value", "actual_value", "comparison_mark",
+            "share_denominator", "target_value", "actual_value",
         ):
             if key in item:
                 entry[key] = copy.deepcopy(item[key])
@@ -572,7 +572,7 @@ def chart_to_facts(chart: Mapping[str, Any]) -> dict[str, Any]:
     for key in (
         "unit", "basis", "period", "source_page", "relationship", "source_wording",
         "x_label", "x_unit", "x_basis", "y_label", "y_unit", "y_basis",
-        "size_label", "size_unit", "size_basis", "target_value", "actual_value", "comparison_mark",
+        "size_label", "size_unit", "size_basis", "target_value", "actual_value",
         "rendering_primitive", "chart_variant", "disabled_primitive", "fallback", "table_rows",
     ):
         if key in chart:
@@ -847,14 +847,8 @@ def _complete_numeric_chart(chart: Mapping[str, Any]) -> bool:
     if not _text({}, chart, "title") or not _text({}, chart, "period"):
         return False
     target, actual = chart.get("target_value"), chart.get("actual_value")
-    comparison_mark = chart.get("comparison_mark")
-    if target is None and comparison_mark is not None:
-        return False
     if (target is None) != (actual is None) or target is not None and (
-        chart.get("chart_variant") != "dot"
-        or not _numeric(target)
-        or not _numeric(actual)
-        or (comparison_mark or "both") not in {"target_line", "difference_arrow", "both"}
+        chart.get("chart_variant") != "dot" or not _numeric(target) or not _numeric(actual)
     ):
         return False
     primitive = chart.get("rendering_primitive")

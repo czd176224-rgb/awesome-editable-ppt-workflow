@@ -157,7 +157,7 @@ def _qualitative_manifest(relationship: str, fallback: str) -> dict:
     return manifest
 
 
-def _one_dimensional(name: str, variant: str, *, comparison_mark: str | None = None) -> dict:
+def _one_dimensional(name: str, variant: str, *, target: bool = False) -> dict:
     chart = {
         "object_id": name,
         "name": name,
@@ -170,12 +170,8 @@ def _one_dimensional(name: str, variant: str, *, comparison_mark: str | None = N
         "basis": "same portfolio companies",
         "series": [{"name": "Revenue", "categories": ["A", "B"], "values": [12, 18]}],
     }
-    if comparison_mark:
-        chart.update({
-            "target_value": 20,
-            "actual_value": 18,
-            "comparison_mark": comparison_mark,
-        })
+    if target:
+        chart.update({"target_value": 20, "actual_value": 18})
     return chart
 
 
@@ -240,8 +236,7 @@ QUANTITATIVE_CASES = [
     _waterfall(),
     _gantt(),
     _mekko(),
-    _one_dimensional("target-line", "dot", comparison_mark="target_line"),
-    _one_dimensional("difference-arrow", "dot", comparison_mark="difference_arrow"),
+    _one_dimensional("target-actual-variance", "dot", target=True),
 ]
 
 
@@ -253,11 +248,11 @@ MATRIX = [
     ("market_size_share", _mekko(), "equal_width_hierarchy"),
     ("project_stage_time", _gantt(), "roadmap_milestones"),
     ("option_comparison", _one_dimensional("options", "dot"), "comparison_table"),
-    ("target_actual_variance", _one_dimensional("target", "dot", comparison_mark="both"), "goal_current_gap"),
+    ("target_actual_variance", _one_dimensional("target", "dot", target=True), "goal_current_gap"),
 ]
 
 
-def test_ten_explicit_quantitative_cases_build_editable_pptx_and_previews() -> None:
+def test_nine_quantitative_cases_cover_ten_visual_marks_in_editable_pptx_and_previews() -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     entries = []
     for index, chart in enumerate(QUANTITATIVE_CASES, start=1):
@@ -269,23 +264,20 @@ def test_ten_explicit_quantitative_cases_build_editable_pptx_and_previews() -> N
         assert Image.open(preview).size == (1200, 675)
         entries.append({"manifest": manifest, "manifest_path": str(manifest_path)})
 
-    deck_path = OUTPUT / "quantitative-ten-cases.pptx"
+    deck_path = OUTPUT / "quantitative-nine-cases.pptx"
     write_deck({"workflow_contract_version": "fixed-canvas-cm-v2", "slide": dict(SLIDE)}, entries, deck_path, [])
     deck = Presentation(deck_path)
 
-    assert len(deck.slides) == 10
+    assert len(deck.slides) == 9
     assert all(any(shape.has_chart for shape in deck.slides[index].shapes) for index in range(4))
     assert not any(shape.has_chart for shape in deck.slides[4].shapes)  # dot uses editable shapes
     assert not any(shape.has_chart for index in range(5, 8) for shape in deck.slides[index].shapes)
-    for index in (4, 5, 6, 7, 8, 9):
+    for index in (4, 5, 6, 7, 8):
         assert any(shape.shape_type != 13 for shape in deck.slides[index].shapes)
-    target_names = {shape.name for shape in deck.slides[8].shapes}
-    difference_names = {shape.name for shape in deck.slides[9].shapes}
-    assert "target-line Target Line" in target_names
-    assert "target-line Difference Arrow" not in target_names
-    assert "target-line Difference" not in target_names
-    assert "difference-arrow Target Line" not in difference_names
-    assert "difference-arrow Difference Arrow" in difference_names
+    comparison_names = {shape.name for shape in deck.slides[8].shapes}
+    assert "target-actual-variance Target Line" in comparison_names
+    assert "target-actual-variance Difference Arrow" in comparison_names
+    assert "target-actual-variance Difference" in comparison_names
 
 
 def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contracts(

@@ -681,7 +681,6 @@ def test_target_mark_readback_rejects_wrong_identity_geometry_type_or_arrowheads
         (lambda manifest: manifest["charts"][0].update({"box_px": [-1, 90, 1142, 620]}), "box_px"),
         (lambda manifest: manifest["charts"][0].update({"anchor": "2cm,2cm,18cm,10cm"}), "anchor"),
         (lambda manifest: manifest["charts"][0].update({"target_value": 20}), "target_value"),
-        (lambda manifest: manifest["charts"][0].update({"comparison_mark": "difference_arrow"}), "comparison_mark"),
         (lambda manifest: manifest["text_boxes"].append({"object_id": "chart-1", "name": "duplicate", "text": "x", "box_px": [1, 1, 10, 10]}), "unique"),
     ],
 )
