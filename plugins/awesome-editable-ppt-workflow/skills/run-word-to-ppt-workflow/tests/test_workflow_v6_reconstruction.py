@@ -166,6 +166,34 @@ def test_reconstruction_request_preserves_numeric_authority(tmp_path: Path):
     assert request["numeric_authority"] == authority
 
 
+def test_reconstruction_request_refuses_incomplete_or_ambiguous_authority(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    complete = {
+        "title": "Revenue",
+        "rendering_primitive": "column_bar",
+        "chart_variant": "column",
+        "unit": "USD m",
+        "basis": "FY2025 revenue",
+        "series": [{"name": "Revenue", "categories": ["A"], "values": [10]}],
+    }
+    incomplete = {
+        "title": "Priorities",
+        "disabled_primitive": "column_bar",
+        "fallback": "native_table",
+        "source_wording": "A is high priority and B is medium priority.",
+        "series": [{"name": "Priority", "categories": ["A", "B"], "values": ["high", "medium"]}],
+    }
+    path = project / "02_v6/page_materials/page_001.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    path.write_text(json.dumps({"chart_facts": [incomplete]}, ensure_ascii=False), encoding="utf-8")
+    assert "numeric_authority" not in build_reconstruction_request(project, page_number=1)
+    assert json.loads(path.read_text(encoding="utf-8"))["chart_facts"][0]["source_wording"]
+
+    path.write_text(json.dumps({"chart_facts": [complete, complete]}, ensure_ascii=False), encoding="utf-8")
+    assert "numeric_authority" not in build_reconstruction_request(project, page_number=1)
+
+
 def test_reconstruction_request_carries_signed_text_repairs(tmp_path: Path):
     project = _project(tmp_path, 1)
     receipt_path = project / "04_v6/images/page_001.json"

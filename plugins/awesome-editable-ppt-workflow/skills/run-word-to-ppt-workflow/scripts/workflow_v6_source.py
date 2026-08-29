@@ -326,7 +326,7 @@ def _time_interval_chart_record(
             "rendering_primitive": "time_interval",
             "series": [{
                 "name": "计划",
-                "times": [row[indexes["task"]] for row in values],
+                "categories": [row[indexes["task"]] for row in values],
                 "start_dates": [row[indexes["start"]] for row in values],
                 "end_dates": [row[indexes["end"]] for row in values],
             }],

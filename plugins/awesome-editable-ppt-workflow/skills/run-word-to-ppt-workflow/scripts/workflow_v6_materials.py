@@ -6,9 +6,11 @@ import copy
 import csv
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -551,18 +553,214 @@ def chart_to_facts(chart: Mapping[str, Any]) -> dict[str, Any]:
         entry: dict[str, Any] = {}
         for key in (
             "series", "name", "unit", "value", "values", "time", "times",
-            "trend", "relationship", "start_dates", "end_dates",
+            "categories", "basis", "trend", "relationship", "source_wording",
+            "x_values", "x_label", "x_unit", "x_basis",
+            "y_values", "y_label", "y_unit", "y_basis",
+            "size_values", "size_label", "size_unit", "size_basis",
+            "start", "changes", "end", "start_dates", "end_dates",
+            "width_values", "width_label", "width_unit", "width_basis",
+            "share_values", "share_label", "share_unit", "share_basis",
+            "share_denominator", "target_value", "actual_value",
         ):
             if key in item:
                 entry[key] = copy.deepcopy(item[key])
         factual_series.append(entry)
     result: dict[str, Any] = {"title": title, "series": factual_series}
-    if "unit" in chart:
-        result["unit"] = copy.deepcopy(chart["unit"])
-    for key in ("rendering_primitive", "disabled_primitive", "fallback", "table_rows"):
+    for key in (
+        "unit", "basis", "period", "source_page", "relationship", "source_wording",
+        "x_label", "x_unit", "x_basis", "y_label", "y_unit", "y_basis",
+        "size_label", "size_unit", "size_basis", "target_value", "actual_value",
+        "rendering_primitive", "chart_variant", "disabled_primitive", "fallback", "table_rows",
+    ):
         if key in chart:
             result[key] = copy.deepcopy(chart[key])
     return result
+
+
+def _numeric(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _numeric_list(value: Any, *, non_negative: bool = False) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(_numeric(item) and (not non_negative or float(item) >= 0) for item in value)
+    )
+
+
+def _labels(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(
+        isinstance(item, (str, int, float)) and not isinstance(item, bool) and str(item).strip()
+        for item in value
+    )
+
+
+def _text(record: Mapping[str, Any], chart: Mapping[str, Any], key: str) -> bool:
+    value = record.get(key, chart.get(key))
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _text_value(record: Mapping[str, Any], chart: Mapping[str, Any], key: str) -> str | None:
+    value = record.get(key, chart.get(key))
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _series(chart: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    value = chart.get("series")
+    if not isinstance(value, list) or not value or any(not isinstance(item, Mapping) for item in value):
+        return []
+    return value
+
+
+def _one_dimensional_complete(chart: Mapping[str, Any]) -> bool:
+    primitive = chart.get("rendering_primitive")
+    variants = {"column_bar": {"column", "bar"}, "line_point": {"line", "dot"}}
+    if chart.get("chart_variant") not in variants.get(primitive, set()):
+        return False
+    series = _series(chart)
+    if not series:
+        return False
+    comparison_basis: set[tuple[str, str]] = set()
+    for item in series:
+        categories = item.get("categories", item.get("times"))
+        values = item.get("values")
+        if (
+            not _text(item, {}, "name") and not _text(item, {}, "series")
+            or not _labels(categories)
+            or not _numeric_list(values)
+            or len(categories) != len(values)
+        ):
+            return False
+        unit = _text_value(item, chart, "unit")
+        basis = _text_value(item, chart, "basis")
+        if unit is None or basis is None:
+            return False
+        comparison_basis.add((unit, basis))
+    if len(comparison_basis) != 1:
+        return False
+    target = chart.get("target_value")
+    actual = chart.get("actual_value")
+    return (target is None and actual is None) or (_numeric(target) and _numeric(actual))
+
+
+def _xy_complete(chart: Mapping[str, Any]) -> bool:
+    variant = chart.get("chart_variant")
+    if variant not in {"scatter", "bubble"}:
+        return False
+    for prefix in ("x", "y"):
+        if not all(_text({}, chart, f"{prefix}_{suffix}") for suffix in ("label", "unit", "basis")):
+            return False
+    if variant == "bubble" and not all(
+        _text({}, chart, f"size_{suffix}") for suffix in ("label", "unit", "basis")
+    ):
+        return False
+    series = _series(chart)
+    for item in series:
+        x_values = item.get("x_values")
+        y_values = item.get("y_values")
+        if not _numeric_list(x_values) or not _numeric_list(y_values) or len(x_values) != len(y_values):
+            return False
+        if variant == "bubble":
+            sizes = item.get("size_values")
+            if not _numeric_list(sizes, non_negative=True) or len(sizes) != len(x_values):
+                return False
+    return bool(series)
+
+
+def _cumulative_complete(chart: Mapping[str, Any]) -> bool:
+    series = _series(chart)
+    if len(series) != 1 or not _text(series[0], chart, "unit") or not _text(series[0], chart, "basis"):
+        return False
+    item = series[0]
+    changes = item.get("changes")
+    categories = item.get("categories")
+    if (
+        not _numeric(item.get("start"))
+        or not _numeric_list(changes)
+        or not _numeric(item.get("end"))
+        or not _labels(categories)
+        or len(changes) != len(categories)
+    ):
+        return False
+    return math.isclose(
+        float(item["start"]) + sum(float(value) for value in changes),
+        float(item["end"]), rel_tol=1e-9, abs_tol=1e-9,
+    )
+
+
+def _time_interval_complete(chart: Mapping[str, Any]) -> bool:
+    series = _series(chart)
+    for item in series:
+        categories = item.get("categories", item.get("times"))
+        starts = item.get("start_dates")
+        ends = item.get("end_dates")
+        if not _labels(categories) or not isinstance(starts, list) or not isinstance(ends, list):
+            return False
+        if not starts or len(categories) != len(starts) or len(starts) != len(ends):
+            return False
+        try:
+            intervals = [(date.fromisoformat(str(start)), date.fromisoformat(str(end))) for start, end in zip(starts, ends)]
+        except ValueError:
+            return False
+        if any(start > end for start, end in intervals):
+            return False
+    return bool(series)
+
+
+def _variable_rectangle_complete(chart: Mapping[str, Any]) -> bool:
+    series = _series(chart)
+    if len(series) != 1:
+        return False
+    item = series[0]
+    categories = item.get("categories")
+    widths = item.get("width_values")
+    shares = item.get("share_values")
+    denominator = item.get("share_denominator")
+    if (
+        not _labels(categories)
+        or not _numeric_list(widths, non_negative=True)
+        or len(categories) != len(widths)
+        or not all(_text(item, chart, f"{prefix}_{suffix}") for prefix in ("width", "share") for suffix in ("label", "unit", "basis"))
+        or not _numeric(denominator)
+        or float(denominator) <= 0
+        or not isinstance(shares, list)
+        or len(shares) != len(widths)
+    ):
+        return False
+    return all(
+        _numeric_list(values, non_negative=True)
+        and math.isclose(sum(float(value) for value in values), float(denominator), rel_tol=1e-9, abs_tol=1e-9)
+        for values in shares
+    )
+
+
+def _complete_numeric_chart(chart: Mapping[str, Any]) -> bool:
+    primitive = chart.get("rendering_primitive")
+    if primitive in {"column_bar", "line_point"}:
+        return _one_dimensional_complete(chart)
+    if primitive == "xy":
+        return _xy_complete(chart)
+    if primitive == "cumulative_bridge":
+        return _cumulative_complete(chart)
+    if primitive == "time_interval":
+        return _time_interval_complete(chart)
+    if primitive == "variable_rectangle":
+        return _variable_rectangle_complete(chart)
+    return False
+
+
+def select_numeric_authority(chart_facts: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Seal exactly one complete explicit chart; ambiguity or missing dimensions refuses."""
+    if not isinstance(chart_facts, Sequence) or isinstance(chart_facts, (str, bytes)):
+        return None
+    eligible = [chart for chart in chart_facts if isinstance(chart, Mapping) and _complete_numeric_chart(chart)]
+    return chart_to_facts(eligible[0]) if len(eligible) == 1 else None
 
 
 def validate_page_materials(value: Mapping[str, Any], *, confirmed: bool) -> None:

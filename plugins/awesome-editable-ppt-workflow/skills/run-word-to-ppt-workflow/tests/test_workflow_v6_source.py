@@ -479,6 +479,7 @@ def test_real_word_schedule_table_extracts_dates_or_falls_back(tmp_path: Path):
         (tmp_path / "complete-project/02_v6/page_materials/page_001.json").read_text(encoding="utf-8")
     )["chart_facts"][0]
     assert complete["rendering_primitive"] == "time_interval"
+    assert complete["series"][0]["categories"] == ["尽调", "投决"]
     assert complete["series"][0]["start_dates"] == ["2026-09-01", "2026-09-11"]
     assert complete["series"][0]["end_dates"] == ["2026-09-10", "2026-09-15"]
 

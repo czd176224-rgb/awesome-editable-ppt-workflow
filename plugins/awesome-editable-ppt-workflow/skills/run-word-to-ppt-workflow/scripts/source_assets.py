@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import posixpath
+import re
 import zipfile
 from collections import OrderedDict
 from io import BytesIO
@@ -96,35 +97,85 @@ def _chart_record(asset: dict[str, Any], data: bytes) -> dict[str, Any] | None:
     def descendants(node: ElementTree.Element, name: str) -> list[ElementTree.Element]:
         return [item for item in node.iter() if item.tag.rsplit("}", 1)[-1] == name]
 
+    def child_value(node: ElementTree.Element, name: str) -> str:
+        child = next(iter(descendants(node, name)), None)
+        return child.get("val", "") if child is not None else ""
+
+    def label_unit(text: str) -> tuple[str, str | None]:
+        match = re.fullmatch(r"\s*(.*?)\s*[\(\uff08]([^\)\uff09]+)[\)\uff09]\s*", text)
+        return (match.group(1).strip(), match.group(2).strip()) if match else (text.strip(), None)
+
     title_node = next(iter(descendants(root, "title")), None)
     title = _element_text(title_node) if title_node is not None else ""
     if not title:
         return None
+    chart_node = next(
+        (node for name in ("barChart", "lineChart", "scatterChart", "bubbleChart") for node in descendants(root, name)),
+        None,
+    )
+    chart_type = chart_node.tag.rsplit("}", 1)[-1] if chart_node is not None else ""
+    variant = {"lineChart": "line", "scatterChart": "scatter", "bubbleChart": "bubble"}.get(chart_type)
+    if chart_type == "barChart":
+        variant = {"col": "column", "bar": "bar"}.get(child_value(chart_node, "barDir"))
+    primitive = (
+        "column_bar" if variant in {"column", "bar"}
+        else "line_point" if variant == "line"
+        else "xy" if variant in {"scatter", "bubble"}
+        else None
+    )
+
+    axis_metadata: dict[str, str] = {}
+    axes = [node for name in ("catAx", "dateAx", "valAx", "serAx") for node in descendants(root, name)]
+    for axis in axes:
+        axis_title = next(iter(descendants(axis, "title")), None)
+        text = _element_text(axis_title) if axis_title is not None else ""
+        if not text:
+            continue
+        label, unit = label_unit(text)
+        position = child_value(axis, "axPos")
+        local = axis.tag.rsplit("}", 1)[-1]
+        prefix = (
+            "x" if primitive == "xy" and position == "b"
+            else "y" if primitive == "xy" and position == "l"
+            else "size" if primitive == "xy" and local == "serAx"
+            else "value" if local == "valAx"
+            else "category"
+        )
+        axis_metadata[f"{prefix}_label"] = label
+        if unit:
+            axis_metadata[f"{prefix}_unit"] = unit
+
     series: list[dict[str, Any]] = []
-    for series_node in descendants(root, "ser"):
+    for series_node in descendants(chart_node, "ser") if chart_node is not None else []:
         series_title = ""
         tx_node = next(iter(descendants(series_node, "tx")), None)
         if tx_node is not None:
             series_title = _element_text(tx_node)
-        values: list[str] = []
-        times: list[str] = []
+        dimensions: dict[str, list[str]] = {}
         for child in series_node:
             local = child.tag.rsplit("}", 1)[-1]
             points = descendants(child, "pt")
-            if local in {"cat", "xVal"}:
-                times = [_element_text(point) for point in points]
-            elif local in {"val", "yVal"}:
-                values = [_element_text(point) for point in points]
-        record: dict[str, Any] = {"series": series_title, "values": values}
-        if times:
-            record["times"] = times
+            key = {"cat": "categories", "val": "values", "xVal": "x_values", "yVal": "y_values", "bubbleSize": "size_values"}.get(local)
+            if key:
+                dimensions[key] = [_element_text(point) for point in points]
+        record: dict[str, Any] = {"series": series_title, **dimensions}
         series.append(record)
-    return {
+    result = {
         "page_numbers": list(asset["page_numbers"]),
         "source_asset_id": asset["asset_id"],
         "title": title,
         "series": series,
     }
+    if len(asset["page_numbers"]) == 1:
+        result["source_page"] = asset["page_numbers"][0]
+    if primitive and variant:
+        result["rendering_primitive"] = primitive
+        result["chart_variant"] = variant
+    if primitive == "xy":
+        result.update({key: value for key, value in axis_metadata.items() if key.startswith(("x_", "y_", "size_"))})
+    elif "value_unit" in axis_metadata:
+        result["unit"] = axis_metadata["value_unit"]
+    return result
 
 
 def _read_relationships(docx_path: Path) -> dict[str, str | None]:
