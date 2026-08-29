@@ -68,11 +68,38 @@ def test_ooxml_column_chart_preserves_categories_values_and_explicit_variant():
     assert record["series"] == [{
         "series": "Revenue",
         "categories": ["2024", "2025"],
+        "times": ["2024", "2025"],
         "category_indices": [0, 1],
         "values": ["12", "18"],
         "value_indices": [0, 1],
     }]
-    assert "times" not in record["series"][0]
+
+
+def test_ooxml_series_label_uses_cache_without_concatenating_formula():
+    xml = b'''<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+      <c:chart><c:title><c:tx><c:v>Revenue</c:v></c:tx></c:title><c:plotArea><c:barChart><c:barDir val="col"/><c:ser>
+      <c:tx><c:strRef><c:f>Sheet1!$B$1</c:f><c:strCache><c:pt idx="0"><c:v>Revenue</c:v></c:pt></c:strCache></c:strRef></c:tx>
+      <c:cat><c:strLit><c:pt idx="0"><c:v>2025</c:v></c:pt></c:strLit></c:cat>
+      <c:val><c:numLit><c:pt idx="0"><c:v>20</c:v></c:pt></c:numLit></c:val>
+      </c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>'''
+
+    record = _chart_record({"page_numbers": [1], "asset_id": "word_asset_008"}, xml)
+
+    assert record["series"][0]["series"] == "Revenue"
+
+
+def test_ooxml_axis_title_does_not_become_chart_title():
+    xml = b'''<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+      <c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:tx><c:v>Revenue</c:v></c:tx>
+      <c:cat><c:strLit><c:pt idx="0"><c:v>2025</c:v></c:pt></c:strLit></c:cat>
+      <c:val><c:numLit><c:pt idx="0"><c:v>20</c:v></c:pt></c:numLit></c:val>
+      </c:ser></c:barChart><c:valAx><c:title><c:tx><c:v>Revenue (USD m)</c:v></c:tx></c:title></c:valAx>
+      </c:plotArea></c:chart></c:chartSpace>'''
+
+    record = _chart_record({"page_numbers": [1], "asset_id": "word_asset_009"}, xml)
+
+    assert record["title"] == "Untitled source chart"
+    assert record["disabled_primitive"] == "column_bar"
 
 
 def test_ooxml_mismatched_xy_point_indices_disable_quantitative_authority():

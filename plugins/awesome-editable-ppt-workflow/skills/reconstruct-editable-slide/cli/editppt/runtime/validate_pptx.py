@@ -6,6 +6,7 @@ import posixpath
 import re
 import sys
 import zipfile
+from decimal import Decimal
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -13,6 +14,7 @@ try:
     from .build_pptx_from_manifest import (
         _chart_basis_labels,
         _chart_mark_geometry,
+        _number_text,
         _chart_shape_description,
         _chart_shared_text,
         normalize_manifest,
@@ -21,6 +23,7 @@ except ImportError:  # direct runtime script execution through the editppt launc
     from build_pptx_from_manifest import (
         _chart_basis_labels,
         _chart_mark_geometry,
+        _number_text,
         _chart_shape_description,
         _chart_shared_text,
         normalize_manifest,
@@ -508,6 +511,8 @@ def _shape_arrowheads(shape):
 
 def quantitative_chart_readback_violations(pptx_path, manifests):
     """Read exact chart objects and direct marks back from the generated PPTX."""
+    if not any(manifest.get("charts") for manifest in manifests):
+        return []
     from pptx import Presentation
     from pptx.enum.chart import XL_CHART_TYPE
 
@@ -643,9 +648,9 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
 
             if expected.get("target_value") is not None:
                 for role, value in (
-                    ("Target", f"Target: {expected['target_value']}"),
-                    ("Actual", f"Actual: {expected['actual_value']}"),
-                    ("Difference", f"Difference: {expected['actual_value'] - expected['target_value']}"),
+                    ("Target", f"Target: {_number_text(expected['target_value'])}"),
+                    ("Actual", f"Actual: {_number_text(expected['actual_value'])}"),
+                    ("Difference", f"Difference: {_number_text(Decimal(str(expected['actual_value'])) - Decimal(str(expected['target_value'])))}"),
                 ):
                     shape = named.get(f"{expected['name']} {role}")
                     add(f"{prefix}.{role.lower()}", value, shape.text if shape is not None else None)

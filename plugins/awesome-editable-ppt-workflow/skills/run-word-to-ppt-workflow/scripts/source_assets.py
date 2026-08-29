@@ -162,7 +162,16 @@ def _chart_record(asset: dict[str, Any], data: bytes) -> dict[str, Any] | None:
         series_title = ""
         tx_node = next(iter(descendants(series_node, "tx")), None)
         if tx_node is not None:
-            series_title = _element_text(tx_node)
+            cache = next(
+                (node for node in tx_node.iter() if local_name(node) in {"strCache", "numCache"}),
+                None,
+            )
+            if cache is not None:
+                cached_points = descendants(cache, "pt")
+                series_title = next((_element_text(point) for point in cached_points if _element_text(point)), "")
+            else:
+                direct_value = next((child for child in tx_node if local_name(child) == "v"), None)
+                series_title = _element_text(direct_value) if direct_value is not None else ""
         dimensions: dict[str, Any] = {}
         for child in series_node:
             local = local_name(child)
@@ -182,6 +191,8 @@ def _chart_record(asset: dict[str, Any], data: bytes) -> dict[str, Any] | None:
                 if len(indices) != len(points) or len(indices) != len(set(indices)):
                     index_mismatch = True
                 dimensions[key] = [value for _index, value in indexed]
+                if key == "categories":
+                    dimensions["times"] = list(dimensions[key])
                 dimensions[{"categories": "category_indices", "values": "value_indices", "x_values": "x_indices", "y_values": "y_indices", "size_values": "size_indices"}[key]] = indices
         for names in (("category_indices", "value_indices"), ("x_indices", "y_indices"), ("x_indices", "y_indices", "size_indices")):
             present = [dimensions[name] for name in names if name in dimensions]
@@ -189,7 +200,11 @@ def _chart_record(asset: dict[str, Any], data: bytes) -> dict[str, Any] | None:
                 index_mismatch = True
         record: dict[str, Any] = {"series": series_title, **dimensions}
         series.append(record)
-    title_node = next(iter(descendants(root, "title")), None)
+    chart_root = next(iter(descendants(root, "chart")), None)
+    title_node = next(
+        (child for child in chart_root if local_name(child) == "title"),
+        None,
+    ) if chart_root is not None else None
     source_title = _element_text(title_node) if title_node is not None else ""
     title = source_title or "Untitled source chart"
     result = {

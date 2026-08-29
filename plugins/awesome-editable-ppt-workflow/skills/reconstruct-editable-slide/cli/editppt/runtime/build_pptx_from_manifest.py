@@ -10,6 +10,7 @@ import sys
 import tempfile
 import zipfile
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 
 try:
@@ -288,6 +289,13 @@ def _is_number(value):
     return type(value) in (int, float) and math.isfinite(float(value))
 
 
+def _number_text(value):
+    number = Decimal(str(value))
+    if not number:
+        return "0"
+    return format(number.normalize(), "f")
+
+
 def _chart_categories(chart):
     series = chart.get("series", [])
     if not series:
@@ -349,16 +357,11 @@ def _chart_mark_geometry(chart):
             geometry[f"Connector {index}"] = (int(round(left + width * 0.15)), y, x, y)
             geometry[f"Point {index}"] = (int(round(x - diameter / 2)), int(round(y - diameter / 2)), diameter, diameter)
 
-    if chart.get("target_value") is not None:
-        horizontal = chart["chart_variant"] in {"bar", "dot"}
-        target = value_position(chart["target_value"], horizontal)
-        actual = value_position(chart["actual_value"], horizontal)
-        if horizontal:
-            geometry["Target Line"] = (target, int(round(top + height * 0.15)), target, int(round(top + height * 0.85)))
-            geometry["Difference Arrow"] = (actual, int(round(top + height * 0.1)), target, int(round(top + height * 0.1)))
-        else:
-            geometry["Target Line"] = (int(round(left + width * 0.15)), target, int(round(left + width * 0.9)), target)
-            geometry["Difference Arrow"] = (int(round(left + width * 0.93)), actual, int(round(left + width * 0.93)), target)
+    if chart.get("target_value") is not None and chart["chart_variant"] == "dot":
+        target = value_position(chart["target_value"], True)
+        actual = value_position(chart["actual_value"], True)
+        geometry["Target Line"] = (target, int(round(top + height * 0.15)), target, int(round(top + height * 0.85)))
+        geometry["Difference Arrow"] = (actual, int(round(top + height * 0.1)), target, int(round(top + height * 0.1)))
     return geometry
 
 
@@ -431,9 +434,9 @@ def _validate_chart(manifest, chart):
                 raise ValueError("charts[].series bubble size_values must align and be non-negative")
     target, actual = chart.get("target_value"), chart.get("actual_value")
     if (target is None) != (actual is None) or target is not None and (
-        primitive not in {"column_bar", "line_point"} or not _is_number(target) or not _is_number(actual)
+        variant != "dot" or not _is_number(target) or not _is_number(actual)
     ):
-        raise ValueError("charts[].target_value and actual_value require one compatible explicit numeric pair")
+        raise ValueError("charts[].target_value and actual_value require one explicit numeric pair on chart_variant dot")
 
 
 def normalize_manifest(manifest):
@@ -1058,9 +1061,6 @@ def apply_native_charts(pptx_path, manifests):
         for index, (role, text) in enumerate(labels):
             add_label(slide, chart, role, text, left + width * 0.55, top + label_height * index, width * 0.45, label_height)
 
-    def number_text(value):
-        return str(value)
-
     def add_arrowheads(connector):
         line = connector._element.spPr.get_or_add_ln()
         for tag in ("a:headEnd", "a:tailEnd"):
@@ -1079,10 +1079,10 @@ def apply_native_charts(pptx_path, manifests):
         add_arrowheads(difference)
         left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
         label_width, label_height = width * 0.28, Inches(min(0.25, chart["height"] / 10))
-        add_label(slide, chart, "Target", f"Target: {number_text(chart['target_value'])}", left, top + height - label_height, label_width, label_height)
-        add_label(slide, chart, "Actual", f"Actual: {number_text(chart['actual_value'])}", left + label_width, top + height - label_height, label_width, label_height)
-        difference_value = chart["actual_value"] - chart["target_value"]
-        add_label(slide, chart, "Difference", f"Difference: {number_text(difference_value)}", left + label_width * 2, top + height - label_height, label_width, label_height)
+        add_label(slide, chart, "Target", f"Target: {_number_text(chart['target_value'])}", left, top + height - label_height, label_width, label_height)
+        add_label(slide, chart, "Actual", f"Actual: {_number_text(chart['actual_value'])}", left + label_width, top + height - label_height, label_width, label_height)
+        difference_value = Decimal(str(chart["actual_value"])) - Decimal(str(chart["target_value"]))
+        add_label(slide, chart, "Difference", f"Difference: {_number_text(difference_value)}", left + label_width * 2, top + height - label_height, label_width, label_height)
 
     def add_dot(slide, chart):
         left, top, width, height = (int(Inches(chart[key])) for key in ("left", "top", "width", "height"))
@@ -1103,7 +1103,7 @@ def apply_native_charts(pptx_path, manifests):
             identify(slide.shapes.add_shape(MSO_SHAPE.OVAL, *point_geometry), chart, f"Point {index}")
             x, y, diameter = point_geometry[0] + point_geometry[2] // 2, point_geometry[1] + point_geometry[3] // 2, point_geometry[2]
             add_label(slide, chart, f"Category {index}", category, left, y - diameter, width * 0.12, diameter * 2)
-            add_label(slide, chart, f"Value {index}", number_text(value), x + diameter, y - diameter, width * 0.12, diameter * 2)
+            add_label(slide, chart, f"Value {index}", _number_text(value), x + diameter, y - diameter, width * 0.12, diameter * 2)
         add_metadata(slide, chart)
         add_target_marks(slide, chart)
 
@@ -1150,7 +1150,6 @@ def apply_native_charts(pptx_path, manifests):
                 native_chart.value_axis.has_title = True
                 native_chart.value_axis.axis_title.text_frame.text = chart["y_label"]
             add_metadata(slide, chart)
-            add_target_marks(slide, chart)
     presentation.save(pptx_path)
 
 
@@ -1321,11 +1320,63 @@ def render_preview(manifest, manifest_path, out_path, *, pptx_path=None):
         height = int(chart["height"] * scale)
         title_height = int(0.35 * scale) if chart.get("title") not in (None, "none") else 0
         plot = (left + int(0.45 * scale), top + title_height, left + width, top + height - int(0.35 * scale))
-        draw.line((plot[0], plot[1], plot[0], plot[3]), fill="#666666", width=1)
-        draw.line((plot[0], plot[3], plot[2], plot[3]), fill="#666666", width=1)
+        if variant != "dot":
+            draw.line((plot[0], plot[1], plot[0], plot[3]), fill="#666666", width=1)
+            draw.line((plot[0], plot[3], plot[2], plot[3]), fill="#666666", width=1)
         if title_height:
             draw.text((left, top), str(chart["title"]), fill="#111111", font=ImageFont.load_default())
         colors = ("#4472C4", "#ED7D31", "#A5A5A5", "#FFC000")
+        unit = _chart_shared_text(chart, "unit") if chart["rendering_primitive"] != "xy" else f"x: {chart['x_unit']} | y: {chart['y_unit']}"
+        if variant == "bubble":
+            unit += f" | size: {chart['size_unit']}"
+        metadata = [unit, chart["period"], *[text for _role, text in _chart_basis_labels(chart)]]
+        for index, text in enumerate(metadata):
+            draw.text((left + width * 0.55, top + index * 12), text, fill="#444444", font=ImageFont.load_default())
+
+        if variant == "dot":
+            points = [
+                (item, category, value)
+                for item in series
+                for category, value in zip(item["categories"], item["values"])
+            ]
+            values = [float(value) for _item, _category, value in points]
+            values.extend(float(chart[key]) for key in ("target_value", "actual_value") if chart.get(key) is not None)
+            low, high = min(values + [0.0]), max(values + [0.0])
+            span = high - low or 1.0
+
+            def value_x(value):
+                return left + width * (0.15 + 0.75 * (float(value) - low) / span)
+
+            for series_index, item in enumerate(series):
+                draw.text(
+                    (left + width * (0.15 + 0.2 * series_index), top + height * 0.08),
+                    item["name"], fill="#444444", font=ImageFont.load_default(),
+                )
+            row_height = height * 0.65 / len(points)
+            for index, (_item, category, value) in enumerate(points, start=1):
+                y = top + height * 0.18 + row_height * (index - 0.5)
+                x = value_x(value)
+                draw.line((left + width * 0.15, y, x, y), fill="#666666", width=1)
+                draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=colors[(index - 1) % len(colors)])
+                draw.text((left, y - 4), str(category), fill="#444444", font=ImageFont.load_default())
+                draw.text((x + 6, y - 4), _number_text(value), fill="#444444", font=ImageFont.load_default())
+            if chart.get("target_value") is not None:
+                target, actual = value_x(chart["target_value"]), value_x(chart["actual_value"])
+                draw.line((target, top + height * 0.15, target, top + height * 0.85), fill="#C00000", width=2)
+                arrow_y = top + height * 0.1
+                draw.line((actual, arrow_y, target, arrow_y), fill="#C00000", width=2)
+                direction = 1 if target >= actual else -1
+                draw.polygon(((actual, arrow_y), (actual + direction * 5, arrow_y - 3), (actual + direction * 5, arrow_y + 3)), fill="#C00000")
+                draw.polygon(((target, arrow_y), (target - direction * 5, arrow_y - 3), (target - direction * 5, arrow_y + 3)), fill="#C00000")
+                difference = Decimal(str(chart["actual_value"])) - Decimal(str(chart["target_value"]))
+                for index, text in enumerate((
+                    f"Target: {_number_text(chart['target_value'])}",
+                    f"Actual: {_number_text(chart['actual_value'])}",
+                    f"Difference: {_number_text(difference)}",
+                )):
+                    draw.text((left + width * 0.28 * index, top + height - 12), text, fill="#444444", font=ImageFont.load_default())
+            return
+
         if variant in {"scatter", "bubble"}:
             x_values = [float(value) for item in series for value in item["x_values"]]
             y_values = [float(value) for item in series for value in item["y_values"]]
@@ -1357,7 +1408,9 @@ def render_preview(manifest, manifest_path, out_path, *, pptx_path=None):
                 y = plot[1] + (maximum - float(value)) / span * (plot[3] - plot[1])
                 if variant == "bar":
                     y0 = plot[1] + (category_index + 0.15 + series_index * 0.7 / len(series)) * (plot[3] - plot[1]) / len(categories)
-                    draw.rectangle((plot[0], y0, plot[0] + (float(value) - minimum) / span * (plot[2] - plot[0]), y0 + (plot[3] - plot[1]) * 0.7 / len(categories) / len(series)), fill=colors[series_index % len(colors)])
+                    zero = plot[0] + (0.0 - minimum) / span * (plot[2] - plot[0])
+                    endpoint = plot[0] + (float(value) - minimum) / span * (plot[2] - plot[0])
+                    draw.rectangle((min(zero, endpoint), y0, max(zero, endpoint), y0 + (plot[3] - plot[1]) * 0.7 / len(categories) / len(series)), fill=colors[series_index % len(colors)])
                 elif variant in {"line", "dot"}:
                     point = (plot[0] + (category_index + 0.5) * group_width, y)
                     line_points.append(point)

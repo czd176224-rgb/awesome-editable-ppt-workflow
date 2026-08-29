@@ -150,6 +150,7 @@ def test_reconstruction_request_preserves_numeric_authority(tmp_path: Path):
     authority = {
         "title": "项目计划",
         "rendering_primitive": "time_interval",
+        "period": "2026-09",
         "series": [{
             "name": "计划",
             "categories": ["尽调", "投决"],

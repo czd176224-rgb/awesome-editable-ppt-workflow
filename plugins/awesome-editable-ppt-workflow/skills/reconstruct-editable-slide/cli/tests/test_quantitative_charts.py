@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from PIL import ImageDraw
 from pptx import Presentation
 from pptx.chart.data import ChartData
 from pptx.enum.chart import XL_CHART_TYPE
@@ -13,9 +14,13 @@ from pptx.enum.shapes import MSO_SHAPE
 
 RUNTIME = Path(__file__).resolve().parents[1] / "editppt" / "runtime"
 sys.path.insert(0, str(RUNTIME))
+WORKFLOW_SCRIPTS = Path(__file__).resolve().parents[3] / "run-word-to-ppt-workflow" / "scripts"
+sys.path.insert(0, str(WORKFLOW_SCRIPTS))
 
-from build_pptx_from_manifest import px_to_inches, write_deck, write_pptx  # noqa: E402
+from build_pptx_from_manifest import px_to_inches, render_preview, write_deck, write_pptx  # noqa: E402
 from fixed_region_runtime import CONTENT_BOX, SLIDE  # noqa: E402
+from source_assets import _chart_record  # noqa: E402
+from workflow_v6_materials import select_numeric_authority  # noqa: E402
 import validate_pptx  # noqa: E402
 
 
@@ -155,7 +160,7 @@ def test_dot_uses_editable_points_connectors_and_exact_source_labels(tmp_path: P
 
 
 def test_explicit_target_actual_add_target_line_and_direct_difference_arrow(tmp_path: Path) -> None:
-    chart = {**_one_dimensional("column"), "target_value": 20, "actual_value": 18}
+    chart = {**_one_dimensional("dot"), "target_value": 0.3, "actual_value": 0.2}
     manifest = _manifest(chart)
     out = tmp_path / "target.pptx"
     write_pptx(manifest, out, tmp_path / "manifest.json")
@@ -165,9 +170,9 @@ def test_explicit_target_actual_add_target_line_and_direct_difference_arrow(tmp_
 
     assert "Revenue chart Target Line" in named
     assert "Revenue chart Difference Arrow" in named
-    assert named["Revenue chart Target"].text == "Target: 20"
-    assert named["Revenue chart Actual"].text == "Actual: 18"
-    assert named["Revenue chart Difference"].text == "Difference: -2"
+    assert named["Revenue chart Target"].text == "Target: 0.3"
+    assert named["Revenue chart Actual"].text == "Actual: 0.2"
+    assert named["Revenue chart Difference"].text == "Difference: -0.1"
     assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
 
 
@@ -274,7 +279,7 @@ def test_dot_mark_readback_rejects_wrong_identity_type_or_geometry(
 def test_target_mark_readback_rejects_wrong_identity_geometry_type_or_arrowheads(
     tmp_path: Path, damage: str, field: str
 ) -> None:
-    chart = {**_one_dimensional("column"), "target_value": 20, "actual_value": 18}
+    chart = {**_one_dimensional("dot"), "target_value": 20, "actual_value": 18}
     manifest = _manifest(chart)
     out = tmp_path / f"target-{damage}.pptx"
     write_pptx(manifest, out, tmp_path / "manifest.json")
@@ -370,7 +375,7 @@ def test_readback_detects_changed_chart_object_id(tmp_path: Path) -> None:
 def test_final_deck_rebuild_preserves_quantitative_chart_readback(tmp_path: Path) -> None:
     manifests = [
         _manifest(_xy("bubble")),
-        _manifest({**_one_dimensional("column"), "target_value": 20, "actual_value": 18}),
+        _manifest({**_one_dimensional("dot"), "target_value": 20, "actual_value": 18}),
     ]
     out = tmp_path / "final.pptx"
     write_deck(
@@ -384,3 +389,107 @@ def test_final_deck_rebuild_preserves_quantitative_chart_readback(tmp_path: Path
     )
 
     assert validate_pptx.quantitative_chart_readback_violations(out, manifests) == []
+
+
+@pytest.mark.parametrize("variant", ["column", "bar", "line", "scatter", "bubble"])
+def test_native_variants_refuse_shape_based_target_and_difference_marks(
+    tmp_path: Path, variant: str,
+) -> None:
+    chart = _xy(variant) if variant in {"scatter", "bubble"} else _one_dimensional(variant)
+    chart.update({"target_value": 20, "actual_value": 18})
+
+    with pytest.raises(ValueError, match="dot"):
+        write_pptx(_manifest(chart), tmp_path / f"{variant}-target.pptx", tmp_path / "manifest.json")
+
+
+def test_preview_dot_matches_delivered_metadata_labels_and_horizontal_marks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chart = {**_one_dimensional("dot"), "target_value": 0.3, "actual_value": 0.2}
+    chart["series"][0]["values"] = [0.1, 0.2]
+    manifest = _manifest(chart)
+    texts: list[str] = []
+    lines: list[tuple[float, float, float, float]] = []
+    original_text = ImageDraw.ImageDraw.text
+    original_line = ImageDraw.ImageDraw.line
+
+    def record_text(draw, xy, text, *args, **kwargs):
+        texts.append(str(text))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    def record_line(draw, xy, *args, **kwargs):
+        coordinates = tuple(xy)
+        if len(coordinates) == 4:
+            lines.append(coordinates)
+        return original_line(draw, xy, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "line", record_line)
+
+    render_preview(manifest, tmp_path / "manifest.json", tmp_path / "preview.png")
+
+    assert {
+        "Revenue", "USD m", "FY2025", "same portfolio companies",
+        "A", "B", "0.1", "0.2", "Target: 0.3", "Actual: 0.2", "Difference: -0.1",
+    }.issubset(texts)
+    assert sum(y1 == y2 and x1 != x2 for x1, y1, x2, y2 in lines) >= 3
+    assert sum(x1 == x2 and y1 != y2 for x1, y1, x2, y2 in lines) >= 1
+
+
+def test_preview_negative_bar_uses_shared_zero_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chart = _one_dimensional("bar")
+    chart["series"][0]["values"] = [-10, 20]
+    rectangles: list[tuple[float, float, float, float]] = []
+    original_rectangle = ImageDraw.ImageDraw.rectangle
+
+    def record_rectangle(draw, xy, *args, **kwargs):
+        if kwargs.get("fill") == "#4472C4":
+            rectangles.append(tuple(xy))
+        return original_rectangle(draw, xy, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "rectangle", record_rectangle)
+
+    render_preview(_manifest(chart), tmp_path / "manifest.json", tmp_path / "preview.png")
+
+    assert len(rectangles) == 2
+    assert all(right > left for left, _top, right, _bottom in rectangles)
+    assert rectangles[0][2] == pytest.approx(rectangles[1][0])
+
+
+def test_chart_readback_skips_opening_pptx_when_manifests_have_no_charts(tmp_path: Path) -> None:
+    manifest = _manifest(_one_dimensional())
+    manifest["charts"] = []
+    assert validate_pptx.quantitative_chart_readback_violations(
+        tmp_path / "not-a-presentation.pptx", [manifest],
+    ) == []
+
+
+def test_extracted_chart_canonicalizes_through_authority_manifest_build_and_readback(tmp_path: Path) -> None:
+    xml = b'''<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+      <c:chart><c:title><c:tx><c:v>Revenue</c:v></c:tx></c:title><c:plotArea><c:barChart><c:barDir val="col"/><c:ser>
+      <c:tx><c:strRef><c:f>Sheet1!$B$1</c:f><c:strCache><c:pt idx="0"><c:v>Revenue</c:v></c:pt></c:strCache></c:strRef></c:tx>
+      <c:cat><c:numLit><c:pt idx="0"><c:v>2024</c:v></c:pt><c:pt idx="1"><c:v>2025</c:v></c:pt></c:numLit></c:cat>
+      <c:val><c:numLit><c:pt idx="0"><c:v>12</c:v></c:pt><c:pt idx="1"><c:v>18.5</c:v></c:pt></c:numLit></c:val>
+      </c:ser></c:barChart><c:valAx><c:title><c:tx><c:v>Revenue (USD m)</c:v></c:tx></c:title></c:valAx>
+      </c:plotArea></c:chart></c:chartSpace>'''
+    extracted = _chart_record({"page_numbers": [2], "asset_id": "word_asset_001"}, xml)
+    extracted.update({"basis": "same portfolio companies", "period": "FY2025"})
+
+    authority = select_numeric_authority([extracted])
+
+    assert authority is not None
+    assert authority["series"] == [{
+        "name": "Revenue",
+        "categories": ["2024", "2025"],
+        "category_indices": [0, 1],
+        "values": [12, 18.5],
+        "value_indices": [0, 1],
+    }]
+    chart = {"object_id": "chart-1", "name": "Revenue chart", "box_px": [190, 90, 1142, 620], **authority}
+    manifest = _manifest(chart)
+    out = tmp_path / "extracted.pptx"
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+
+    assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
