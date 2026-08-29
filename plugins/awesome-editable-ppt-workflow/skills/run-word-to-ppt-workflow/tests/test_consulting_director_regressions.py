@@ -74,7 +74,9 @@ def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None
     assert case["colors"]["secondary"] in prompt
     assert "evidence, interpretation, and conclusion" in prompt
     assert "Do not generate title, logo, footer, or page number" in prompt
-    assert "secondary color" in prompt and "strictly as an accent" in prompt
+    assert "This is not a user-confirmed emphasis page" in prompt
+    assert "Do not use any secondary-color-family shade for any text object" in prompt
+    assert "remain allowed for text-box fills, shapes, borders, nodes, and connectors" in prompt
     assert not any(term in prompt for term in LEGACY_TERMS)
 
 
