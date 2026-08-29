@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v2-source-text-custody",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "98be9042b3dac7a294f620130c401c79eb8f527fb204ca4a151c62c3f685213f",
+  "sourceManifestSha256": "a568317da71c782c8dfa4c176ee420a0e85e702ca9908f51cc7b8bbf736d6d4f",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -38,8 +38,8 @@
     },
     {
       "path": "docs/CONSULTING_DIRECTOR_VISUAL_QA.md",
-      "bytes": 2940,
-      "sha256": "b9378bb2e2bc254fd20ba5b4bbae51aafe7b2641f05efdc76ebfcfd05d0356c2"
+      "bytes": 3014,
+      "sha256": "bd92dfc7c05a730ad2cb25fc31b52dfacef9ce3593c389a6dd01a494bbdd6ccf"
     },
     {
       "path": "docs/plans/2026-08-21-consulting-director-v1.1.0.md",
@@ -1038,8 +1038,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_consulting_director_regressions.py",
-      "bytes": 4025,
-      "sha256": "fc61ffffff35554e61ced340a572866b39e1508ff80430604aade31d1f3a2d17"
+      "bytes": 4198,
+      "sha256": "2f37e6e16ee87d5c4f4554ed03f72cc2c9b9a1de12c1b822bf682f95989e158d"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_current_runtime_scanner.py",
@@ -1174,7 +1174,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 43501,
-      "sha256": "98be9042b3dac7a294f620130c401c79eb8f527fb204ca4a151c62c3f685213f"
+      "sha256": "a568317da71c782c8dfa4c176ee420a0e85e702ca9908f51cc7b8bbf736d6d4f"
     },
     {
       "path": "README.md",
