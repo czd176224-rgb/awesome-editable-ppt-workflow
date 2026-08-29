@@ -106,3 +106,19 @@ Task 5 worker/package/prompt/reviewer gate: 68 passed in 223.28s
 Renderer gate: 58 passed in 8.36s
 Materials/reconstruction regression: 105 passed in 11.68s
 ```
+
+## PR2 Whole-Review Fix Evidence
+
+- Selector and renderer now use exact `Decimal` totals for waterfall and variable rectangles; every width is strictly positive.
+- Special primitives reject any `chart_variant` at selector, worker-prompt boundary, and reconstruction runtime. Native bubble remains an explicit `xy` variant.
+- The eight-row chart/substitute rules activate only for source-explicit relationships; ordinary pages neither gain a structure nor fail review for omitting one.
+- Waterfalls use optional source endpoint labels and otherwise omit them; no fixed `Start`/`End` copy is generated.
+- Tiny positive shares and short Gantt intervals keep exact data geometry while moving labels into readable positive-area boxes.
+
+Fresh verification:
+
+```text
+Focused selector/runtime/worker gate: 163 passed in 7.54s
+PR2 chart/worker/director/reviewer gate: 138 passed in 230.54s
+Materials/reconstruction regression: 111 passed in 11.37s
+```

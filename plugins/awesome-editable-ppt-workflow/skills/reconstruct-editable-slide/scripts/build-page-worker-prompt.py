@@ -90,12 +90,17 @@ def build_prompt(run_dir: Path, page: dict, page_dir: Path) -> str:
     elif not isinstance(authority, dict):
         raise SystemExit("page_request numeric_authority must be an object")
     else:
+        if authority.get("rendering_primitive") in {
+            "cumulative_bridge", "time_interval", "variable_rectangle"
+        } and "chart_variant" in authority:
+            raise SystemExit("special numeric_authority must omit chart_variant")
         numeric_contract = (
             "SEALED NUMERIC AUTHORITY\n"
             "The accepted source image owns chart container placement, composition, and style; "
             "the sealed numeric authority owns quantitative mark size, position, and labels. "
-            "Copy it unchanged, must not change its "
-            "rendering_primitive or chart_variant, and must not calculate new metrics.\n"
+            "Copy it unchanged and do not calculate new metrics. Keep chart_variant unchanged "
+            "for native charts; special rendering primitives omit chart_variant and any added "
+            "variant must be rejected.\n"
             + json.dumps(authority, ensure_ascii=False, sort_keys=True)
         )
     replacements = {

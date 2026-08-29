@@ -91,7 +91,7 @@ _ARCHITECTURE_CONSTRAINT = (
     "relationship explicit but must not create a relationship that complete_word_content does not state."
 )
 
-_DUAL_MODE_RELATIONSHIP_CONSTRAINT = """Apply this exact eight-row dual-mode relationship mapping:
+_DUAL_MODE_RELATIONSHIP_CONSTRAINT = """Apply a row below only when complete_word_content explicitly contains that relationship. If none of the eight relationships is source-explicit, do not introduce a chart or any named qualitative substitute. Apply this exact eight-row dual-mode relationship mapping:
 increase_decrease_drivers: use a scaled cumulative bridge/waterfall only with verified start, changes, and end; otherwise use an equal-weight positive/negative driver bridge with no cumulative baseline or computed end value.
 change_over_time: use a line or column chart only with explicit periods and values; otherwise use a timeline or stage-evolution roadmap with no implied slope or magnitude.
 two_variable_relationship: use a scatter plot only with numeric x/y values; use a clearly labelled qualitative quadrant only when the source supplies the two qualitative axes and item classifications; otherwise use a comparison table.

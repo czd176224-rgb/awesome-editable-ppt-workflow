@@ -560,7 +560,7 @@ def chart_to_facts(chart: Mapping[str, Any]) -> dict[str, Any]:
             "x_indices", "y_indices", "size_indices",
             "y_values", "y_label", "y_unit", "y_basis",
             "size_values", "size_label", "size_unit", "size_basis",
-            "start", "changes", "end", "start_dates", "end_dates",
+            "start", "start_label", "changes", "end", "end_label", "start_dates", "end_dates",
             "width_values", "width_label", "width_unit", "width_basis",
             "share_values", "share_label", "share_unit", "share_basis",
             "share_denominator", "target_value", "actual_value",
@@ -640,7 +640,7 @@ def _canonical_numeric_chart(chart: Mapping[str, Any]) -> dict[str, Any] | None:
                 if key in item:
                     item[key] = _canonical_number(item[key])
             for key in (
-                "unit", "basis", "width_label", "width_unit", "width_basis",
+                "unit", "basis", "start_label", "end_label", "width_label", "width_unit", "width_basis",
                 "share_label", "share_unit", "share_basis",
             ):
                 if key in item and isinstance(item[key], str):
@@ -769,6 +769,8 @@ def _xy_complete(chart: Mapping[str, Any]) -> bool:
 
 
 def _cumulative_complete(chart: Mapping[str, Any]) -> bool:
+    if "chart_variant" in chart:
+        return False
     series = _series(chart)
     if len(series) != 1 or not _text(series[0], {}, "name") or not _text(series[0], chart, "unit") or not _text(series[0], chart, "basis"):
         return False
@@ -779,17 +781,19 @@ def _cumulative_complete(chart: Mapping[str, Any]) -> bool:
         not _numeric(item.get("start"))
         or not _numeric_list(changes)
         or not _numeric(item.get("end"))
+        or any(key in item and not _text(item, {}, key) for key in ("start_label", "end_label"))
         or not _labels(categories)
         or len(changes) != len(categories)
     ):
         return False
-    return math.isclose(
-        float(item["start"]) + sum(float(value) for value in changes),
-        float(item["end"]), rel_tol=1e-9, abs_tol=1e-9,
-    )
+    return Decimal(str(item["start"])) + sum(
+        (Decimal(str(value)) for value in changes), Decimal(0)
+    ) == Decimal(str(item["end"]))
 
 
 def _time_interval_complete(chart: Mapping[str, Any]) -> bool:
+    if "chart_variant" in chart:
+        return False
     series = _series(chart)
     for item in series:
         categories = item.get("categories")
@@ -809,6 +813,8 @@ def _time_interval_complete(chart: Mapping[str, Any]) -> bool:
 
 
 def _variable_rectangle_complete(chart: Mapping[str, Any]) -> bool:
+    if "chart_variant" in chart:
+        return False
     series = _series(chart)
     if len(series) != 1:
         return False
@@ -820,8 +826,8 @@ def _variable_rectangle_complete(chart: Mapping[str, Any]) -> bool:
     if (
         not _labels(categories)
         or not _text(item, {}, "name")
-        or not _numeric_list(widths, non_negative=True)
-        or sum(float(value) for value in widths) <= 0
+        or not _numeric_list(widths)
+        or any(Decimal(str(value)) <= 0 for value in widths)
         or len(categories) != len(widths)
         or not all(_text(item, chart, f"{prefix}_{suffix}") for prefix in ("width", "share") for suffix in ("label", "unit", "basis"))
         or not _numeric(denominator)
@@ -832,7 +838,7 @@ def _variable_rectangle_complete(chart: Mapping[str, Any]) -> bool:
         return False
     return all(
         _numeric_list(values, non_negative=True)
-        and math.isclose(sum(float(value) for value in values), float(denominator), rel_tol=1e-9, abs_tol=1e-9)
+        and sum((Decimal(str(value)) for value in values), Decimal(0)) == Decimal(str(denominator))
         for values in shares
     )
 

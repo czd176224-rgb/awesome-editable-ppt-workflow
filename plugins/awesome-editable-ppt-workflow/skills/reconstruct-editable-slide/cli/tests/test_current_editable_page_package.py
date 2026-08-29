@@ -126,9 +126,28 @@ def test_page_worker_prompt_seals_composition_and_numeric_ownership(tmp_path):
 
     assert "accepted source image owns chart container placement, composition, and style" in prompt
     assert "sealed numeric authority owns quantitative mark size, position, and labels" in prompt
-    assert "must not change its rendering_primitive or chart_variant" in prompt
-    assert "must not calculate new metrics" in prompt
+    assert "Keep chart_variant unchanged for native charts" in prompt
+    assert "special rendering primitives omit chart_variant" in prompt
+    assert "do not calculate new metrics" in prompt
     assert json.dumps(authority, ensure_ascii=False, sort_keys=True) in prompt
+
+
+def test_page_worker_prompt_requires_special_authority_to_omit_chart_variant(tmp_path):
+    authority = {
+        "title": "Bridge", "rendering_primitive": "cumulative_bridge",
+        "unit": "USD m", "basis": "reported EBITDA", "period": "FY2025",
+        "series": [{"name": "Bridge", "categories": ["Price"], "start": 10, "changes": [2], "end": 12}],
+    }
+
+    prompt = _worker_prompt(tmp_path, authority)
+
+    assert "special rendering primitives omit chart_variant" in prompt
+    assert "any added variant must be rejected" in prompt
+    assert '"chart_variant"' not in json.dumps(authority)
+
+    authority["chart_variant"] = "bubble"
+    with pytest.raises(SystemExit, match="must omit chart_variant"):
+        _worker_prompt(tmp_path / "invalid", authority)
 
 
 def test_page_worker_prompt_without_numeric_authority_forbids_quantitative_geometry(tmp_path):

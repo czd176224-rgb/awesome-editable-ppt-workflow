@@ -363,6 +363,8 @@ def test_review_allows_only_actionable_serious_correction_prompt_classes(
     assert "quantitative marks or labels contradict source values" in captured[0]
     assert "subject, unit, period, or basis" in captured[0]
     assert "named qualitative substitute" in captured[0]
+    assert "A page containing none of them must not introduce a chart" in captured[0]
+    assert "must not be rejected for omitting one" in captured[0]
     for substitute in (
         "driver bridge",
         "timeline/roadmap",

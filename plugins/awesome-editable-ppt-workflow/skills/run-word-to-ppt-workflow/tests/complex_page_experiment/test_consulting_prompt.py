@@ -313,6 +313,16 @@ def test_compiler_keeps_quantitative_and_qualitative_discipline_inside_six_secti
     assert "do not calculate new metrics" in prompt
 
 
+def test_non_relationship_page_contract_forbids_unsourced_chart_or_substitute() -> None:
+    module = _load_compiler_module()
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=True
+    )
+
+    assert "only when complete_word_content explicitly contains that relationship" in prompt
+    assert "If none of the eight relationships is source-explicit, do not introduce a chart or any named qualitative substitute" in prompt
+
+
 def test_compiler_bans_accent_family_text_only_on_non_emphasis_pages() -> None:
     module = _load_compiler_module()
 

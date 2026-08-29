@@ -432,7 +432,7 @@ def _special_chart_records(chart):
         span = high - low or Decimal(1)
         plot_left, plot_top = left + width * 0.15, top + height * 0.18
         plot_width, plot_height = width * 0.75, height * 0.62
-        labels = ["Start", *item["categories"], "End"]
+        labels = [item.get("start_label"), *item["categories"], item.get("end_label")]
         values = [item["start"], *item["changes"], item["end"]]
         endpoints = [(Decimal(0), Decimal(str(item["start"])))]
         endpoints.extend((levels[index], levels[index + 1]) for index in range(len(item["changes"])))
@@ -456,7 +456,8 @@ def _special_chart_records(chart):
                     f"Bar {index}", "rect", (x, min(y1, y2), bar_width, abs(y2 - y1)), f"bars[{index - 1}]",
                     fill="#70AD47" if index not in {1, len(endpoints)} and Decimal(str(value)) >= 0 else "#ED7D31" if index not in {1, len(endpoints)} else "#4472C4",
                 ))
-            label(f"Category {index}", category, (plot_left + slot * (index - 1), top + height * 0.82, slot, height * 0.08), f"categories[{index - 1}]")
+            if category is not None:
+                label(f"Category {index}", category, (plot_left + slot * (index - 1), top + height * 0.82, slot, height * 0.08), f"categories[{index - 1}]")
             label(f"Value {index}", _number_text(value), (x, min(y1, y2) - height * 0.07, bar_width, height * 0.07), f"values[{index - 1}]")
         for index, level in enumerate(levels, start=1):
             x = bars[index - 1]["left"] + bars[index - 1]["width"]
@@ -484,7 +485,9 @@ def _special_chart_records(chart):
             y = plot_top + row_height * (index - 0.75)
             shape(f"Bar {index}", "rect", (x, y, bar_width, bar_height), f"bars[{index - 1}]")
             label(f"Category {index}", category, (left, y, width * 0.22, bar_height), f"series[{series_index}].categories[{category_index}]")
-            label(f"Date {index}", f"{start.isoformat()} – {end.isoformat()}", (x, y + bar_height, bar_width, row_height - bar_height), f"dates[{index - 1}]")
+            date_width = max(bar_width, width * 0.12)
+            date_left = x if x + date_width <= left + width else x + bar_width - date_width
+            label(f"Date {index}", f"{start.isoformat()} – {end.isoformat()}", (date_left, y + bar_height, date_width, max(row_height - bar_height, height * 0.05)), f"dates[{index - 1}]")
 
     else:
         item = chart["series"][0]
@@ -516,15 +519,18 @@ def _special_chart_records(chart):
             for share_index, share in enumerate(shares):
                 share_value = Decimal(str(share))
                 segment_height = plot_height * float(share_value / denominator)
+                external = share_value == 0 or segment_height < height * 0.05 or category_width < width * 0.04
                 if share_value == 0:
                     shape(f"Boundary {segment_index}", "line", (x, y, category_width, 0), f"segments[{segment_index - 1}]", fill="none")
+                else:
+                    shape(f"Segment {segment_index}", "rect", (x, y, category_width, segment_height), f"segments[{segment_index - 1}]", fill=("#4472C4", "#ED7D31", "#A5A5A5", "#FFC000")[share_index % 4])
+                if external:
                     label(
                         f"Share {segment_index}", _number_text(share),
-                        (plot_left + plot_width, plot_top + external_label_height * (segment_index - 1), width * 0.08, external_label_height),
+                        (plot_left + plot_width, plot_top + external_label_height * (segment_index - 1), width * 0.08, max(external_label_height, height * 0.04)),
                         f"shares[{category_index - 1}][{share_index}]",
                     )
                 else:
-                    shape(f"Segment {segment_index}", "rect", (x, y, category_width, segment_height), f"segments[{segment_index - 1}]", fill=("#4472C4", "#ED7D31", "#A5A5A5", "#FFC000")[share_index % 4])
                     label(f"Share {segment_index}", _number_text(share), (x, y, category_width, segment_height), f"shares[{category_index - 1}][{share_index}]")
                 y += segment_height
                 segment_index += 1
@@ -552,6 +558,8 @@ def _validate_chart(manifest, chart):
     primitive = chart.get("rendering_primitive")
     variant = chart.get("chart_variant")
     allowed = {"column_bar": {"column", "bar"}, "line_point": {"line", "dot"}, "xy": {"scatter", "bubble"}}
+    if primitive in SPECIAL_CHART_PRIMITIVES and "chart_variant" in chart:
+        raise ValueError("charts[].chart_variant must be omitted for special rendering_primitive")
     if primitive not in SPECIAL_CHART_PRIMITIVES and variant not in allowed.get(primitive, set()):
         raise ValueError("charts[].chart_variant must explicitly match rendering_primitive")
     for field in ("title", "period"):
@@ -572,6 +580,7 @@ def _validate_chart(manifest, chart):
             or not isinstance(changes, list) or len(changes) != len(categories)
             or any(not _is_number(value) for value in changes)
             or not _is_number(item.get("start")) or not _is_number(item.get("end"))
+            or any(field in item and (not isinstance(item[field], str) or not item[field].strip()) for field in ("start_label", "end_label"))
         ):
             raise ValueError("charts[].cumulative_bridge requires exact start, changes, categories, and end")
         for field in ("unit", "basis"):

@@ -235,7 +235,8 @@ def test_cumulative_bridge_uses_exact_editable_waterfall_geometry_and_labels(tmp
         3649039, 1733580, 385101, 0,
     )
     texts = {shape.text for shape in slide.shapes if shape.has_text_frame}
-    assert {"Value bridge", "Bridge", "Start", "Pricing", "Volume", "End", "100", "20", "-5", "115", "USD m", "FY2025", "FY2025 EBITDA"}.issubset(texts)
+    assert {"Value bridge", "Bridge", "Pricing", "Volume", "100", "20", "-5", "115", "USD m", "FY2025", "FY2025 EBITDA"}.issubset(texts)
+    assert {"Start", "End"}.isdisjoint(texts)
     assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
 
 
@@ -308,6 +309,31 @@ def test_special_source_totals_require_exact_decimal_equality(
         write_pptx(_manifest(chart), tmp_path / "decimal-mismatch.pptx", tmp_path / "manifest.json")
 
 
+@pytest.mark.parametrize(
+    "chart",
+    [
+        {**_cumulative_bridge(), "series": [{**_cumulative_bridge()["series"][0], "end": 115.00000001}]},
+        {**_variable_rectangle(), "series": [{**_variable_rectangle()["series"][0], "share_values": [[25, 75.00000001], [40, 60]]}]},
+    ],
+)
+def test_selector_to_renderer_rejects_the_same_inexact_special_totals(tmp_path: Path, chart: dict) -> None:
+    assert select_numeric_authority([chart]) is None
+    with pytest.raises(ValueError):
+        write_pptx(_manifest(chart), tmp_path / "rejected.pptx", tmp_path / "manifest.json")
+
+
+def test_waterfall_uses_source_endpoint_labels_only(tmp_path: Path) -> None:
+    chart = _cumulative_bridge()
+    chart["series"][0].update({"start_label": "FY2024", "end_label": "FY2025"})
+    out = tmp_path / "source-endpoints.pptx"
+
+    write_pptx(_manifest(chart), out, tmp_path / "manifest.json")
+
+    texts = {shape.text for shape in Presentation(out).slides[0].shapes if shape.has_text_frame}
+    assert {"FY2024", "FY2025"}.issubset(texts)
+    assert {"Start", "End"}.isdisjoint(texts)
+
+
 def test_zero_waterfall_values_use_boundary_markers_and_positive_external_labels(tmp_path: Path) -> None:
     chart = _cumulative_bridge()
     chart["series"][0].update({
@@ -360,6 +386,33 @@ def test_zero_share_uses_boundary_marker_and_positive_external_label(tmp_path: P
     assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
 
 
+def test_tiny_positive_share_and_short_gantt_keep_data_geometry_but_externalize_readable_labels() -> None:
+    market = _variable_rectangle()
+    market["series"][0]["share_values"][0] = [0.1, 99.9]
+    market_normalized = normalize_manifest(_manifest(market))
+    market_chart = market_normalized["charts"][0]
+    market_shapes = {item["name"]: item for item in market_normalized["shapes"]}
+    market_text = {item["name"]: item for item in market_normalized["text_boxes"]}
+
+    assert market_shapes["Market composition Segment 1"]["height"] > 0
+    assert market_text["Market composition Share 1"]["left"] >= market_shapes["Market composition Segment 1"]["left"] + market_shapes["Market composition Segment 1"]["width"]
+    assert market_text["Market composition Share 1"]["height"] >= market_chart["height"] * 0.04
+
+    gantt = _time_interval()
+    gantt["series"][0].update({
+        "start_dates": ["2026-09-01", "2026-12-31"],
+        "end_dates": ["2026-09-01", "2026-12-31"],
+    })
+    gantt_normalized = normalize_manifest(_manifest(gantt))
+    gantt_chart = gantt_normalized["charts"][0]
+    gantt_shapes = {item["name"]: item for item in gantt_normalized["shapes"]}
+    gantt_text = {item["name"]: item for item in gantt_normalized["text_boxes"]}
+
+    assert gantt_shapes["Project schedule Bar 1"]["width"] > 0
+    assert gantt_text["Project schedule Date 1"]["width"] >= gantt_chart["width"] * 0.12
+    assert gantt_text["Project schedule Date 1"]["width"] > gantt_shapes["Project schedule Bar 1"]["width"]
+
+
 @pytest.mark.parametrize(
     ("chart", "mutate", "expected"),
     [
@@ -379,6 +432,15 @@ def test_special_quantitative_forms_reject_unreadable_source_dimensions(
 
     with pytest.raises(ValueError, match=expected):
         write_pptx(_manifest(chart), tmp_path / "invalid-special.pptx", tmp_path / "manifest.json")
+
+
+@pytest.mark.parametrize("variant", ["bubble", "column"])
+def test_special_manifest_rejects_any_extra_chart_variant(tmp_path: Path, variant: str) -> None:
+    chart = _cumulative_bridge()
+    chart["chart_variant"] = variant
+
+    with pytest.raises(ValueError, match="must be omitted"):
+        write_pptx(_manifest(chart), tmp_path / "variant-special.pptx", tmp_path / "manifest.json")
 
 
 @pytest.mark.parametrize(
