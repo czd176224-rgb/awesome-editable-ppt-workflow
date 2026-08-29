@@ -60,6 +60,18 @@ _ARGUMENT_CONSTRAINT = (
     "connects evidence, interpretation, and conclusion, ending with an explicit takeaway."
 )
 
+_QUANTITATIVE_CONTENT_CONSTRAINT = (
+    "Use a quantitative form only when source evidence is complete and unambiguous for the "
+    "subject, unit, period, basis, categories, and values required by that form. Preserve every "
+    "source value and label exactly; do not calculate new metrics, infer missing values, or mix "
+    "incompatible subjects, units, periods, or bases. When those dimensions are incomplete, use "
+    "the named qualitative substitute and make the source-stated relationship visibly legible. "
+    "When a page contains financial, valuation, investment, or operating data, preserve subject, "
+    "unit, period, basis, actual/forecast status, source-stated assumptions, and total-to-component "
+    "relationships. Keep facts, assumptions, calculated results, analytical judgments, and "
+    "recommendations distinct."
+)
+
 _VISIBLE_TEXT_CUSTODY = (
     "business_proposition, explanatory_lead, and takeaway_statement are planning instructions, "
     "not visible slide copy. Every visible word or label must use exact contiguous spans from "
@@ -79,9 +91,29 @@ _ARCHITECTURE_CONSTRAINT = (
     "relationship explicit but must not create a relationship that complete_word_content does not state."
 )
 
+_DUAL_MODE_RELATIONSHIP_CONSTRAINT = """Apply a row below only when complete_word_content explicitly contains that relationship. If none of the eight relationships is source-explicit, do not introduce a chart or any named qualitative substitute. Apply this exact eight-row dual-mode relationship mapping:
+increase_decrease_drivers: use a scaled cumulative bridge/waterfall only with verified start, changes, and end; otherwise use an equal-weight positive/negative driver bridge with no cumulative baseline or computed end value.
+change_over_time: use a line or column chart only with explicit periods and values; otherwise use a timeline or stage-evolution roadmap with no implied slope or magnitude.
+two_variable_relationship: use a scatter plot only with numeric x/y values; use a clearly labelled qualitative quadrant only when the source supplies the two qualitative axes and item classifications; otherwise use a comparison table.
+third_variable_size: encode bubble size only from a real non-negative third numeric variable; otherwise use uniform-size nodes with no size ranking.
+market_size_share: use a Mekko/variable rectangle only with complete width and share values; otherwise use an equal-width hierarchy or portfolio matrix with no area-based claim.
+project_stage_time: use a Gantt only with explicit start/end or start/duration; otherwise use an ordered roadmap or milestone sequence when dates/durations are absent.
+option_comparison: use a bar/dot plot only when comparable values or source ratings exist; otherwise use a native comparison table with source-backed criteria and wording.
+target_actual_variance: use bar/dot plus target line or difference arrow only when both values share a unit/basis; otherwise use a goal-current-gap narrative structure with no target line, arrow magnitude, or calculated variance."""
+
 _TYPOGRAPHY_CONSTRAINT = (
     "Render source-authorized Simplified Chinese accurately and legibly, with presentation-scale "
-    "hierarchy for explanatory lead, analytical labels, evidence, interpretation, and takeaway."
+    "hierarchy for explanatory lead, analytical labels, evidence, interpretation, and takeaway. "
+    "Apply TTS-style quantitative label discipline: every quantitative mark must identify its "
+    "subject and keep its unit, period, and basis explicit through the title, subtitle, axis, "
+    "legend, data label, or adjacent source-exact annotation."
+)
+
+_QUALITATIVE_PROHIBITION = (
+    "Without complete source values, do not use numeric axes, proportional geometry, bubble-size "
+    "ranking, target-line magnitude, or difference magnitude. A qualitative substitute must not "
+    "masquerade as measured scale; use labels, equal sizing, sequence, grouping, connectors, and "
+    "source wording to signal the relationship visibly."
 )
 
 
@@ -257,10 +289,15 @@ def compile_consulting_six_part_prompt(
             sections["core_proposition_and_content"],
             _ARGUMENT_CONSTRAINT,
             _VISIBLE_TEXT_CUSTODY,
+            _QUANTITATIVE_CONTENT_CONSTRAINT,
         )
     )
     sections["consulting_information_architecture"] = _join(
-        (sections["consulting_information_architecture"], _ARCHITECTURE_CONSTRAINT)
+        (
+            sections["consulting_information_architecture"],
+            _ARCHITECTURE_CONSTRAINT,
+            _DUAL_MODE_RELATIONSHIP_CONSTRAINT,
+        )
     )
     sections["visual_style_and_color"] = _join(
         (sections["visual_style_and_color"], positive_color)
@@ -269,7 +306,7 @@ def compile_consulting_six_part_prompt(
         (sections["text_and_typography"], _TYPOGRAPHY_CONSTRAINT)
     )
     sections["strict_prohibitions"] = _join(
-        (sections["strict_prohibitions"], prohibited_color)
+        (sections["strict_prohibitions"], prohibited_color, _QUALITATIVE_PROHIBITION)
     )
     return "\n\n".join(
         f"## {heading}\n{sections[key]}" for heading, key in SECTION_SPECS

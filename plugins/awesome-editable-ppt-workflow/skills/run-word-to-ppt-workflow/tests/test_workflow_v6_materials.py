@@ -709,6 +709,18 @@ def test_numeric_authority_accepts_each_special_primitive(chart: dict[str, objec
     assert workflow_v6_materials.select_numeric_authority([chart]) == chart
 
 
+@pytest.mark.parametrize("variant", ["bubble", "column"])
+def test_special_primitives_refuse_any_chart_variant(variant: str):
+    chart = {
+        "title": "Value bridge", "rendering_primitive": "cumulative_bridge",
+        "chart_variant": variant, "unit": "USD m", "basis": "FY2025 EBITDA",
+        "period": "FY2025", "series": [{"name": "Bridge", "categories": ["Pricing"],
+        "start": 100, "changes": [20], "end": 120}],
+    }
+
+    assert workflow_v6_materials.select_numeric_authority([chart]) is None
+
+
 @pytest.mark.parametrize(
     ("relationship", "chart"),
     [
@@ -980,7 +992,8 @@ def test_native_chart_variants_refuse_target_and_difference_marks(chart: dict[st
     assert workflow_v6_materials.select_numeric_authority([chart]) is None
 
 
-def test_variable_rectangle_refuses_zero_total_width():
+@pytest.mark.parametrize("widths", [[0, 60], [-1, 61], [0, 0]])
+def test_variable_rectangle_refuses_non_positive_widths(widths: list[int]):
     chart = {
         "title": "Markets",
         "rendering_primitive": "variable_rectangle",
@@ -988,7 +1001,7 @@ def test_variable_rectangle_refuses_zero_total_width():
         "series": [{
             "name": "Markets",
             "categories": ["A", "B"],
-            "width_values": [0, 0],
+            "width_values": widths,
             "width_label": "Market size",
             "width_unit": "USD m",
             "width_basis": "FY2025 addressable market",
@@ -1000,4 +1013,26 @@ def test_variable_rectangle_refuses_zero_total_width():
         }],
     }
 
+    assert workflow_v6_materials.select_numeric_authority([chart]) is None
+
+
+@pytest.mark.parametrize(
+    "chart",
+    [
+        {
+            "title": "Value bridge", "rendering_primitive": "cumulative_bridge",
+            "unit": "USD m", "basis": "FY2025 EBITDA", "period": "FY2025",
+            "series": [{"name": "Bridge", "categories": ["Pricing", "Volume"],
+            "start": 100, "changes": [20, -5], "end": 115.00000001}],
+        },
+        {
+            "title": "Markets", "rendering_primitive": "variable_rectangle", "period": "FY2025",
+            "series": [{"name": "Markets", "categories": ["A", "B"], "width_values": [40, 60],
+            "width_label": "Size", "width_unit": "USD m", "width_basis": "FY2025 market",
+            "share_values": [[25, 75.00000001], [40, 60]], "share_label": "Share",
+            "share_unit": "%", "share_basis": "FY2025 composition", "share_denominator": 100}],
+        },
+    ],
+)
+def test_selector_refuses_special_totals_that_renderer_would_reject(chart):
     assert workflow_v6_materials.select_numeric_authority([chart]) is None

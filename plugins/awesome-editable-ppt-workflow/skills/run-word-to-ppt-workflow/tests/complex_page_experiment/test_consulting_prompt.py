@@ -184,6 +184,145 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
         assert legacy_name not in prompt
 
 
+@pytest.mark.parametrize(
+    ("relationship", "required_semantics"),
+    [
+        (
+            "increase_decrease_drivers",
+            (
+                "scaled cumulative bridge/waterfall",
+                "verified start, changes, and end",
+                "equal-weight positive/negative driver bridge",
+                "no cumulative baseline or computed end value",
+            ),
+        ),
+        (
+            "change_over_time",
+            (
+                "line or column chart",
+                "explicit periods and values",
+                "timeline or stage-evolution roadmap",
+                "no implied slope or magnitude",
+            ),
+        ),
+        (
+            "two_variable_relationship",
+            (
+                "scatter plot",
+                "numeric x/y values",
+                "source supplies the two qualitative axes and item classifications",
+                "otherwise use a comparison table",
+            ),
+        ),
+        (
+            "third_variable_size",
+            (
+                "bubble size",
+                "real non-negative third numeric variable",
+                "uniform-size nodes",
+                "no size ranking",
+            ),
+        ),
+        (
+            "market_size_share",
+            (
+                "Mekko/variable rectangle",
+                "complete width and share values",
+                "equal-width hierarchy or portfolio matrix",
+                "no area-based claim",
+            ),
+        ),
+        (
+            "project_stage_time",
+            (
+                "Gantt",
+                "explicit start/end or start/duration",
+                "ordered roadmap or milestone sequence",
+                "dates/durations are absent",
+            ),
+        ),
+        (
+            "option_comparison",
+            (
+                "bar/dot plot",
+                "comparable values or source ratings",
+                "native comparison table",
+                "source-backed criteria and wording",
+            ),
+        ),
+        (
+            "target_actual_variance",
+            (
+                "bar/dot plus target line or difference arrow",
+                "both values share a unit/basis",
+                "goal-current-gap narrative structure",
+                "no target line, arrow magnitude, or calculated variance",
+            ),
+        ),
+    ],
+)
+def test_compiler_emits_exact_dual_mode_relationship_mapping(
+    relationship: str, required_semantics: tuple[str, ...],
+) -> None:
+    module = _load_compiler_module()
+
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=True
+    )
+
+    row = next(line for line in prompt.splitlines() if line.startswith(f"{relationship}:"))
+    for semantic in required_semantics:
+        assert semantic in row
+
+
+def test_compiler_keeps_quantitative_and_qualitative_discipline_inside_six_sections() -> None:
+    module = _load_compiler_module()
+
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=True
+    )
+
+    assert len([line for line in prompt.splitlines() if line.startswith("## ")]) == 6
+    assert "numeric_authority" not in prompt
+    for label_dimension in (
+        "subject",
+        "unit",
+        "period",
+        "basis",
+        "actual/forecast status",
+        "source-stated assumptions",
+        "total-to-component relationships",
+    ):
+        assert label_dimension in prompt
+    for analysis_layer in (
+        "facts",
+        "assumptions",
+        "calculated results",
+        "analytical judgments",
+        "recommendations",
+    ):
+        assert analysis_layer in prompt
+    for forbidden_geometry in (
+        "numeric axes",
+        "proportional geometry",
+        "bubble-size ranking",
+        "target-line magnitude",
+        "difference magnitude",
+    ):
+        assert forbidden_geometry in prompt
+    assert "do not calculate new metrics" in prompt
+
+
+def test_non_relationship_page_contract_forbids_unsourced_chart_or_substitute() -> None:
+    module = _load_compiler_module()
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=True
+    )
+
+    assert "only when complete_word_content explicitly contains that relationship" in prompt
+    assert "If none of the eight relationships is source-explicit, do not introduce a chart or any named qualitative substitute" in prompt
+
+
 def test_compiler_bans_accent_family_text_only_on_non_emphasis_pages() -> None:
     module = _load_compiler_module()
 

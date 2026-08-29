@@ -17,6 +17,8 @@ try:
         _number_text,
         _chart_shape_description,
         _chart_shared_text,
+        _special_chart_records,
+        SPECIAL_CHART_PRIMITIVES,
         normalize_manifest,
     )
 except ImportError:  # direct runtime script execution through the editppt launcher
@@ -26,6 +28,8 @@ except ImportError:  # direct runtime script execution through the editppt launc
         _number_text,
         _chart_shape_description,
         _chart_shared_text,
+        _special_chart_records,
+        SPECIAL_CHART_PRIMITIVES,
         normalize_manifest,
     )
 
@@ -549,10 +553,40 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
         if arrowheads is not None:
             add(f"{field}.arrowheads", arrowheads, _shape_arrowheads(shape))
 
+    def validate_special_records(slide, chart, prefix):
+        records = _special_chart_records(chart)
+        for section in ("shapes", "text_boxes"):
+            for record in records[section]:
+                field = prefix + (f".{record['_field']}" if record["_field"] else "")
+                matches = [shape for shape in slide.shapes if shape.name == record["name"]]
+                if len(matches) != 1:
+                    violations.append({"field": field, "reason": f"expected one editable object, found {len(matches)}"})
+                    continue
+                shape = matches[0]
+                description = shape._element.xpath(".//p:cNvPr")[0].get("descr")
+                add(f"{field}.object_id", f"object_id:{record['object_id']}", description)
+                expected_kind = "text_box" if section == "text_boxes" else record["type"]
+                actual_kind = (
+                    "text_box"
+                    if shape._element.xpath(".//p:cNvSpPr[@txBox='1']")
+                    else _shape_kind(shape)
+                )
+                add(f"{field}.type", expected_kind, actual_kind)
+                add(
+                    f"{field}.geometry",
+                    tuple(int(round(float(record[key]) * 914400)) for key in ("left", "top", "width", "height")),
+                    _shape_geometry(shape),
+                )
+                if section == "text_boxes":
+                    add(field, str(record["text"]), shape.text)
+
     for slide_index, (slide, manifest) in enumerate(zip(presentation.slides, normalized)):
         named = {shape.name: shape for shape in slide.shapes}
         for chart_index, expected in enumerate(manifest.get("charts", [])):
             prefix = f"slides[{slide_index}].charts[{chart_index}]" if len(normalized) > 1 else f"charts[{chart_index}]"
+            if expected["rendering_primitive"] in SPECIAL_CHART_PRIMITIVES:
+                validate_special_records(slide, expected, prefix)
+                continue
             root = named.get(expected["name"])
             if root is None:
                 violations.append({"field": prefix, "reason": "missing chart root object"})

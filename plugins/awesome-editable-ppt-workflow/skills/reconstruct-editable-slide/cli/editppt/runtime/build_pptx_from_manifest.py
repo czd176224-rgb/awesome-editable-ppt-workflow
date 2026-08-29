@@ -10,6 +10,7 @@ import sys
 import tempfile
 import zipfile
 from copy import deepcopy
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -30,6 +31,7 @@ ASPECT_TOLERANCE = 0.03
 DEFAULT_TEXT_FIT_SAFETY = 0.9
 DEFAULT_TEXT_LINE_HEIGHT = 1.22
 DEFAULT_MIN_FONT_SIZE = 4.0
+SPECIAL_CHART_PRIMITIVES = {"cumulative_bridge", "time_interval", "variable_rectangle"}
 
 
 def emu(value):
@@ -365,6 +367,177 @@ def _chart_mark_geometry(chart):
     return geometry
 
 
+def _special_chart_records(chart):
+    """Expand one sealed special chart into existing shape and text records."""
+    primitive = chart["rendering_primitive"]
+    if primitive not in SPECIAL_CHART_PRIMITIVES:
+        return {"shapes": [], "text_boxes": []}
+    left, top, width, height = (float(chart[key]) for key in ("left", "top", "width", "height"))
+    shapes = []
+    text_boxes = []
+
+    def object_id(role):
+        return f"{chart['object_id']}:{role.lower().replace(' ', '-')}"
+
+    def checked_geometry(kind, geometry):
+        geometry = tuple(float(value) for value in geometry)
+        x, y, item_width, item_height = geometry
+        has_area = item_width > 0 and item_height > 0
+        has_length = item_width >= 0 and item_height >= 0 and (item_width > 0 or item_height > 0)
+        if (
+            any(not math.isfinite(value) for value in geometry)
+            or x < left - 1e-9 or y < top - 1e-9
+            or x + item_width > left + width + 1e-9
+            or y + item_height > top + height + 1e-9
+            or not (has_length if kind == "line" else has_area)
+        ):
+            raise ValueError(f"charts[].{primitive} generated {kind} geometry must be positive and inside box_px")
+        return geometry
+
+    def shape(role, kind, geometry, field, *, fill="#4472C4", stroke="#666666"):
+        geometry = checked_geometry(kind, geometry)
+        record = {
+            "object_id": object_id(role), "name": f"{chart['name']} {role}", "type": kind,
+            "left": geometry[0], "top": geometry[1], "width": geometry[2], "height": geometry[3],
+            "fill": fill, "stroke": stroke, "z_index": 250, "_field": field,
+        }
+        shapes.append(record)
+        return record
+
+    def label(role, text, geometry, field):
+        geometry = checked_geometry("text_box", geometry)
+        text_boxes.append({
+            "object_id": object_id(role), "name": f"{chart['name']} {role}", "text": str(text),
+            "left": geometry[0], "top": geometry[1], "width": geometry[2], "height": geometry[3],
+            "font_size": 9, "color": "#333333", "wrap": "square", "autofit": "shape",
+            "z_index": 300, "_field": field,
+        })
+
+    root_geometry = checked_geometry("rect", (left, top, width, height))
+    shapes.append({
+        "object_id": chart["object_id"], "name": chart["name"], "type": "rect",
+        "left": root_geometry[0], "top": root_geometry[1], "width": root_geometry[2], "height": root_geometry[3],
+        "fill": "none", "stroke": "none", "z_index": 240, "_field": "",
+    })
+    label("Title", chart["title"], (left, top, width * 0.5, height * 0.08), "title")
+    label("Period", chart["period"], (left + width * 0.75, top, width * 0.25, height * 0.06), "period")
+
+    if primitive == "cumulative_bridge":
+        item = chart["series"][0]
+        levels = [Decimal(str(item["start"]))]
+        for change in item["changes"]:
+            levels.append(levels[-1] + Decimal(str(change)))
+        low = min([Decimal(0), Decimal(str(item["start"])), Decimal(str(item["end"])), *levels])
+        high = max([Decimal(0), Decimal(str(item["start"])), Decimal(str(item["end"])), *levels])
+        span = high - low or Decimal(1)
+        plot_left, plot_top = left + width * 0.15, top + height * 0.18
+        plot_width, plot_height = width * 0.75, height * 0.62
+        labels = [item.get("start_label"), *item["categories"], item.get("end_label")]
+        values = [item["start"], *item["changes"], item["end"]]
+        endpoints = [(Decimal(0), Decimal(str(item["start"])))]
+        endpoints.extend((levels[index], levels[index + 1]) for index in range(len(item["changes"])))
+        endpoints.append((Decimal(0), Decimal(str(item["end"]))))
+        slot, bar_width = plot_width / len(endpoints), plot_width / len(endpoints) * 0.6
+
+        def value_y(value):
+            return plot_top + plot_height * float((high - Decimal(str(value))) / span)
+
+        label("Series 1", item["name"], (plot_left, top + height * 0.08, width * 0.35, height * 0.08), "series[0].name")
+        label("Unit", _chart_shared_text(chart, "unit"), (left + width * 0.55, top + height * 0.06, width * 0.2, height * 0.06), "unit")
+        label("Basis", _chart_shared_text(chart, "basis"), (left + width * 0.75, top + height * 0.06, width * 0.25, height * 0.06), "basis")
+        bars = []
+        for index, ((start, end), category, value) in enumerate(zip(endpoints, labels, values), start=1):
+            x = plot_left + slot * (index - 0.8)
+            y1, y2 = value_y(start), value_y(end)
+            if start == end:
+                bars.append(shape(f"Boundary {index}", "line", (x, y1, bar_width, 0), f"bars[{index - 1}]", fill="none"))
+            else:
+                bars.append(shape(
+                    f"Bar {index}", "rect", (x, min(y1, y2), bar_width, abs(y2 - y1)), f"bars[{index - 1}]",
+                    fill="#70AD47" if index not in {1, len(endpoints)} and Decimal(str(value)) >= 0 else "#ED7D31" if index not in {1, len(endpoints)} else "#4472C4",
+                ))
+            if category is not None:
+                label(f"Category {index}", category, (plot_left + slot * (index - 1), top + height * 0.82, slot, height * 0.08), f"categories[{index - 1}]")
+            label(f"Value {index}", _number_text(value), (x, min(y1, y2) - height * 0.07, bar_width, height * 0.07), f"values[{index - 1}]")
+        for index, level in enumerate(levels, start=1):
+            x = bars[index - 1]["left"] + bars[index - 1]["width"]
+            next_x = bars[index]["left"]
+            shape(f"Connector {index}", "line", (x, value_y(level), next_x - x, 0), f"connectors[{index - 1}]", fill="none")
+
+    elif primitive == "time_interval":
+        entries = [
+            (series_index, category_index, item, category, date.fromisoformat(str(start)), date.fromisoformat(str(end)))
+            for series_index, item in enumerate(chart["series"])
+            for category_index, (category, start, end) in enumerate(zip(item["categories"], item["start_dates"], item["end_dates"]))
+        ]
+        first = min(start for _series_index, _category_index, _item, _category, start, _end in entries)
+        last = max(end for _series_index, _category_index, _item, _category, _start, end in entries)
+        days = (last - first).days + 1
+        plot_left, plot_top = left + width * 0.25, top + height * 0.2
+        plot_width, plot_height = width * 0.7, height * 0.6
+        row_height, bar_height = plot_height / len(entries), plot_height / len(entries) * 0.5
+        shape("Axis", "line", (plot_left, plot_top + plot_height, plot_width, 0), "axis", fill="none")
+        for series_index, item in enumerate(chart["series"], start=1):
+            label(f"Series {series_index}", item["name"], (left, top + height * (0.08 + 0.06 * series_index), width * 0.22, height * 0.06), f"series[{series_index - 1}].name")
+        for index, (series_index, category_index, item, category, start, end) in enumerate(entries, start=1):
+            x = plot_left + plot_width * (start - first).days / days
+            bar_width = plot_width * ((end - start).days + 1) / days
+            y = plot_top + row_height * (index - 0.75)
+            shape(f"Bar {index}", "rect", (x, y, bar_width, bar_height), f"bars[{index - 1}]")
+            label(f"Category {index}", category, (left, y, width * 0.22, bar_height), f"series[{series_index}].categories[{category_index}]")
+            date_width = max(bar_width, width * 0.12)
+            date_left = x if x + date_width <= left + width else x + bar_width - date_width
+            label(f"Date {index}", f"{start.isoformat()} – {end.isoformat()}", (date_left, y + bar_height, date_width, max(row_height - bar_height, height * 0.05)), f"dates[{index - 1}]")
+
+    else:
+        item = chart["series"][0]
+        widths = [Decimal(str(value)) for value in item["width_values"]]
+        width_total = sum(widths, Decimal(0))
+        denominator = Decimal(str(item["share_denominator"]))
+        plot_left, plot_top = left + width * 0.12, top + height * 0.2
+        plot_width, plot_height = width * 0.8, height * 0.62
+        label("Series 1", item["name"], (left, top + height * 0.08, width * 0.2, height * 0.06), "series[0].name")
+        metadata = [
+            ("Width Label", _chart_shared_text(chart, "width_label"), "width_label"),
+            ("Width Unit", _chart_shared_text(chart, "width_unit"), "width_unit"),
+            ("Width Basis", _chart_shared_text(chart, "width_basis"), "width_basis"),
+            ("Share Label", _chart_shared_text(chart, "share_label"), "share_label"),
+            ("Share Unit", _chart_shared_text(chart, "share_unit"), "share_unit"),
+            ("Share Basis", _chart_shared_text(chart, "share_basis"), "share_basis"),
+            ("Share Denominator", _number_text(item["share_denominator"]), "share_denominator"),
+        ]
+        for index, (role, text, field) in enumerate(metadata):
+            label(role, text, (left + width * (0.22 + 0.13 * (index % 3)), top + height * (0.08 + 0.06 * (index // 3)), width * 0.13, height * 0.06), field)
+        segment_count = sum(len(values) for values in item["share_values"])
+        external_label_height = plot_height / segment_count
+        x, segment_index = plot_left, 1
+        for category_index, (category, source_width, shares) in enumerate(zip(item["categories"], widths, item["share_values"]), start=1):
+            category_width = plot_width * float(source_width / width_total)
+            y = plot_top
+            label(f"Category {category_index}", category, (x, top + height * 0.82, category_width, height * 0.06), f"categories[{category_index - 1}]")
+            label(f"Width {category_index}", _number_text(item["width_values"][category_index - 1]), (x, top + height * 0.88, category_width, height * 0.06), f"widths[{category_index - 1}]")
+            for share_index, share in enumerate(shares):
+                share_value = Decimal(str(share))
+                segment_height = plot_height * float(share_value / denominator)
+                external = share_value == 0 or segment_height < height * 0.05 or category_width < width * 0.04
+                if share_value == 0:
+                    shape(f"Boundary {segment_index}", "line", (x, y, category_width, 0), f"segments[{segment_index - 1}]", fill="none")
+                else:
+                    shape(f"Segment {segment_index}", "rect", (x, y, category_width, segment_height), f"segments[{segment_index - 1}]", fill=("#4472C4", "#ED7D31", "#A5A5A5", "#FFC000")[share_index % 4])
+                if external:
+                    label(
+                        f"Share {segment_index}", _number_text(share),
+                        (plot_left + plot_width, plot_top + external_label_height * (segment_index - 1), width * 0.08, max(external_label_height, height * 0.04)),
+                        f"shares[{category_index - 1}][{share_index}]",
+                    )
+                else:
+                    label(f"Share {segment_index}", _number_text(share), (x, y, category_width, segment_height), f"shares[{category_index - 1}][{share_index}]")
+                y += segment_height
+                segment_index += 1
+            x += category_width
+    return {"shapes": shapes, "text_boxes": text_boxes}
+
+
 def _validate_chart(manifest, chart):
     if "anchor" in chart or "chart_type" in chart:
         raise ValueError("charts[] anchor/chart_type are unsupported; use fixed-canvas box_px and explicit chart_variant")
@@ -385,7 +558,9 @@ def _validate_chart(manifest, chart):
     primitive = chart.get("rendering_primitive")
     variant = chart.get("chart_variant")
     allowed = {"column_bar": {"column", "bar"}, "line_point": {"line", "dot"}, "xy": {"scatter", "bubble"}}
-    if variant not in allowed.get(primitive, set()):
+    if primitive in SPECIAL_CHART_PRIMITIVES and "chart_variant" in chart:
+        raise ValueError("charts[].chart_variant must be omitted for special rendering_primitive")
+    if primitive not in SPECIAL_CHART_PRIMITIVES and variant not in allowed.get(primitive, set()):
         raise ValueError("charts[].chart_variant must explicitly match rendering_primitive")
     for field in ("title", "period"):
         if not isinstance(chart.get(field), str) or not chart[field].strip():
@@ -393,7 +568,67 @@ def _validate_chart(manifest, chart):
     series = chart.get("series")
     if not isinstance(series, list) or not series:
         raise ValueError("charts[].series must be a non-empty list")
-    if primitive in {"column_bar", "line_point"}:
+    if primitive == "cumulative_bridge":
+        if len(series) != 1:
+            raise ValueError("charts[].cumulative_bridge requires exactly one series")
+        item = series[0]
+        categories, changes = item.get("categories"), item.get("changes")
+        if (
+            not isinstance(item.get("name"), str) or not item["name"].strip()
+            or not isinstance(categories, list) or not categories
+            or any(not isinstance(value, str) or not value for value in categories)
+            or not isinstance(changes, list) or len(changes) != len(categories)
+            or any(not _is_number(value) for value in changes)
+            or not _is_number(item.get("start")) or not _is_number(item.get("end"))
+            or any(field in item and (not isinstance(item[field], str) or not item[field].strip()) for field in ("start_label", "end_label"))
+        ):
+            raise ValueError("charts[].cumulative_bridge requires exact start, changes, categories, and end")
+        for field in ("unit", "basis"):
+            _chart_shared_text(chart, field)
+        if Decimal(str(item["start"])) + sum((Decimal(str(value)) for value in changes), Decimal(0)) != Decimal(str(item["end"])):
+            raise ValueError("charts[].cumulative_bridge end must equal start plus changes")
+    elif primitive == "time_interval":
+        for item in series:
+            categories, starts, ends = item.get("categories"), item.get("start_dates"), item.get("end_dates")
+            if (
+                not isinstance(item.get("name"), str) or not item["name"].strip()
+                or not isinstance(categories, list) or not categories
+                or any(not isinstance(value, str) or not value for value in categories)
+                or not isinstance(starts, list) or not isinstance(ends, list)
+                or len(starts) != len(categories) or len(ends) != len(categories)
+            ):
+                raise ValueError("charts[].time_interval requires aligned task labels and ISO dates")
+            try:
+                intervals = [(date.fromisoformat(str(start)), date.fromisoformat(str(end))) for start, end in zip(starts, ends)]
+            except ValueError as exc:
+                raise ValueError("charts[].time_interval dates must use ISO YYYY-MM-DD") from exc
+            if any(start > end for start, end in intervals):
+                raise ValueError("charts[].time_interval end date cannot be before start date")
+    elif primitive == "variable_rectangle":
+        if len(series) != 1:
+            raise ValueError("charts[].variable_rectangle requires exactly one series")
+        item = series[0]
+        categories, widths, shares = item.get("categories"), item.get("width_values"), item.get("share_values")
+        denominator = item.get("share_denominator")
+        if (
+            not isinstance(item.get("name"), str) or not item["name"].strip()
+            or not isinstance(categories, list) or not categories
+            or any(not isinstance(value, str) or not value for value in categories)
+            or not isinstance(widths, list) or len(widths) != len(categories)
+            or any(not _is_number(value) or value <= 0 for value in widths)
+        ):
+            raise ValueError("charts[].variable_rectangle requires exact labels and positive width_values")
+        for field in ("width_label", "width_unit", "width_basis", "share_label", "share_unit", "share_basis"):
+            _chart_shared_text(chart, field)
+        if not _is_number(denominator) or denominator <= 0 or not isinstance(shares, list) or len(shares) != len(widths):
+            raise ValueError("charts[].variable_rectangle requires one positive share_denominator and aligned share_values")
+        if any(
+            not isinstance(values, list) or not values or any(not _is_number(value) or value < 0 for value in values)
+            or sum((Decimal(str(value)) for value in values), Decimal(0)) != Decimal(str(denominator))
+            for values in shares
+        ):
+            raise ValueError("charts[].variable_rectangle share_values must total share_denominator")
+    elif primitive in {"column_bar", "line_point"}:
         categories = _chart_categories(chart)
         for field in ("unit", "basis"):
             _chart_shared_text(chart, field)
@@ -475,6 +710,24 @@ def normalize_manifest(manifest):
         normalized[key] = [normalize_position_item(normalized, item) for item in normalized.get(key, [])]
     normalized["tables"] = [normalize_position_item(normalized, item) for item in normalized.get("tables", [])]
     normalized["charts"] = [normalize_position_item(normalized, item) for item in normalized.get("charts", [])]
+    generated_ids = {
+        item["object_id"]
+        for section in ("text_boxes", "shapes")
+        for item in normalized.get(section, [])
+        if item.get("object_id")
+    }
+    for chart in normalized["charts"]:
+        records = _special_chart_records(chart)
+        records["shapes"] = [normalize_position_item(normalized, item) for item in records["shapes"]]
+        records["text_boxes"] = [
+            fit_text_item(normalize_position_item(normalized, item), normalized) for item in records["text_boxes"]
+        ]
+        for section in ("shapes", "text_boxes"):
+            for item in records[section]:
+                if item["object_id"] != chart["object_id"] and item["object_id"] in generated_ids:
+                    raise ValueError("editable-image-v3 generated chart object_id values must be unique")
+                generated_ids.add(item["object_id"])
+            normalized[section].extend(records[section])
     return normalized
 
 
@@ -1017,7 +1270,10 @@ def officecli_executable():
 
 
 def apply_native_charts(pptx_path, manifests):
-    if not any(manifest.get("charts") for manifest in manifests):
+    if not any(
+        chart.get("rendering_primitive") not in SPECIAL_CHART_PRIMITIVES
+        for manifest in manifests for chart in manifest.get("charts", [])
+    ):
         return
     from pptx import Presentation
     from pptx.chart.data import BubbleChartData, ChartData, XyChartData
@@ -1111,6 +1367,8 @@ def apply_native_charts(pptx_path, manifests):
     for slide_index, manifest in enumerate(manifests, start=1):
         for chart in manifest.get("charts", []):
             slide = presentation.slides[slide_index - 1]
+            if chart["rendering_primitive"] in SPECIAL_CHART_PRIMITIVES:
+                continue
             variant = chart["chart_variant"]
             if variant == "dot":
                 add_dot(slide, chart)
@@ -1430,7 +1688,8 @@ def render_preview(manifest, manifest_path, out_path, *, pptx_path=None):
     for index, item in enumerate(manifest.get("text_boxes", [])):
         layered.append((float(item.get("z_index", 300)), index, render_text, item))
     for index, item in enumerate(manifest.get("charts", [])):
-        layered.append((float(item.get("z_index", 250)), index, render_chart, item))
+        if item["rendering_primitive"] not in SPECIAL_CHART_PRIMITIVES:
+            layered.append((float(item.get("z_index", 250)), index, render_chart, item))
     for _z_index, _order, renderer, item in sorted(layered, key=lambda entry: (entry[0], entry[1])):
         renderer(item)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

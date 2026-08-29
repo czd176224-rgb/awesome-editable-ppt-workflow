@@ -80,12 +80,36 @@ def build_prompt(run_dir: Path, page: dict, page_dir: Path) -> str:
     request = read_json(page_dir / "page_request.json")
     page_id = page.get("page_id")
     source_image = request.get("source_image") or str(page_dir / "source.png")
+    authority = request.get("numeric_authority")
+    if authority is None:
+        numeric_contract = (
+            "No sealed numeric authority is present. Reconstruct the accepted qualitative "
+            "composition without inventing numeric axes, proportional geometry, bubble-size "
+            "ranking, target-line magnitude, or difference magnitude."
+        )
+    elif not isinstance(authority, dict):
+        raise SystemExit("page_request numeric_authority must be an object")
+    else:
+        if authority.get("rendering_primitive") in {
+            "cumulative_bridge", "time_interval", "variable_rectangle"
+        } and "chart_variant" in authority:
+            raise SystemExit("special numeric_authority must omit chart_variant")
+        numeric_contract = (
+            "SEALED NUMERIC AUTHORITY\n"
+            "The accepted source image owns chart container placement, composition, and style; "
+            "the sealed numeric authority owns quantitative mark size, position, and labels. "
+            "Copy it unchanged and do not calculate new metrics. Keep chart_variant unchanged "
+            "for native charts; special rendering primitives omit chart_variant and any added "
+            "variant must be rejected.\n"
+            + json.dumps(authority, ensure_ascii=False, sort_keys=True)
+        )
     replacements = {
         "{{RUN_DIR}}": str(run_dir),
         "{{PAGE_ID}}": str(page_id),
         "{{PAGE_DIR}}": str(page_dir),
         "{{SOURCE_IMAGE}}": str(source_image),
         "{{SKILL_ROOT}}": str(SKILL_ROOT),
+        "{{NUMERIC_AUTHORITY_CONTRACT}}": numeric_contract,
     }
     prompt = page_worker_template()
     for placeholder, value in replacements.items():
