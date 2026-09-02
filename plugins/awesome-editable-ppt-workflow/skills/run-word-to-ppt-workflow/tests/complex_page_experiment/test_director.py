@@ -13,7 +13,9 @@ from awesome_page_materials import collect_page_materials
 from codex_subscription_runtime import CodexStructuredResult
 from complex_page_experiment.consulting_prompt import _color_constraints
 from complex_page_experiment.director import (
+    DirectorArtifact,
     _correction_schema,
+    _validate_director_value,
     compile_consulting_six_part_prompt,
     decide_correction,
     direct_page,
@@ -412,6 +414,242 @@ def _director_value(view: CompletePageMaterialView) -> dict[str, object]:
         },
         "prompt_sections": _prompt_sections(),
     }
+
+
+def _compact_material_view() -> CompletePageMaterialView:
+    facts = tuple(
+        {
+            "type": "paragraph",
+            "text": text,
+            "source_block_id": f"body-{index}",
+            "source_block_index": index,
+            "source_order": index,
+            "relationship_ids": [],
+            "comment_ids": [],
+        }
+        for index, text in enumerate(
+            (
+                "Regional resources are available.",
+                "Resources enter the fund platform.",
+                "Operations support the entry path.",
+                "The source does not quantify flow volume.",
+            ),
+            start=1,
+        )
+    )
+    return CompletePageMaterialView(
+        {
+            "page_number": 5,
+            "complete_word_content": list(facts),
+            "visual_contract": {
+                "background_color": "#F7F7F7",
+                "primary_color": "#161616",
+                "secondary_color": "#CD202A",
+            },
+        },
+        (),
+        (),
+        "compact-test-view",
+    )
+
+
+def _compact_director_value(
+    view: CompletePageMaterialView | None = None,
+) -> dict[str, object]:
+    material_view = view or _compact_material_view()
+    fact_ids = [
+        str(block["source_block_id"])
+        for block in material_view.value["complete_word_content"]
+    ]
+    assert len(fact_ids) == 4
+    body_1, body_2, body_3, body_4 = fact_ids
+    return {
+        "schema_version": "awesome-consulting-page-director-v3",
+        "page_number": 5,
+        "quality": "high",
+        "page_plan": {
+            "page_purpose": "Explain how regional resources enter the fund system.",
+            "primary_relationship": {
+                "grammar": "geography",
+                "description": "Regional resource entrances feed the fund platform.",
+                "fact_ids": [body_1, body_2],
+                "visual_instruction": "Use a map-led resource-entry diagram with explicit connectors.",
+                "nodes": [
+                    {
+                        "node_id": "regional-resources",
+                        "label": "Regional resources",
+                        "fact_ids": [body_1],
+                    },
+                    {
+                        "node_id": "fund-platform",
+                        "label": "Fund platform",
+                        "fact_ids": [body_2],
+                    },
+                ],
+                "edges": [
+                    {
+                        "from_node": "regional-resources",
+                        "to_node": "fund-platform",
+                        "label": "enter",
+                        "fact_ids": [body_2],
+                    }
+                ],
+            },
+            "core_exhibit": {
+                "grammar": "geography",
+                "description": "A regional map with labeled resource flows.",
+                "fact_ids": [body_1, body_2],
+            },
+            "support_groups": [
+                {
+                    "role": "support",
+                    "label": "Operating support",
+                    "fact_ids": [body_3],
+                },
+                {
+                    "role": "note",
+                    "label": "Source limitation",
+                    "fact_ids": [body_4],
+                },
+            ],
+            "reading_path": "Read the map first, then the operating support and limitation.",
+            "local_visuals": [
+                {
+                    "grammar": "flow",
+                    "instruction": "Use one small arrow sequence for the source-supported entry path.",
+                    "fact_ids": [body_2],
+                }
+            ],
+        },
+        "selected_references": [],
+    }
+
+
+def _compact_artifact(value: dict[str, object]) -> DirectorArtifact:
+    return DirectorArtifact(
+        value=value,
+        actual_prompt="",
+        selected_reference_ids=(),
+        quality="high",
+        model="gpt-test-current",
+        effort="high",
+        duration_seconds=1.0,
+        model_provider="openai-test",
+        usage={},
+        runtime_trace={},
+        thread_id="thread-compact",
+        turn_id="turn-compact",
+    )
+
+
+def test_compact_director_value_exposes_only_the_page_plan_contract() -> None:
+    value = _compact_director_value()
+    artifact = _compact_artifact(value)
+
+    assert "creative_direction" not in value
+    assert "prompt_sections" not in value
+    assert "machine_record" not in value
+    assert artifact.page_plan == value["page_plan"]
+
+
+def _validate_compact_value(value: dict[str, object]) -> tuple[str, ...]:
+    return _validate_director_value(value, _compact_material_view())
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["page_plan"]["primary_relationship"]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["primary_relationship"]["nodes"][0]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["primary_relationship"]["edges"][0]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["core_exhibit"]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["support_groups"][0]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["local_visuals"][0]["fact_ids"].append("body-unknown"),
+    ],
+    ids=("relationship", "node", "edge", "core", "support", "local-visual"),
+)
+def test_compact_director_rejects_unknown_fact_references(mutate) -> None:
+    value = copy.deepcopy(_compact_director_value())
+    mutate(value)
+
+    with pytest.raises(ValueError):
+        _validate_compact_value(value)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["page_plan"]["support_groups"].pop(),
+        lambda value: value["page_plan"]["support_groups"][0]["fact_ids"].append("body-1"),
+        lambda value: value["page_plan"].update({"primary_relationship": {}}),
+        lambda value: value["page_plan"].update(
+            {"core_exhibit": [value["page_plan"]["core_exhibit"]] * 2}
+        ),
+        lambda value: value["page_plan"]["core_exhibit"].update(
+            {"grammar": "radial_orbit"}
+        ),
+        lambda value: value["page_plan"]["primary_relationship"]["edges"][0].update(
+            {"to_node": "missing-node"}
+        ),
+    ],
+    ids=("omitted", "duplicated", "empty-relationship", "multiple-core", "grammar", "edge-endpoint"),
+)
+def test_compact_director_rejects_invalid_fact_allocation_or_structure(mutate) -> None:
+    value = copy.deepcopy(_compact_director_value())
+    mutate(value)
+
+    with pytest.raises(ValueError):
+        _validate_compact_value(value)
+
+
+def test_compact_director_accepts_analytical_table_for_comparison() -> None:
+    value = copy.deepcopy(_compact_director_value())
+    relationship = value["page_plan"]["primary_relationship"]
+    relationship.update(
+        {
+            "grammar": "analytical_table",
+            "description": "Compare the regional entrance with the fund platform.",
+            "visual_instruction": "Use a source-bound comparison table.",
+            "nodes": [],
+            "edges": [],
+        }
+    )
+    value["page_plan"]["core_exhibit"]["grammar"] = "analytical_table"
+
+    assert _validate_compact_value(value) == ()
+
+
+@pytest.mark.parametrize("grammar", ["flow", "hierarchy", "geography", "causality"])
+def test_structural_grammars_accept_source_bound_nodes_edges_and_instruction(
+    grammar: str,
+) -> None:
+    value = copy.deepcopy(_compact_director_value())
+    value["page_plan"]["primary_relationship"]["grammar"] = grammar
+    value["page_plan"]["core_exhibit"]["grammar"] = grammar
+
+    assert _validate_compact_value(value) == ()
+
+
+@pytest.mark.parametrize("grammar", ["flow", "hierarchy", "geography", "causality"])
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda relationship: relationship.update({"visual_instruction": "   "}),
+        lambda relationship: relationship.update({"nodes": []}),
+        lambda relationship: relationship.update({"edges": []}),
+    ],
+    ids=("instruction", "nodes", "edges"),
+)
+def test_structural_grammars_require_nodes_edges_and_visual_instruction(
+    grammar: str, mutate
+) -> None:
+    value = copy.deepcopy(_compact_director_value())
+    relationship = value["page_plan"]["primary_relationship"]
+    relationship["grammar"] = grammar
+    mutate(relationship)
+
+    with pytest.raises(ValueError):
+        _validate_compact_value(value)
 
 
 def _result(value: dict[str, object]) -> CodexStructuredResult:

@@ -135,6 +135,148 @@ def _material_view(*, font_accent_allowed: bool = True):
     )
 
 
+def _compact_director_value() -> dict[str, object]:
+    return {
+        "schema_version": "awesome-consulting-page-director-v3",
+        "page_number": 5,
+        "quality": "high",
+        "page_plan": {
+            "page_purpose": "Explain how regional resources enter the fund system.",
+            "primary_relationship": {
+                "grammar": "geography",
+                "description": "Regional resource entrances feed the fund platform.",
+                "fact_ids": ["body-1", "body-2"],
+                "visual_instruction": "Use a map-led resource-entry diagram with explicit connectors.",
+                "nodes": [
+                    {
+                        "node_id": "regional-resources",
+                        "label": "Regional resources",
+                        "fact_ids": ["body-1"],
+                    },
+                    {
+                        "node_id": "fund-platform",
+                        "label": "Fund platform",
+                        "fact_ids": ["body-2"],
+                    },
+                ],
+                "edges": [
+                    {
+                        "from_node": "regional-resources",
+                        "to_node": "fund-platform",
+                        "label": "enter",
+                        "fact_ids": ["body-2"],
+                    }
+                ],
+            },
+            "core_exhibit": {
+                "grammar": "geography",
+                "description": "A regional map with labeled resource flows.",
+                "fact_ids": ["body-1", "body-2"],
+            },
+            "support_groups": [
+                {"role": "support", "label": "Operating support", "fact_ids": ["body-3"]},
+                {"role": "note", "label": "Source limitation", "fact_ids": ["body-4"]},
+            ],
+            "reading_path": "Read the map first, then the operating support and limitation.",
+            "local_visuals": [
+                {
+                    "grammar": "flow",
+                    "instruction": "Use one small arrow sequence for the source-supported entry path.",
+                    "fact_ids": ["body-2"],
+                }
+            ],
+        },
+        "selected_references": [],
+    }
+
+
+def _compact_material_view():
+    return SimpleNamespace(
+        value={
+            "complete_word_content": [
+                {
+                    "type": "paragraph",
+                    "text": text,
+                    "source_block_id": f"body-{index}",
+                    "source_order": index,
+                }
+                for index, text in enumerate(
+                    (
+                        "Regional resources are available.",
+                        "Resources enter the fund platform.",
+                        "Operations support the entry path.",
+                        "The source does not quantify flow volume.",
+                    ),
+                    start=1,
+                )
+            ],
+            "visual_contract": {
+                "background_color": "#F7F7F7",
+                "primary_color": "#161616",
+                "secondary_color": "#CD202A",
+            },
+            "body_frame": {"aspect_ratio": "17:8"},
+        }
+    )
+
+
+def test_compiler_builds_the_six_sections_from_the_compact_page_plan(
+    record_property,
+) -> None:
+    module = _load_compiler_module()
+    value = _compact_director_value()
+    material_view = _compact_material_view()
+
+    prompt = module.compile_consulting_six_part_prompt(
+        value, material_view, font_accent_allowed=True
+    )
+    record_property("compiled_prompt_length", len(prompt))
+
+    headings = [line[3:] for line in prompt.splitlines() if line.startswith("## ")]
+    assert headings == [
+        "Task and Canvas",
+        "Core Proposition and Content",
+        "Consulting Information Architecture",
+        "Visual Style and Color",
+        "Text and Typography",
+        "Strict Prohibitions",
+    ]
+    facts = [block["text"] for block in material_view.value["complete_word_content"]]
+    for fact in facts:
+        assert prompt.count(fact) == 1
+
+    plan = value["page_plan"]
+    assert plan["page_purpose"] in prompt
+    assert plan["primary_relationship"]["description"] in prompt
+    assert plan["primary_relationship"]["visual_instruction"] in prompt
+    assert plan["core_exhibit"]["description"] in prompt
+    for group in plan["support_groups"]:
+        assert group["label"] in prompt
+    assert plan["reading_path"] in prompt
+    for local_visual in plan["local_visuals"]:
+        assert local_visual["instruction"] in prompt
+
+    positive, prohibited = module._color_constraints(
+        material_view, font_accent_allowed=True
+    )
+    assert prompt.count(positive) == 1
+    assert prompt.count(prohibited) == 1
+    assert prompt.count("central largest 17:8 content region") == 1
+    assert prompt.count("Word is the semantic authority") == 1
+
+    for removed in (
+        "creative_direction",
+        "prompt_sections",
+        "facts_and_sources",
+        "material_use",
+        "fixed_layer_exclusions",
+        "investment-committee",
+        "template_id",
+        "template_version",
+    ):
+        assert removed not in prompt
+
+
 def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> None:
     module = _load_compiler_module()
 
