@@ -28,7 +28,7 @@ from complex_page_experiment.review import (
     review_candidate_once,
 )
 from provider_keyring import signing_key
-from test_director import _director_value, _result
+from test_director import _director_value, _prompt_sections, _result
 from test_provider import _real_worker_runner, provider_fixture  # noqa: F401
 from workflow_v6_state import load, save
 
@@ -71,7 +71,6 @@ def _off_ratio_response(*, marker_in_safe_region: bool) -> bytes:
 
 
 def _correction_result(view, strategy: str, marker: str):
-    value = _director_value(view)
     value = {
         "schema_version": "awesome-page-correction-v2",
         "page_number": 1,
@@ -79,7 +78,7 @@ def _correction_result(view, strategy: str, marker: str):
         "problem_addressed": ["candidate is clearly off topic"],
         "preserve": ["preserve the valid composition"],
         "selected_reference_ids": [],
-        "prompt_sections": value["prompt_sections"],
+        "prompt_sections": _prompt_sections(),
     }
     value["prompt_sections"]["text_and_typography"] += f" Correction {marker}."
     return CodexStructuredResult(

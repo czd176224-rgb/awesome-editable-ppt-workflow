@@ -142,39 +142,57 @@ def _style() -> dict:
 
 def _director_value(
     page_number: int,
-    material_ids: tuple[str, ...],
-    source_text: str,
+    material_view,
     relationship: str,
     fallback: str,
 ) -> dict:
+    fact_ids = [
+        str(block["source_block_id"])
+        for block in material_view.value["complete_word_content"]
+    ]
+    grammar = {
+        "option_comparison": "analytical_table",
+        "target_actual_variance": "composition_architecture",
+        "project_stage_time": "flow",
+        "market_size_share": "hierarchy",
+    }[relationship]
+    structural = grammar in {"flow", "hierarchy"}
+    nodes = [
+        {"node_id": f"fact-{index}", "label": f"Source fact {index}", "fact_ids": [fact_id]}
+        for index, fact_id in enumerate(fact_ids, start=1)
+    ] if structural else []
+    edges = [
+        {
+            "from_node": f"fact-{index}",
+            "to_node": f"fact-{index + 1}",
+            "fact_ids": [fact_ids[index]],
+        }
+        for index in range(1, len(fact_ids))
+    ] if structural else []
     return {
-        "schema_version": "awesome-consulting-page-director-v2", "page_number": page_number, "quality": "high",
-        "machine_record": {
-            "facts_and_sources": [source_text[:300]],
-            "must_preserve_entities": ["Preserve every source-exact number and named entity."],
-            "core_content_and_comment_direction": ["Use only the selected Word page."],
-            "material_use": [{"material_id": item, "status": "background_understanding", "reason": "Source authority."} for item in material_ids],
-            "selected_references": [], "fixed_layer_exclusions": ["title", "logo", "footer", "page_number"],
+        "schema_version": "awesome-consulting-page-director-v3",
+        "page_number": page_number,
+        "quality": "high",
+        "page_plan": {
+            "page_purpose": "Present the selected source facts without inventing quantitative geometry.",
+            "primary_relationship": {
+                "grammar": grammar,
+                "description": f"Use the {fallback} qualitative substitute for {relationship} because numeric dimensions are incomplete.",
+                "fact_ids": fact_ids,
+                "visual_instruction": f"Express {relationship} through the {fallback} structure with source facts mapped to its visible parts.",
+                "nodes": nodes,
+                "edges": edges,
+            },
+            "core_exhibit": {
+                "grammar": grammar,
+                "description": f"A source-bound {fallback} exhibit.",
+                "fact_ids": fact_ids,
+            },
+            "support_groups": [],
+            "reading_path": "Read the source facts through the named relationship and qualitative substitute.",
+            "local_visuals": [],
         },
-        "creative_direction": {
-            "business_proposition": "Present the selected source facts without inventing quantitative geometry.",
-            "explanatory_lead": "Lead with the page's source-supported conclusion.",
-            "analytical_backbone": f"Use the {fallback} qualitative substitute for {relationship} because numeric dimensions are incomplete.",
-            "evidence_interpretation_conclusion": "Move from exact Word evidence to its stated implication.",
-            "content_hierarchy": "Conclusion, source facts, then limitation or implication.",
-            "reading_path_and_density": "Use equal-weight editable objects and a restrained reading path.",
-            "takeaway_statement": "Keep every quantitative claim tied to its disclosed basis.",
-            "supporting_visual_policy": "Use structure, not decorative or proportional encoding.",
-            "anti_ai_visual_policy": "Avoid invented scenes, fake charts, and ornamental 3D objects.",
-        },
-        "prompt_sections": {
-            "task_and_canvas": "Arrange a calm source-led information canvas.",
-            "core_proposition_and_content": "Preserve the exact Word facts and their relationship.",
-            "consulting_information_architecture": f"Use equal-weight native editable objects in the {fallback} structure.",
-            "visual_style_and_color": "Use restrained editorial styling.",
-            "text_and_typography": "Keep Chinese labels and numbers crisp.",
-            "strict_prohibitions": "No invented values, axes, areas, durations, comparisons, or arithmetic.",
-        },
+        "selected_references": [],
     }
 
 
@@ -323,7 +341,7 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
             assert all(label in source_text for label in labels)
             workspace = open_live_page_workspace(project, page_number)
             material_view = build_complete_page_material_view(workspace)
-            value = _director_value(page_number, material_view.material_ids, source_text, relationship, fallback)
+            value = _director_value(page_number, material_view, relationship, fallback)
             artifact = direct_page(workspace, material_view, timeout=30, invoke=lambda *_args, v=value, **_kwargs: _director_result(v))
             director_prompts.append(artifact.actual_prompt)
             director_prompt = artifact.actual_prompt

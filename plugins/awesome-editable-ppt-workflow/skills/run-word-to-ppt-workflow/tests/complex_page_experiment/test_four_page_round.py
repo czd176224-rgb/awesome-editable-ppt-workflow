@@ -20,13 +20,6 @@ from test_provider import _real_worker_runner
 def _page_director_invoke(view, page_number: int):
     value = _director_value(view)
     value["page_number"] = page_number
-    machine = value["machine_record"]
-    assert isinstance(machine, dict)
-    machine["facts_and_sources"] = [
-        f"The body statement comes from word-block:body-{page_number}."
-    ]
-    machine["must_preserve_entities"] = []
-    machine["selected_references"] = []
 
     def invoke(_project: Path, **kwargs: object) -> CodexStructuredResult:
         assert kwargs["role"] == "awesome-page-director"

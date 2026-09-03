@@ -481,10 +481,14 @@ def test_review_rejects_forged_material_or_director_before_codex(review_fixture)
     assert called is False
 
     forged_value = json.loads(json.dumps(director.value))
-    forged_value["creative_direction"]["analytical_backbone"] = "A different but schema-valid visual concept."
+    forged_value["page_plan"]["primary_relationship"]["description"] = (
+        "A different but schema-valid visual concept."
+    )
     from complex_page_experiment.director import compile_consulting_six_part_prompt
 
-    forged_value["prompt_sections"]["task_and_canvas"] = "A different but valid calm luminous field."
+    forged_value["page_plan"]["page_purpose"] = (
+        "A different but valid source-bound purpose."
+    )
     forged_director = replace(
         director,
         value=forged_value,

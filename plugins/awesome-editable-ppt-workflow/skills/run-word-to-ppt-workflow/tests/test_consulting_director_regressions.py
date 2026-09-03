@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from complex_page_experiment.consulting_prompt import (
     SECTION_SPECS,
@@ -12,6 +13,7 @@ from complex_page_experiment.consulting_prompt import (
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "consulting_director_cases.json"
+DIRECTOR_SCHEMA = Path(__file__).parent.parent / "schemas" / "consulting_page_director_v3.schema.json"
 VISUAL_QA = Path(__file__).resolve().parents[5] / "docs" / "CONSULTING_DIRECTOR_VISUAL_QA.md"
 EXPECTED_CASES = (
     "three-lane-portfolio",
@@ -33,46 +35,39 @@ LEGACY_TERMS = (
 
 def _cases() -> list[dict[str, object]]:
     value = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    assert value["schema_version"] == "awesome-consulting-director-regressions-v1"
+    assert value["schema_version"] == "awesome-consulting-director-regressions-v2"
     return value["cases"]
+
+
+def _director_value(case: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": "awesome-consulting-page-director-v3",
+        "page_number": 1,
+        "quality": "high",
+        "page_plan": case["page_plan"],
+        "selected_references": [],
+    }
 
 
 def test_public_regression_fixture_covers_the_four_consulting_body_patterns() -> None:
     cases = _cases()
 
     assert tuple(case["id"] for case in cases) == EXPECTED_CASES
-    assert len({case["analytical_backbone"] for case in cases}) == 4
+    assert len({case["page_plan"]["primary_relationship"]["description"] for case in cases}) == 4
     assert all(case["explanatory_lead"] and case["takeaway"] for case in cases)
+
+
+@pytest.mark.parametrize("case", _cases(), ids=lambda case: str(case["id"]))
+def test_each_public_case_is_a_v3_director_fixture(case) -> None:
+    schema = json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
+
+    assert list(Draft202012Validator(schema).iter_errors(_director_value(case))) == []
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda case: str(case["id"]))
 def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None:
     facts = [case["proposition"], case["explanatory_lead"], case["takeaway"]]
-    value = {
-        "schema_version": "awesome-consulting-page-director-v3",
-        "page_number": 1,
-        "quality": "high",
-        "page_plan": {
-            "page_purpose": case["proposition"],
-            "primary_relationship": {
-                "grammar": "composition_architecture",
-                "description": case["analytical_backbone"],
-                "fact_ids": ["body-1"],
-                "visual_instruction": case["prompt_sections"]["consulting_information_architecture"],
-                "nodes": [],
-                "edges": [],
-            },
-            "core_exhibit": {
-                "grammar": "composition_architecture",
-                "description": case["analytical_backbone"],
-                "fact_ids": ["body-1", "body-2", "body-3"],
-            },
-            "support_groups": [],
-            "reading_path": case["analytical_backbone"],
-            "local_visuals": [],
-        },
-        "selected_references": [],
-    }
+    value = _director_value(case)
     material_view = {
         "complete_word_content": [
             {"type": "paragraph", "text": text, "source_block_id": f"body-{index}", "source_order": index}
@@ -92,7 +87,8 @@ def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None
         sorted(prompt.index(heading) for heading in headings)
     )
     assert case["proposition"] in prompt
-    assert case["analytical_backbone"] in prompt
+    assert case["page_plan"]["primary_relationship"]["description"] in prompt
+    assert case["page_plan"]["primary_relationship"]["visual_instruction"] in prompt
     assert case["explanatory_lead"] in prompt
     assert case["takeaway"] in prompt
     assert case["colors"]["background"] in prompt
