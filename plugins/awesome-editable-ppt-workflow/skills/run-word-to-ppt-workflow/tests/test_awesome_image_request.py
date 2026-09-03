@@ -593,6 +593,7 @@ def test_reconstruction_skill_docs_default_to_accepted_image_with_only_sealed_ex
         assert "accepted" in text
         assert "visual authority" in text
         assert "page_plan" in text
+        assert "numeric_authority" in text
         assert "core exhibit or reading path" in text
         assert "zero Image2" in text
         assert "explicitly" in text

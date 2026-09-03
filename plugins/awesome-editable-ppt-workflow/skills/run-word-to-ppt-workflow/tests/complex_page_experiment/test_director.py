@@ -1491,8 +1491,9 @@ def test_visual_director_request_allows_secondary_fills_and_spatial_structure(tm
     call, _ = _captured_director_request(tmp_path)
     prompt = str(call["prompt"])
 
-    assert "large fills, wide paths, and structural geometry" in prompt
-    assert "not measured magnitude" in prompt
+    assert "spatial structure remain primary" in prompt
+    assert "text-box fills, shapes, borders, nodes, and connectors" in prompt
+    assert "assign ordered color depth to merely parallel categories" in prompt
     assert "never a large filled region or wide path" not in prompt
     assert "at least two visibly distinct tones" in prompt
 
