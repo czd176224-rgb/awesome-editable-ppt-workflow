@@ -12,6 +12,8 @@
 
 - `12c6d55` — close packaged-runtime import, native-direct chart-loss, wording, and regression gaps.
 - `962564b` — refresh packaged integrity controls from committed source.
+- `8975561` — delete the unreachable legacy single-key capability implementation and lock the shared-keyring-only structure.
+- `2f7d3ef` — refresh public controls after the single-keyring cleanup.
 
 ## Verification
 
@@ -19,6 +21,7 @@
 - Focused GREEN: `5 passed in 11.92s` for isolated import, chart-free native-direct, page-2 chart fail-closed, v3 restart wording, and README contract.
 - Clean committed authority suite: `159 passed, 6 skipped in 693.37s`; two pre-existing Pillow deprecation warnings only.
 - Clean public/release-hardening suite: `27 passed in 314.39s`.
+- Review fix clean packaged-isolation, signing, native-direct, and release-hardening suite: `41 passed in 296.44s`.
 - `verify.ps1 -MetadataOnly`: `verify-metadata-preflight=ok`.
 - Clean `git diff --check`: pass; clean test worktree status: no changes.
 - A broader run in the user's dirty worktree produced `244 passed, 6 skipped, 2 failed`; both failures came only from the pre-existing unstaged `test_director.py` expectation for `No color duty: neutrals suffice`, outside Task 17 and absent from the committed tree.
