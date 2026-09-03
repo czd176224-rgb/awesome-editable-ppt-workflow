@@ -54,7 +54,7 @@ def _accepted_outcome(project: Path) -> SimpleNamespace:
     return SimpleNamespace(status="accepted", accepted=SimpleNamespace(candidate=candidate))
 
 
-def _production_worker(manifest_factory, calls: list[dict], post_build=None):
+def _production_worker(manifest_factory, calls: list[dict], post_build=None, post_validate=None):
     def worker(request):
         page_request = json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
         accepted_request = json.loads((request.page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8"))
@@ -78,6 +78,8 @@ def _production_worker(manifest_factory, calls: list[dict], post_build=None):
                 post_build(request.page_dir / "page.pptx")
         validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
         assert validation["passed"] is True
+        if post_validate is not None:
+            post_validate(request.page_dir / "page.pptx")
         calls.append({"request": page_request, "prompt": request.prompt_file.read_text(encoding="utf-8"), "manifest": manifest, "page_dir": request.page_dir})
         return PageWorkerResult(status="completed", reconstructed_body=request.page_dir / "page.pptx")
 
@@ -90,13 +92,16 @@ def _worker_chart(page_request: dict) -> dict:
 
 
 def _relationship_manifest(page_request: dict) -> dict:
-    manifest = _worker_chart(page_request)
+    return _with_relationship(_worker_chart(page_request), page_request)
+
+
+def _with_relationship(manifest: dict, page_request: dict) -> dict:
     relationship = page_request["page_plan"]["primary_relationship"]
     boxes = {
         relationship["nodes"][0]["node_id"]: [80, 90, 260, 120],
         relationship["nodes"][1]["node_id"]: [1560, 90, 260, 120],
     }
-    manifest["shapes"] = [
+    manifest["shapes"] = list(manifest.get("shapes", [])) + [
         {
             "object_id": node_id,
             "name": node_id,
@@ -420,6 +425,79 @@ def test_final_editable_relationship_geometry_and_numeric_authority_match_sealed
     assert [named[f"sealed-chart Value {index}"].text for index in (1, 2)] == ["12", "18"]
 
 
+def _relationship_project(tmp_path: Path) -> tuple[Path, dict]:
+    project = _project(tmp_path, 1)
+    receipt_path = project / "04_v6/images/page_001.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["page_plan"]["primary_relationship"]["edges"].append({
+        "from_node": "destination", "to_node": "source", "label": "returns", "fact_ids": ["body-1"],
+    })
+    _write_signed_receipt(project, 1, receipt)
+    chart = {**_one_dimensional("relationship-chart", "dot"), "relationship": "time_change"}
+    materials = project / "02_v6/page_materials/page_001.json"
+    materials.parent.mkdir(parents=True, exist_ok=True)
+    materials.write_text(json.dumps({"chart_facts": [chart]}), encoding="utf-8")
+    return project, receipt
+
+
+@pytest.mark.parametrize("defect", ["missing_node", "wrong_direction", "non_line"])
+def test_finalization_rejects_broken_sealed_relationship(
+    tmp_path: Path, defect: str,
+) -> None:
+    project, _receipt = _relationship_project(tmp_path / defect)
+
+    def manifest_factory(page_request: dict) -> dict:
+        manifest = _relationship_manifest(page_request)
+        if defect == "missing_node":
+            manifest["shapes"] = [item for item in manifest["shapes"] if item["object_id"] != "destination"]
+        elif defect == "wrong_direction":
+            edge = next(item for item in manifest["shapes"] if item["object_id"] == "edge:source->destination")
+            x1, y1, x2, y2 = edge["points_px"]
+            edge["points_px"] = [x2, y2, x1, y1]
+        else:
+            edge = next(item for item in manifest["shapes"] if item["object_id"] == "edge:source->destination")
+            points = edge.pop("points_px")
+            edge["type"] = "rect"
+            edge["box_px"] = [points[0], points[1], points[2] - points[0], 4]
+        return manifest
+
+    with pytest.raises(ValueError, match="sealed relationship"):
+        reconstruct_accepted_page(
+            SimpleNamespace(project_copy=project, page_number=1),
+            _accepted_outcome(project),
+            page_worker=_production_worker(
+                manifest_factory, [], post_build=_add_relationship_arrowheads,
+            ),
+        )
+
+
+@pytest.mark.parametrize("shape_name", [
+    "sealed-chart Unit", "sealed-chart Period", "sealed-chart Category 1",
+])
+def test_finalization_rejects_missing_numeric_label_unit_or_period(
+    tmp_path: Path, shape_name: str,
+) -> None:
+    project, _receipt = _relationship_project(tmp_path / shape_name.replace(" ", "-"))
+
+    def remove_authority_text(path: Path) -> None:
+        deck = Presentation(path)
+        shape = next(item for item in deck.slides[0].shapes if item.name == shape_name)
+        shape.text = ""
+        deck.save(path)
+
+    with pytest.raises(ValueError, match="sealed numeric authority"):
+        reconstruct_accepted_page(
+            SimpleNamespace(project_copy=project, page_number=1),
+            _accepted_outcome(project),
+            page_worker=_production_worker(
+                _relationship_manifest,
+                [],
+                post_build=_add_relationship_arrowheads,
+                post_validate=remove_authority_text,
+            ),
+        )
+
+
 def test_nine_quantitative_cases_cover_ten_visual_marks_in_editable_pptx_and_previews() -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     entries = []
@@ -467,7 +545,9 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
         reconstruct_accepted_page(
             SimpleNamespace(project_copy=quantitative_project, page_number=1),
             _accepted_outcome(quantitative_project),
-            page_worker=_production_worker(_worker_chart, quantitative_calls),
+            page_worker=_production_worker(
+                _relationship_manifest, quantitative_calls, post_build=_add_relationship_arrowheads,
+            ),
         )
         assert quantitative_calls[0]["request"]["numeric_authority"] == authority
         assert "sealed numeric authority owns quantitative mark size" in quantitative_calls[0]["prompt"]
@@ -495,8 +575,11 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
             SimpleNamespace(project_copy=project, page_number=1),
             _accepted_outcome(project),
             page_worker=_production_worker(
-                lambda page_request, r=relationship, f=fallback: _qualitative_manifest(r, f),
+                lambda page_request, r=relationship, f=fallback: _with_relationship(
+                    _qualitative_manifest(r, f), page_request,
+                ),
                 qualitative_calls,
+                post_build=_add_relationship_arrowheads,
             ),
         )
         assert "numeric_authority" not in qualitative_calls[0]["request"]
@@ -528,8 +611,8 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
         assert len({shape.height for shape in nodes}) == 1
         assert len({shape.width * shape.height for shape in nodes}) == 1
         assert all(shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE and shape.auto_shape_type == MSO_SHAPE.RECTANGLE for shape in nodes)
-        assert {shape.name for shape in slide.shapes if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE} == {shape.name for shape in nodes}
-        assert all(shape.shape_type not in {MSO_SHAPE_TYPE.LINE, MSO_SHAPE_TYPE.CHART} for shape in slide.shapes)
+        assert {"source", "destination"} <= {shape.name for shape in slide.shapes}
+        assert all(shape.shape_type != MSO_SHAPE_TYPE.CHART for shape in slide.shapes)
         slide_text = "\n".join(shape.text for shape in slide.shapes if getattr(shape, "has_text_frame", False))
         assert not re.search(r"\d", slide_text)
         if relationship in {"drivers", "time_change", "third_variable", "project_stage_time", "goal_current_gap"}:

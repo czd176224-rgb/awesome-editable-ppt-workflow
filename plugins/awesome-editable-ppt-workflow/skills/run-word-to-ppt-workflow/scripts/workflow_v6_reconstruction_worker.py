@@ -18,6 +18,7 @@ from workflow_v6_reconstruction import (
     finalize_reconstructed_page,
 )
 from workflow_v6_state import load
+from complex_page_experiment import open_live_page_workspace, verify_signed_acceptance_receipt
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -292,6 +293,24 @@ def _recovery(project: Path, page_number: int) -> dict[str, Any] | None:
         raise RuntimeError("completed reconstruction authority is incomplete")
     final = json.loads(final_receipt.read_text(encoding="utf-8"))
     value = json.loads(reconstruction_receipt.read_text(encoding="utf-8"))
+    accepted = value.get("accepted_receipt")
+    if not isinstance(accepted, dict) or accepted != final.get("accepted_receipt"):
+        raise RuntimeError("reconstruction receipt does not match the current acceptance receipt")
+    accepted_path = project / str(accepted.get("path", ""))
+    if not accepted_path.is_file():
+        raise RuntimeError("current signed acceptance receipt is missing")
+    accepted_bytes = accepted_path.read_bytes()
+    try:
+        verified = verify_signed_acceptance_receipt(
+            open_live_page_workspace(project, page_number), accepted_bytes,
+        )
+    except (KeyError, OSError, ValueError) as exc:
+        raise RuntimeError("current signed acceptance receipt is invalid") from exc
+    if (
+        verified.get("page_number") != page_number
+        or accepted.get("sha256") != hashlib.sha256(accepted_bytes).hexdigest()
+    ):
+        raise RuntimeError("reconstruction receipt does not match the current acceptance receipt")
     page_pptx = project / str(final.get("page_pptx", ""))
     if not page_pptx.is_file() or hashlib.sha256(page_pptx.read_bytes()).hexdigest() != final.get("sha256"):
         raise RuntimeError("completed reconstructed page changed")
