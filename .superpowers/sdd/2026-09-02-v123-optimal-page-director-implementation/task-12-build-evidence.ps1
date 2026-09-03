@@ -2,15 +2,16 @@ param(
     [string]$OutputRoot = 'D:\AI项目管理\01-当前项目\黄石\task12-real-ab-evidence-20260903',
     [string]$BaselineProject = 'D:\AI项目管理\01-当前项目\黄石\task12-v122-baseline-clean-20260903-145835\project',
     [string]$CandidateAProject = 'D:\AI项目管理\01-当前项目\黄石\task12-v123-candidate-a-clean-20260903-152543\project',
-    [string]$CandidateBProject = 'D:\AI项目管理\01-当前项目\黄石\task12-v123-candidate-b-clean-20260903-152543\project'
+    [string]$CandidateBProject = 'D:\AI项目管理\01-当前项目\黄石\task12-v123-candidate-b-clean-20260903-152543\project',
+    [string]$ExpectedBaselineCommit = 'abc3932cd20ba14e6b831278289d52a86d9bd130',
+    [string]$ExpectedCandidateCommit = '32ff0cba6b3a5f65d9bb319d0aede20bfafee1f2'
 )
 
 $ErrorActionPreference = 'Stop'
 $pages = @(5, 10, 14, 20, 21, 31, 40, 41)
 $wordPath = 'C:\Users\24927\Desktop\黄石市产业创新与母基金专业化管理合作建议_PPT生成专用Word副本_V3.docx'
 $pngLogoPath = 'C:\Users\24927\Desktop\尚融logo.png'
-$baselineCommit = 'abc3932cd20ba14e6b831278289d52a86d9bd130'
-$candidateCommit = '32ff0cba6b3a5f65d9bb319d0aede20bfafee1f2'
+$runtimeScriptsRelative = 'plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts'
 
 function Read-Json([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
@@ -27,6 +28,46 @@ function Get-CanonicalDigest($Value) {
     $bytes = [Text.Encoding]::UTF8.GetBytes($json)
     $digest = [Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
     return [Convert]::ToHexString($digest).ToLowerInvariant()
+}
+
+function Invoke-GitValue([string]$Root, [string[]]$Arguments) {
+    $output = & git -C $Root @Arguments 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "git provenance command failed in $Root`: git $($Arguments -join ' ')`n$($output -join "`n")"
+    }
+    return ($output -join "`n").Trim()
+}
+
+function Get-RuntimeProvenance([string]$Root, [string]$ExpectedCommit) {
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        throw "preserved runtime source root is missing: $Root"
+    }
+    $head = Invoke-GitValue $Root @('rev-parse', 'HEAD')
+    $tree = Invoke-GitValue $Root @('rev-parse', 'HEAD^{tree}')
+    $scriptsTree = Invoke-GitValue $Root @('rev-parse', "HEAD:$runtimeScriptsRelative")
+    $status = Invoke-GitValue $Root @('status', '--porcelain=v1', '--untracked-files=all')
+    $clean = [string]::IsNullOrWhiteSpace($status)
+    $matchesExpected = $head -eq $ExpectedCommit
+    if (-not $matchesExpected -or -not $clean) {
+        throw "runtime provenance mismatch: root=$Root expected=$ExpectedCommit actual=$head clean=$clean"
+    }
+    return [ordered]@{
+        verified = $true
+        source_root = $Root
+        scripts_path = Join-Path $Root $runtimeScriptsRelative
+        expected_commit = $ExpectedCommit
+        actual_head = $head
+        head_tree = $tree
+        runtime_scripts_tree = $scriptsTree
+        source_worktree_clean = $clean
+        status_porcelain = $status
+        commands = @(
+            "git -C `"$Root`" rev-parse HEAD",
+            "git -C `"$Root`" rev-parse HEAD^{tree}",
+            "git -C `"$Root`" rev-parse HEAD:$runtimeScriptsRelative",
+            "git -C `"$Root`" status --porcelain=v1 --untracked-files=all"
+        )
+    }
 }
 
 function Get-PptxObjectCounts([string]$Path) {
@@ -186,21 +227,24 @@ New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $OutputRoot 'assets') -Force | Out-Null
 
 $runSpecs = @(
-    [ordered]@{ name = 'baseline'; label = 'v1.2.2 official baseline'; project = $BaselineProject; commit = $baselineCommit },
-    [ordered]@{ name = 'candidate-a'; label = 'v1.2.3 candidate A'; project = $CandidateAProject; commit = $candidateCommit },
-    [ordered]@{ name = 'candidate-b'; label = 'v1.2.3 candidate B'; project = $CandidateBProject; commit = $candidateCommit }
+    [ordered]@{ name = 'baseline'; label = 'v1.2.2 official baseline'; project = $BaselineProject; expected_commit = $ExpectedBaselineCommit; runtime_root = 'D:\AI项目管理\01-当前项目\黄石\task12-v122-baseline-20260903-144532\runtime' },
+    [ordered]@{ name = 'candidate-a'; label = 'v1.2.3 candidate A'; project = $CandidateAProject; expected_commit = $ExpectedCandidateCommit; runtime_root = 'D:\AI项目管理\01-当前项目\黄石\task12-v123-candidate-a-20260903-144532\runtime' },
+    [ordered]@{ name = 'candidate-b'; label = 'v1.2.3 candidate B'; project = $CandidateBProject; expected_commit = $ExpectedCandidateCommit; runtime_root = 'D:\AI项目管理\01-当前项目\黄石\task12-v123-candidate-a-20260903-144532\runtime' }
 )
 
 $runs = foreach ($spec in $runSpecs) {
     $workflow = Read-Json (Join-Path $spec.project 'workflow_v6.json')
     $visualContract = $workflow.style_confirmation.contract
     $deckPath = Join-Path $OutputRoot "decks\$($spec.name).pptx"
+    $provenance = Get-RuntimeProvenance $spec.runtime_root $spec.expected_commit
     [ordered]@{
         run_id = Split-Path -Leaf (Split-Path -Parent $spec.project)
         name = $spec.name
         label = $spec.label
         project_root = $spec.project
-        runtime_source_commit = $spec.commit
+        runtime_source_commit = $provenance.actual_head
+        runtime_provenance = $provenance
+        run_pages_command = "python $($provenance.scripts_path)\word_to_editable_ppt.py v6 run-pages --project `"$($spec.project)`" --pages $($pages -join ' ')"
         plugin_id = $workflow.plugin_id
         plugin_version = $workflow.plugin_version
         word_project_sha256 = $workflow.word_source.sha256
@@ -236,12 +280,29 @@ $candidateIndependence = foreach ($pageNumber in $pages) {
     [ordered]@{
         page_number = $pageNumber
         director_artifacts_differ = [bool]($a.instructions.director_sha256 -and $b.instructions.director_sha256 -and $a.instructions.director_sha256 -ne $b.instructions.director_sha256)
-        initial_image_artifacts_differ = [bool]($a.generation.candidate_sha256 -and $b.generation.candidate_sha256 -and $a.generation.candidate_sha256 -ne $b.generation.candidate_sha256)
+        final_candidate_artifacts_differ = [bool]($a.generation.candidate_sha256 -and $b.generation.candidate_sha256 -and $a.generation.candidate_sha256 -ne $b.generation.candidate_sha256)
         candidate_a_director_sha256 = $a.instructions.director_sha256
         candidate_b_director_sha256 = $b.instructions.director_sha256
         candidate_a_image_sha256 = $a.generation.candidate_sha256
         candidate_b_image_sha256 = $b.generation.candidate_sha256
     }
+}
+
+$manualAuditPath = Join-Path $OutputRoot 'task-12-manual-visual-audit.json'
+$manualAudit = Read-Json $manualAuditPath
+if (-not $manualAudit) {
+    throw "manual visual audit is missing: $manualAuditPath"
+}
+$manualPassCounts = [ordered]@{}
+$manualDefectPages = [ordered]@{}
+foreach ($runName in @('baseline', 'candidate-a', 'candidate-b')) {
+    $records = @($manualAudit.runs.$runName.PSObject.Properties.Value)
+    $manualPassCounts[$runName] = @($records | Where-Object complete_fact_coverage).Count
+    $manualDefectPages[$runName] = @(
+        $manualAudit.runs.$runName.PSObject.Properties |
+            Where-Object { -not $_.Value.complete_fact_coverage } |
+            ForEach-Object { [int]$_.Name }
+    )
 }
 
 $result = [ordered]@{
@@ -264,8 +325,14 @@ $result = [ordered]@{
         confirmation_method = 'browser automation; no user UI confirmation requested'
     }
     candidate_independence = @($candidateIndependence)
-    manual_visual_audit_path = Join-Path $OutputRoot 'task-12-manual-visual-audit.json'
-    manual_visual_audit = Read-Json (Join-Path $OutputRoot 'task-12-manual-visual-audit.json')
+    manual_visual_gate = [ordered]@{
+        release_conclusion = $manualAudit.release_conclusion
+        release_conclusion_reason = $manualAudit.release_conclusion_reason
+        complete_fact_coverage_pass_counts = $manualPassCounts
+        defect_pages = $manualDefectPages
+    }
+    manual_visual_audit_path = $manualAuditPath
+    manual_visual_audit = $manualAudit
     runs = @($runs)
 }
 
@@ -285,14 +352,18 @@ $cards = foreach ($pageNumber in $pages) {
     }
     $relationship = if ($candidateA.instructions.primary_relationship) { Html $candidateA.instructions.primary_relationship.description } else { 'not available' }
     $core = if ($candidateA.instructions.core_exhibit) { Html $candidateA.instructions.core_exhibit.description } else { 'not available' }
-    $notes = "A relationship: $relationship<br><br>A core exhibit: $core<br><br>A/B reconstruction: $($candidateA.reconstruction.passed)/$($candidateB.reconstruction.passed)"
+    $baselineAudit = $manualAudit.runs.baseline.PSObject.Properties["$pageNumber"].Value
+    $candidateAAudit = $manualAudit.runs.'candidate-a'.PSObject.Properties["$pageNumber"].Value
+    $candidateBAudit = $manualAudit.runs.'candidate-b'.PSObject.Properties["$pageNumber"].Value
+    $auditNotes = Html "Manual fact coverage — baseline=$($baselineAudit.complete_fact_coverage); A=$($candidateAAudit.complete_fact_coverage): $($candidateAAudit.notes); B=$($candidateBAudit.complete_fact_coverage): $($candidateBAudit.notes)"
+    $notes = "A relationship: $relationship<br><br>A core exhibit: $core<br><br>A/B reconstruction: $($candidateA.reconstruction.passed)/$($candidateB.reconstruction.passed)<br><br><strong>$auditNotes</strong>"
     '<section><h2>Page {0} — {1}</h2><table><thead><tr><th>Word facts</th><th>v1.2.2 image</th><th>v1.2.3 batch 1</th><th>v1.2.3 batch 2</th><th>result notes</th></tr></thead><tbody><tr><td class="facts">{2}</td>{3}<td class="notes">{4}</td></tr></tbody></table></section>' -f $pageNumber, (Html $baseline.title), $word, ($cells -join ''), $notes
 }
 
 $html = @"
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Task 12 Huangshi real A/B</title>
 <style>body{margin:0;background:#eef2f1;color:#15201e;font:14px/1.5 "Microsoft YaHei",sans-serif}main{max-width:1900px;margin:auto;padding:24px}h1{margin:0 0 8px}p{color:#52615e}section{background:white;border:1px solid #ccd8d5;border-radius:12px;margin:20px 0;padding:16px;box-shadow:0 4px 18px #173f3512}h2{margin:0 0 12px;font-size:20px}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{border:1px solid #d4ddda;vertical-align:top;padding:8px}th{background:#e7efed}th:first-child,td:first-child{width:18%}th:last-child,td:last-child{width:16%}img{width:100%;height:auto;display:block}.facts{font-size:12px}.notes{font-size:12px}.meta{font-size:11px;color:#53625f;margin-bottom:6px}.missing{min-height:120px;display:grid;place-items:center;color:#a22626;background:#fafafa}</style>
-</head><body><main><h1>Huangshi Task 12 — real plugin A/B comparison</h1><p>Same Word bytes, logo bytes, taskbook, and visual contract. Document content is kept in the first column; generated instructions are reported only in result notes and the machine-readable manifest.</p>$($cards -join "`n")</main></body></html>
+</head><body><main><h1>Huangshi Task 12 — real plugin A/B comparison</h1><p>Same Word bytes, logo bytes, taskbook, and visual contract. Document content is kept in the first column; generated instructions are reported only in result notes and the machine-readable manifest.</p><p><strong>Manual complete-fact-coverage pass counts:</strong> baseline $($manualPassCounts.baseline)/8; candidate A $($manualPassCounts.'candidate-a')/8; candidate B $($manualPassCounts.'candidate-b')/8. Release conclusion: $($manualAudit.release_conclusion).</p>$($cards -join "`n")</main></body></html>
 "@
 $htmlPath = Join-Path $OutputRoot 'task-12-ab-comparison.html'
 $html | Set-Content -LiteralPath $htmlPath -Encoding utf8

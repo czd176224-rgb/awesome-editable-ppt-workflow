@@ -330,10 +330,15 @@ def _validate_director_value(
 ) -> tuple[str, ...]:
     schema = _load_schema()
     validated_value = json.loads(json.dumps(value))
-    relationship = validated_value.get("page_plan", {}).get("primary_relationship", {})
-    for edge in relationship.get("edges", []):
-        if isinstance(edge, dict):
-            edge.setdefault("label", None)
+    page_plan = validated_value.get("page_plan")
+    if isinstance(page_plan, dict):
+        relationship = page_plan.get("primary_relationship")
+        if isinstance(relationship, dict):
+            edges = relationship.get("edges")
+            if isinstance(edges, list):
+                for edge in edges:
+                    if isinstance(edge, dict):
+                        edge.setdefault("label", None)
     errors = sorted(
         Draft202012Validator(schema).iter_errors(validated_value),
         key=lambda error: list(error.absolute_path),
