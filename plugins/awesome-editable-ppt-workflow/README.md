@@ -2,7 +2,7 @@
 
 `run-word-to-ppt-workflow` is the plugin's single public Word-to-PowerPoint entry. It creates a resumable V6 project from one paginated Word document, one SVG Logo and optional attachments, then sends formal multi-page generation through `run-pages`.
 
-The sealed workflow contract is `awesome-word-ppt-workflow-v1`.
+The sealed workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `consulting-page-director-v3-compact-page-plan`.
 
 Each page uses one consulting-report Codex page director, one initial Image2 candidate and one independent visual-review chain. The director compiles exactly six Image2 prompt sections and requires a coherent business proposition, analytical backbone, explanatory copy, evidence-to-interpretation-to-conclusion flow, explicit takeaway, restrained supporting imagery, and confirmed semantic colors. The sole review rejects disconnected module grids and AI-heavy spectacle unsuitable for formal reporting. Only an explicit rejection can consume either of the two correction opportunities. Image2 results are center-cropped from their actual returned dimensions to the largest 17:8 region and uniformly resized to 1904x896 before review.
 

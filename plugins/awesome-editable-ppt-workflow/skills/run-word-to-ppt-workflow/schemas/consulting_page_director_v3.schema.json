@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "consulting_page_director_v3.schema.json",
+  "title": "ConsultingPageDirectorV3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "page_number",
+    "quality",
+    "page_plan",
+    "selected_references"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "awesome-consulting-page-director-v3"
+    },
+    "page_number": {"type": "integer", "minimum": 1},
+    "quality": {"type": "string", "enum": ["medium", "high"]},
+    "page_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "page_purpose",
+        "primary_relationship",
+        "core_exhibit",
+        "support_groups",
+        "reading_path",
+        "local_visuals"
+      ],
+      "properties": {
+        "page_purpose": {"type": "string", "minLength": 1},
+        "primary_relationship": {"$ref": "#/$defs/relationship"},
+        "core_exhibit": {"$ref": "#/$defs/exhibit"},
+        "support_groups": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/supportGroup"}
+        },
+        "reading_path": {"type": "string", "minLength": 1},
+        "local_visuals": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/localVisual"}
+        }
+      }
+    },
+    "selected_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["material_id", "use", "preserve"],
+        "properties": {
+          "material_id": {"type": "string", "minLength": 1},
+          "use": {"type": "string", "minLength": 1},
+          "preserve": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "visualGrammar": {
+      "type": "string",
+      "enum": [
+        "analytical_table",
+        "flow",
+        "hierarchy",
+        "geography",
+        "causality",
+        "quantitative_chart",
+        "composition_architecture"
+      ]
+    },
+    "factIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "label", "fact_ids"],
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "fact_ids": {"$ref": "#/$defs/factIds"}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_node", "to_node", "fact_ids"],
+      "properties": {
+        "from_node": {"type": "string", "minLength": 1},
+        "to_node": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "fact_ids": {"$ref": "#/$defs/factIds"}
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grammar",
+        "description",
+        "fact_ids",
+        "visual_instruction",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "grammar": {"$ref": "#/$defs/visualGrammar"},
+        "description": {"type": "string", "minLength": 1},
+        "fact_ids": {"$ref": "#/$defs/factIds"},
+        "visual_instruction": {"type": "string", "minLength": 1},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "grammar": {
+                "type": "string",
+                "enum": ["flow", "hierarchy", "geography", "causality"]
+              }
+            },
+            "required": ["grammar"]
+          },
+          "then": {
+            "properties": {
+              "visual_instruction": {"type": "string", "minLength": 1, "pattern": "\\S"},
+              "nodes": {"minItems": 1},
+              "edges": {"minItems": 1}
+            }
+          }
+        }
+      ]
+    },
+    "exhibit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grammar", "description", "fact_ids"],
+      "properties": {
+        "grammar": {"$ref": "#/$defs/visualGrammar"},
+        "description": {"type": "string", "minLength": 1},
+        "fact_ids": {"$ref": "#/$defs/factIds"}
+      }
+    },
+    "supportGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "label", "fact_ids"],
+      "properties": {
+        "role": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "fact_ids": {"$ref": "#/$defs/factIds"}
+      }
+    },
+    "localVisual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grammar", "instruction", "fact_ids"],
+      "properties": {
+        "grammar": {"$ref": "#/$defs/visualGrammar"},
+        "instruction": {"type": "string", "minLength": 1},
+        "fact_ids": {"$ref": "#/$defs/factIds"}
+      }
+    },
+    "promptSections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_and_canvas",
+        "core_proposition_and_content",
+        "consulting_information_architecture",
+        "visual_style_and_color",
+        "text_and_typography",
+        "strict_prohibitions"
+      ],
+      "properties": {
+        "task_and_canvas": {"type": "string", "minLength": 1},
+        "core_proposition_and_content": {"type": "string", "minLength": 1},
+        "consulting_information_architecture": {"type": "string", "minLength": 1},
+        "visual_style_and_color": {"type": "string", "minLength": 1},
+        "text_and_typography": {"type": "string", "minLength": 1},
+        "strict_prohibitions": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

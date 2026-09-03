@@ -1,6 +1,6 @@
 # Paginated Word to editable PowerPoint V6
 
-Use `run-word-to-ppt-workflow` as the sole public workflow and `run-pages` as the sole formal page-generation command. A one-page run uses `run-pages --pages 1`; there is no separate legacy single-page generation or prompt-compilation entry.
+Use `run-word-to-ppt-workflow` as the sole public workflow and `run-pages` as the sole formal page-generation command under prompt contract `consulting-page-director-v3-compact-page-plan`. A one-page run uses `run-pages --pages 1`; there is no separate legacy single-page generation or prompt-compilation entry.
 
 The workflow preserves complete page materials and opens one three-step confirmation UI. Step 1 confirms one whole-deck director template from five scenarios: Company & Business Introduction, Investment Committee, Project Initiation, Corporate Planning Report or Investment Project BP. Step 2 confirms only three colors, CJK/Latin fonts and title/body/caption sizes. Step 3 confirms only the seven-field presentation taskbook: use scenario, presenter, primary audience, audience prior knowledge, desired outcome, Word content to emphasize and content to keep lower prominence.
 

@@ -5,7 +5,7 @@ description: Use when converting one paginated Word document and one SVG Logo in
 
 # Run Word-to-PPT Workflow V6
 
-This is the only public Word-to-PowerPoint workflow entry and executes the sealed `awesome-word-ppt-workflow-v1` contract. Create a new V6 project from the original paginated Word and SVG Logo. The resumable project authority is `workflow_v6.json`.
+This is the only public Word-to-PowerPoint workflow entry and executes the sealed `awesome-word-ppt-workflow-v1` contract with prompt contract `consulting-page-director-v3-compact-page-plan`. Create a new V6 project from the original paginated Word and SVG Logo. The resumable project authority is `workflow_v6.json`.
 
 ## Authoritative flow
 

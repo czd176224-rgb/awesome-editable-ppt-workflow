@@ -4,7 +4,7 @@ Public Codex plugin for converting a paginated Word document plus an SVG Logo in
 
 ## V6 adaptive production contract
 
-The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `consulting-page-director-v2-source-text-custody`.
+The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `consulting-page-director-v3-compact-page-plan`.
 
 - One Word page becomes one slide. The body is 1904x896 (17:8).
 - Non-contiguous Word page labels such as `第4页`、`第33页`、`第26页` remain in the user's order.

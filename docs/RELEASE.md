@@ -1,6 +1,6 @@
 # 1.2.3 public release runbook
 
-Release identity is fixed by `package-info.json`: version `1.2.3`, tag `v1.2.3`, workflow `awesome-word-ppt-workflow-v1`, prompt contract `consulting-page-director-v2-source-text-custody`, and policy `generate-without-refs-edit-with-confirmed-refs`. The immutable `v1.2.2` release remains the supported rollback baseline.
+Release identity is fixed by `package-info.json`: version `1.2.3`, tag `v1.2.3`, workflow `awesome-word-ppt-workflow-v1`, prompt contract `consulting-page-director-v3-compact-page-plan`, and policy `generate-without-refs-edit-with-confirmed-refs`. The immutable `v1.2.2` release remains the supported rollback baseline.
 
 The single final UI submission remains the sole material/reference authority. Word remains the page-content and factual authority. The confirmed background color becomes the native whole-slide background on every final page. The workflow conservatively matches the taskbook's confirmed emphasis content to Word pages; only matched emphasis pages may use secondary-color-family text. Non-emphasis pages may use related colors in shapes, lines and text-box fills, while text emphasis uses weight, size, position or another non-accent treatment. The page director exposes source-backed process, hierarchy, parallelism, ownership, comparison and causality through color, position, shape, connectors and visual hierarchy.
 

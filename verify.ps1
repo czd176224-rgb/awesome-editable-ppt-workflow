@@ -84,9 +84,9 @@ if ($PackageInfo.initialImageEndpoint -ne "adaptive-images/generate-or-edit") {
 if ($PackageInfo.localRepairEndpoint -ne "deterministic-mechanical-routing-with-model-fallback") {
     throw "V6 page repair must stay on the same provider and remain bounded by two review-directed corrections"
 }
-if ($PackageInfo.promptContractVersion -ne "consulting-page-director-v2-source-text-custody" -or
+if ($PackageInfo.promptContractVersion -ne "consulting-page-director-v3-compact-page-plan" -or
     $PackageInfo.pageImagePolicy -ne "generate-without-refs-edit-with-confirmed-refs") {
-    throw "package-info must declare the consulting director v2 prompt and confirmed-materials image policy"
+    throw "package-info must declare the consulting director v3 compact page plan and confirmed-materials image policy"
 }
 
 if ($MetadataOnly) {

@@ -45,7 +45,7 @@ def test_release_identity_is_immutable_v123_tag():
     assert package["pluginVersion"] == "1.2.3"
     assert package["releaseTag"] == "v1.2.3"
     assert package["workflowContractVersion"] == "awesome-word-ppt-workflow-v1"
-    assert package["promptContractVersion"] == "consulting-page-director-v2-source-text-custody"
+    assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
     assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     installer = text("install.ps1")
     assert "--ref $ReleaseTag" in installer

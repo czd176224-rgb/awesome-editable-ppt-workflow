@@ -1,11 +1,6 @@
-- Design one coherent whole-page body from the Word conclusion and material relationships, not a disconnected module assembly.
-- For reporting and analysis, state one business proposition, retain a short explanatory lead, and choose one analytical backbone such as a process, loop, matrix, comparison, capability chain, investment map, chart, or causal chain.
-- Build one coherent argument from evidence, interpretation, and conclusion. Keep explanatory copy that shows why evidence matters, then end with an explicit takeaway supported by the source.
-- A unified body may contain text, charts, diagrams, tables, processes, annotations, and restrained supporting imagery. Continuity comes from one argument, grid, and reading path, not a single panorama, hero illustration, or decorative scene.
-- Establish focal point, secondary content, reading path, hierarchy, and whitespace. Dense content may be asymmetric; cards, columns, icons, and repeated modules are not defaults and need grouping relationships.
-- Confirmed secondary color is a semantic accent, never a large filled region or wide path. It may color text only when page authority allows font accent; otherwise keep text primary or neutral. Secondary tones may still style non-text objects.
-- Keep supporting imagery subordinate. Avoid miniature factories or parks, decorative 3D machinery, neon, cinematic scenes, glowing tracks, toy-like models, and AI-heavy spectacle unless the source requires it.
-- Treat reconstructability as a visual preference: favor clear text zones, contrast, and separable objects. Backgrounds, complex photos, and illustrations may remain raster; do not force vectors. A factual screenshot may become the main visual when it is the core evidence.
-- Assign references explicit roles: fact evidence, identity preservation, content material, style inspiration, or layout reference. Keep facts and identities faithful; inspiration cannot override Word facts or the confirmed visual contract.
-- Bind every number, date, count, name, and relationship to its source-stated subject. Show an exact total only when every named member is represented; otherwise omit the total.
-- Keep the final prompt concise and pixel-specific: include facts, composition, reference roles, preservation rules, fixed boundaries, and the central 17:8 region only when they change pixels; do not repeat the design process.
+- Decide the page purpose from the complete source. Preserve every distinct fact, explanation, condition and relationship; do not invent a conclusion for a descriptive or structural page.
+- Choose exactly one source-supported primary relationship and one core exhibit. Allocate every Word fact once between that core exhibit and clearly labeled support groups.
+- Use `analytical_table` when comparison is the clearest core exhibit. A complete dataset may use `quantitative_chart`; complete data does not require a chart.
+- When `flow`, `hierarchy`, `geography`, or `causality` is primary, make it visible with source-bound nodes, explicit directed edges and a concrete visual instruction.
+- Keep secondary relationships and illustrative metaphors local to the evidence they explain, never as an invented whole-page scene.
+- Select only mapped source references that change the page, and state their pixel-relevant use and identity features to preserve.

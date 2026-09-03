@@ -15,7 +15,7 @@ def test_release_metadata_is_consistently_v6_version() -> None:
     assert package["pluginVersion"] == manifest["version"] == "1.2.3"
     assert package["releaseTag"] == "v1.2.3"
     assert package["workflowContractVersion"] == "awesome-word-ppt-workflow-v1"
-    assert package["promptContractVersion"] == "consulting-page-director-v2-source-text-custody"
+    assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
     assert package["qaPolicyVersion"] == "sole-independent-consulting-visual-review-v2"
     assert package["apiKeyRequired"] is False
     assert package["marketplacePreviewIdentity"] == marketplace["name"] == "editable-ppt-public"
