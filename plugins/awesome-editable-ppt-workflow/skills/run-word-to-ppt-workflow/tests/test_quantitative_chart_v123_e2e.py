@@ -14,6 +14,7 @@ from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE
 from pptx.oxml.xmlchemy import OxmlElement
+from pptx.util import Inches
 
 
 TESTS = Path(__file__).resolve().parent
@@ -157,7 +158,15 @@ def _assert_relationship_geometry(slide, page_plan: dict) -> None:
         )
 
     for edge in relationship["edges"]:
-        connector = named[f"edge:{edge['from_node']}->{edge['to_node']}"]
+        edge_name = f"edge:{edge['from_node']}->{edge['to_node']}"
+        matches = [shape for shape in slide.shapes if shape.name == edge_name]
+        assert len(matches) == 1
+        connector = matches[0]
+        preset = connector._element.xpath(".//a:prstGeom")
+        assert (
+            connector._element.tag.rsplit("}", 1)[-1] == "cxnSp"
+            or (preset and preset[0].get("prst") == "line")
+        )
         x1, y1, x2, y2 = _connector_endpoints(connector)
         assert inside((x1, y1), named[edge["from_node"]])
         assert inside((x2, y2), named[edge["to_node"]])
@@ -166,6 +175,31 @@ def _assert_relationship_geometry(slide, page_plan: dict) -> None:
             for item in connector._element.spPr.get_or_add_ln()
             if item.tag.rsplit("}", 1)[-1] in {"headEnd", "tailEnd"}
         } == {"tailEnd": "triangle"}
+
+
+def test_relationship_geometry_rejects_named_rectangle_with_arrow_xml(tmp_path: Path) -> None:
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    source = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(2), Inches(1))
+    source.name = "source"
+    destination = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(6), Inches(1), Inches(2), Inches(1))
+    destination.name = "destination"
+    impostor = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(2), Inches(1.49), Inches(5), Inches(0.02))
+    impostor.name = "edge:source->destination"
+    arrow = OxmlElement("a:tailEnd")
+    arrow.set("type", "triangle")
+    impostor._element.spPr.get_or_add_ln().append(arrow)
+    path = tmp_path / "named-rectangle-edge.pptx"
+    deck.save(path)
+
+    page_plan = {
+        "primary_relationship": {
+            "nodes": [{"node_id": "source"}, {"node_id": "destination"}],
+            "edges": [{"from_node": "source", "to_node": "destination"}],
+        },
+    }
+    with pytest.raises(AssertionError):
+        _assert_relationship_geometry(Presentation(path).slides[0], page_plan)
 
 
 def _manifest(chart: dict) -> dict:
