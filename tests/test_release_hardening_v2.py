@@ -303,6 +303,13 @@ def test_editppt_runtime_supports_installed_package_import_boundary():
         timeout=30,
     )
     assert probe.returncode == 0, probe.stdout + probe.stderr
+    reconstruction = text(
+        "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/"
+        "workflow_v6_reconstruction.py"
+    )
+    assert "from editppt.runtime.validate_pptx import" in reconstruction
+    assert "except ImportError" not in reconstruction
+    assert "from validate_pptx import" not in reconstruction
 
 
 def test_readme_and_quickstart_install_verified_exact_release_zip():

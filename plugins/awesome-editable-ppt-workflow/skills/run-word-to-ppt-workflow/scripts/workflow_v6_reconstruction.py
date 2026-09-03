@@ -37,29 +37,19 @@ from complex_page_experiment import (
 )
 
 
-try:
-    from editppt.runtime.validate_pptx import (
-        _connector_endpoints,
-        _shape_arrowheads,
-        _shape_kind,
-        quantitative_chart_readback_violations,
-    )
-except ImportError:  # source checkout without the editable-PPT package installed
-    _EDITPPT_RUNTIME = (
-        Path(__file__).resolve().parents[2]
-        / "reconstruct-editable-slide"
-        / "cli"
-        / "editppt"
-        / "runtime"
-    )
-    if str(_EDITPPT_RUNTIME) not in sys.path:
-        sys.path.insert(0, str(_EDITPPT_RUNTIME))
-    from validate_pptx import (  # noqa: E402
-        _connector_endpoints,
-        _shape_arrowheads,
-        _shape_kind,
-        quantitative_chart_readback_violations,
-    )
+_EDITPPT_CLI = (
+    Path(__file__).resolve().parents[2]
+    / "reconstruct-editable-slide"
+    / "cli"
+)
+if _EDITPPT_CLI.is_dir() and str(_EDITPPT_CLI) not in sys.path:
+    sys.path.insert(0, str(_EDITPPT_CLI))
+from editppt.runtime.validate_pptx import (  # noqa: E402
+    _connector_endpoints,
+    _shape_arrowheads,
+    _shape_kind,
+    quantitative_chart_readback_violations,
+)
 
 
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
