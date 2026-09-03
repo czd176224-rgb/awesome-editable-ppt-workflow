@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -15,15 +14,6 @@ SECTION_SPECS = (
     ("Visual Style and Color", "visual_style_and_color"),
     ("Text and Typography", "text_and_typography"),
     ("Strict Prohibitions", "strict_prohibitions"),
-)
-
-_CUSTODY_PATTERNS = (
-    re.compile(r"[A-Za-z]:[\\/]"),
-    re.compile(r"(?:^|\s)/(?:[^/\s]+/)*[^/\s]+"),
-    re.compile(r"(?:^|\s)(?:\.\.?[\\/]|\\\\)"),
-    re.compile(r"\b(?:00_source|01_source_assets|02_v6)[\\/]", re.IGNORECASE),
-    re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE),
-    re.compile(r"\b(?:sha-?256|digest|receipt[_ -]?id)\b", re.IGNORECASE),
 )
 
 _TASK_CONSTRAINT = (
@@ -184,24 +174,6 @@ def _background_constraint(material_view: object) -> str:
     )
 
 
-def _validated_sections(value: Mapping[str, object]) -> dict[str, str]:
-    raw = value.get("prompt_sections")
-    if not isinstance(raw, Mapping):
-        raise ValueError("consulting prompt sections are missing")
-    expected = {key for _heading, key in SECTION_SPECS}
-    if set(raw) != expected:
-        raise ValueError("prompt sections must have the approved consulting six-part shape")
-    result: dict[str, str] = {}
-    for _heading, key in SECTION_SPECS:
-        text = raw.get(key)
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError(f"consulting prompt section {key} must be non-empty natural language")
-        if any(pattern.search(text) for pattern in _CUSTODY_PATTERNS):
-            raise ValueError("compiled prompt contains a local custody path, digest, or receipt ID")
-        result[key] = " ".join(text.split())
-    return result
-
-
 def _render_complete_source_block(block: object) -> str:
     if not isinstance(block, Mapping):
         raise ValueError("complete Word content block must be a mapping")
@@ -238,7 +210,17 @@ def _complete_fact_content(material_view: object) -> str:
             else item[0]
         ),
     )
-    return "\n".join(_render_complete_source_block(block) for _index, block in ordered)
+    rendered: list[str] = []
+    for _index, block in ordered:
+        if not isinstance(block, Mapping):
+            raise ValueError("complete Word content block must be a mapping")
+        source_id = block.get("source_block_id")
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError("complete Word content block source_block_id is missing")
+        rendered.append(
+            f"[source fact {source_id} in section 2]\n{_render_complete_source_block(block)}"
+        )
+    return "\n".join(rendered)
 
 
 def _canonical_text(value: object) -> str:

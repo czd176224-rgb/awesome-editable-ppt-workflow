@@ -185,17 +185,17 @@ def test_complete_fact_renderer_preserves_paragraph_list_and_table_order() -> No
     module = _load_compiler_module()
     material_view = _material_view()
     material_view.value["complete_word_content"] = [
-        {"type": "table", "rows": [["Header A", "Header B"], ["Cell A", "Cell B"]], "source_order": 3},
-        {"type": "list", "text": "Numbered fact", "list_kind": "number", "level": 1, "source_order": 2},
-        {"type": "paragraph", "text": "Paragraph fact", "source_order": 1},
+        {"type": "table", "rows": [["Header A", "Header B"], ["Cell A", "Cell B"]], "source_block_id": "table-1", "source_order": 3},
+        {"type": "list", "text": "Numbered fact", "list_kind": "number", "level": 1, "source_block_id": "list-1", "source_order": 2},
+        {"type": "paragraph", "text": "Paragraph fact", "source_block_id": "body-1", "source_order": 1},
     ]
 
     rendered = module._complete_fact_content(material_view)
 
     assert rendered == (
-        "Paragraph fact\n"
-        "  1. Numbered fact\n"
-        "Header A | Header B\n"
+        "[source fact body-1 in section 2]\nParagraph fact\n"
+        "[source fact list-1 in section 2]\n  1. Numbered fact\n"
+        "[source fact table-1 in section 2]\nHeader A | Header B\n"
         "Cell A | Cell B"
     )
 
@@ -212,6 +212,17 @@ def test_complete_table_renderer_never_uses_lossy_text_fallback() -> None:
 
     assert rendered == "ROW-1-CELL-1 | ROW-1-CELL-2\nROW-2-CELL-1 | ROW-2-CELL-2"
     assert "LOSSY-TABLE-FALLBACK" not in rendered
+
+
+def test_complete_fact_renderer_requires_a_stable_source_id() -> None:
+    module = _load_compiler_module()
+    material_view = _material_view()
+    material_view.value["complete_word_content"] = [
+        {"type": "paragraph", "text": "Unlabeled fact", "source_order": 1}
+    ]
+
+    with pytest.raises(ValueError, match="source_block_id is missing"):
+        module._complete_fact_content(material_view)
 
 
 def test_compiler_builds_the_six_sections_from_the_compact_page_plan(
@@ -310,8 +321,9 @@ def test_compiler_builds_the_six_sections_from_the_compact_page_plan(
 
     sections = _compiled_sections(prompt)
     content = sections["Core Proposition and Content"]
-    for fact in facts:
+    for fact, fact_id in zip(facts, fact_ids, strict=True):
         assert fact in content
+        assert content.count(f"[source fact {fact_id} in section 2]") == 1
     architecture = sections["Consulting Information Architecture"]
     assert plan["page_purpose"] in architecture
     assert json.dumps(relationship, ensure_ascii=False, sort_keys=True) in architecture
@@ -422,6 +434,7 @@ def test_page_purpose_repeating_a_complete_fact_uses_only_its_source_id() -> Non
     assert prompt.count(fact) == 1
     assert fact in sections["Core Proposition and Content"]
     assert fact not in sections["Consulting Information Architecture"]
+    assert "[source fact body-1 in section 2]" in sections["Core Proposition and Content"]
     assert "[source fact body-1 in section 2]" in sections["Consulting Information Architecture"]
 
 
@@ -439,10 +452,13 @@ def test_short_table_fact_does_not_corrupt_ids_or_unrelated_language() -> None:
     relationship["nodes"][0]["fact_ids"] = ["1"]
     relationship["edges"][0]["from_node"] = "1"
 
-    architecture = _compiled_sections(
+    sections = _compiled_sections(
         module.compile_consulting_six_part_prompt(value, material_view)
-    )["Consulting Information Architecture"]
+    )
+    architecture = sections["Consulting Information Architecture"]
 
+    assert sections["Core Proposition and Content"].count("\n1") == 1
+    assert "[source fact table-1 in section 2]\n1" in sections["Core Proposition and Content"]
     assert "Page purpose: [source fact table-1 in section 2]" in architecture
     assert '"node_id": "1"' in architecture
     assert '"fact_ids": ["1"]' in architecture
@@ -453,8 +469,10 @@ def test_short_table_fact_does_not_corrupt_ids_or_unrelated_language() -> None:
 def test_common_chinese_fact_does_not_corrupt_identifiers_or_longer_phrases() -> None:
     module = _load_compiler_module()
     material_view = _material_view()
+    fact = "项目"
+    source_id = "项目-id"
     material_view.value["complete_word_content"] = [{
-        "type": "paragraph", "text": "项目", "source_block_id": "项目-id", "source_order": 1,
+        "type": "paragraph", "text": fact, "source_block_id": source_id, "source_order": 1,
     }]
     value = _director_value()
     value["page_plan"]["page_purpose"] = "项目"
@@ -465,10 +483,12 @@ def test_common_chinese_fact_does_not_corrupt_identifiers_or_longer_phrases() ->
     relationship["edges"][0]["from_node"] = "项目"
     relationship["nodes"][0]["label"] = "项目组"
 
-    architecture = _compiled_sections(
+    sections = _compiled_sections(
         module.compile_consulting_six_part_prompt(value, material_view)
-    )["Consulting Information Architecture"]
+    )
+    architecture = sections["Consulting Information Architecture"]
 
+    assert f"[source fact {source_id} in section 2]\n{fact}" in sections["Core Proposition and Content"]
     assert "Page purpose: [source fact 项目-id in section 2]" in architecture
     assert '"node_id": "项目"' in architecture
     assert '"fact_ids": ["项目"]' in architecture
@@ -492,6 +512,7 @@ def test_quoted_fact_is_normalized_before_json_serialization() -> None:
 
     assert prompt.count(fact) == 1
     assert fact in sections["Core Proposition and Content"]
+    assert "[source fact quote-1 in section 2]" in sections["Core Proposition and Content"]
     assert 'He said \\"go\\".' not in sections["Consulting Information Architecture"]
     assert "[source fact quote-1 in section 2]" in sections["Consulting Information Architecture"]
 
