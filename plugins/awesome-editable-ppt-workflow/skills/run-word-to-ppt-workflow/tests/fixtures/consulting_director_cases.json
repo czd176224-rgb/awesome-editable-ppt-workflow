@@ -39,11 +39,18 @@
           "fact_ids": ["body-1", "body-2", "body-3"],
           "visual_instruction": "Attach one evidence note and one management implication to each transition.",
           "nodes": [
-            {"node_id": "capital-input", "label": "Capital input", "fact_ids": ["body-1"]},
-            {"node_id": "realization", "label": "Value realization", "fact_ids": ["body-2"]}
+            {"node_id": "sourcing", "label": "Sourcing", "fact_ids": ["body-1"]},
+            {"node_id": "screening", "label": "Screening", "fact_ids": ["body-2"]},
+            {"node_id": "investment", "label": "Investment", "fact_ids": ["body-1"]},
+            {"node_id": "value-creation", "label": "Value creation", "fact_ids": ["body-2"]},
+            {"node_id": "realization", "label": "Realization", "fact_ids": ["body-3"]}
           ],
           "edges": [
-            {"from_node": "capital-input", "to_node": "realization", "label": "closes the loop", "fact_ids": ["body-3"]}
+            {"from_node": "sourcing", "to_node": "screening", "fact_ids": ["body-1"]},
+            {"from_node": "screening", "to_node": "investment", "fact_ids": ["body-2"]},
+            {"from_node": "investment", "to_node": "value-creation", "fact_ids": ["body-2"]},
+            {"from_node": "value-creation", "to_node": "realization", "fact_ids": ["body-3"]},
+            {"from_node": "realization", "to_node": "sourcing", "label": "closes the loop", "fact_ids": ["body-3"]}
           ]
         },
         "core_exhibit": {"grammar": "flow", "description": "One closed five-stage capital loop.", "fact_ids": ["body-1", "body-2", "body-3"]},
@@ -67,11 +74,15 @@
           "fact_ids": ["body-1", "body-2", "body-3"],
           "visual_instruction": "Show cause, interpretation, and outcome at each handoff.",
           "nodes": [
-            {"node_id": "capability-foundation", "label": "Capability foundation", "fact_ids": ["body-1"]},
-            {"node_id": "measurable-outcome", "label": "Measurable outcome", "fact_ids": ["body-2"]}
+            {"node_id": "data-foundation", "label": "Data foundation", "fact_ids": ["body-1"]},
+            {"node_id": "decision-intelligence", "label": "Decision intelligence", "fact_ids": ["body-2"]},
+            {"node_id": "operating-adoption", "label": "Operating adoption", "fact_ids": ["body-2"]},
+            {"node_id": "measurable-outcome", "label": "Measurable outcome", "fact_ids": ["body-3"]}
           ],
           "edges": [
-            {"from_node": "capability-foundation", "to_node": "measurable-outcome", "label": "enables", "fact_ids": ["body-3"]}
+            {"from_node": "data-foundation", "to_node": "decision-intelligence", "fact_ids": ["body-1"]},
+            {"from_node": "decision-intelligence", "to_node": "operating-adoption", "fact_ids": ["body-2"]},
+            {"from_node": "operating-adoption", "to_node": "measurable-outcome", "fact_ids": ["body-3"]}
           ]
         },
         "core_exhibit": {"grammar": "causality", "description": "One linked four-capability transformation chain.", "fact_ids": ["body-1", "body-2", "body-3"]},
