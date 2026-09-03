@@ -50,6 +50,10 @@ from editppt.runtime.validate_pptx import (  # noqa: E402
     _shape_kind,
     quantitative_chart_readback_violations,
 )
+from editppt.runtime.build_pptx_from_manifest import (  # noqa: E402
+    apply_native_charts,
+    normalize_manifest,
+)
 
 
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -101,11 +105,14 @@ def _copy_page_slide(source_path: Path, destination: Presentation, destination_l
     source_slide = source.slides[0]
     destination_slide = destination.slides.add_slide(destination_layout)
     mapping: dict[str, str] = {}
+    chart_relationships: set[str] = set()
     for relationship in source_slide.part.rels.values():
         if relationship.reltype == RT.SLIDE_LAYOUT:
             continue
         if relationship.reltype == RT.IMAGE:
             mapping[relationship.rId] = _copy_image_relationship(relationship, destination_slide)
+        elif relationship.reltype == RT.CHART:
+            chart_relationships.add(relationship.rId)
         elif relationship.is_external:
             mapping[relationship.rId] = destination_slide.part.relate_to(
                 relationship.target_ref, relationship.reltype, is_external=True
@@ -114,6 +121,18 @@ def _copy_page_slide(source_path: Path, destination: Presentation, destination_l
             raise ValueError(f"unsupported V6 slide relationship: {relationship.reltype}")
     copied_content = copy.deepcopy(source_slide.element.cSld)
     copied_content.set("name", f"editable-ppt-v6-page:{page_number}")
+    for node in tuple(copied_content.iter()):
+        if not any(
+            attribute in _RELATIONSHIP_ATTRIBUTES and relationship_id in chart_relationships
+            for attribute, relationship_id in node.attrib.items()
+        ):
+            continue
+        chart_frame = node
+        while chart_frame is not copied_content and chart_frame.tag.rsplit("}", 1)[-1] != "graphicFrame":
+            chart_frame = chart_frame.getparent()
+        if chart_frame is copied_content or chart_frame.getparent() is None:
+            raise ValueError("V6 chart relationship has no removable graphic frame")
+        chart_frame.getparent().remove(chart_frame)
     for node in copied_content.iter():
         for attribute, old_id in tuple(node.attrib.items()):
             if attribute in _RELATIONSHIP_ATTRIBUTES:
@@ -894,6 +913,18 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
         _copy_page_slide(path, deck, layout, page_number)
     with secure_io.hold_parent(root, temporary.relative_to(root), create=True):
         deck.save(temporary)
+        chart_manifests = []
+        for page_number in range(1, len(pages) + 1):
+            manifest_path = (
+                root / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
+                / "pages" / "page_001" / "manifest.json"
+            )
+            manifest = _read_json(manifest_path) if manifest_path.is_file() else {"charts": []}
+            normalized = normalize_manifest(manifest)
+            if page_number == 1:
+                normalized["charts"] = []
+            chart_manifests.append(normalized)
+        apply_native_charts(temporary, chart_manifests)
         reopened = Presentation(temporary)
         if len(reopened.slides) != len(pages):
             raise ValueError("assembled V6 slide count is incorrect")

@@ -231,6 +231,22 @@ def _director_result(value: dict) -> CodexStructuredResult:
 
 
 def _chart_fact(page_number: int, source_page: dict, source_text: str, grammar: str) -> dict:
+    if page_number == 10:
+        return {
+            "title": "2030年产业增加值目标",
+            "relationship": "target_by_industry",
+            "rendering_primitive": "column_bar",
+            "chart_variant": "bar",
+            "unit": "亿元",
+            "basis": "2030年产业增加值目标",
+            "period": "2030年",
+            "source_wording": source_page["blocks"][5]["text"],
+            "series": [{
+                "name": "产业增加值目标",
+                "categories": ["数字经济核心产业", "通用人工智能产业"],
+                "values": [420, 100],
+            }],
+        }
     return {
         "title": source_page["blocks"][1]["text"],
         "relationship": grammar,
@@ -241,7 +257,12 @@ def _chart_fact(page_number: int, source_page: dict, source_text: str, grammar: 
     }
 
 
-def _manifest(source_page: int, labels: tuple[str, ...], page_plan: dict | None = None) -> dict:
+def _manifest(
+    source_page: int,
+    labels: tuple[str, ...],
+    page_plan: dict | None = None,
+    numeric_authority: dict | None = None,
+) -> dict:
     if source_page == 10:
         boxes = [(0.65 + column * 3.1, 1.35 + row * 1.65, 2.75, 1.1) for row in range(2) for column in range(3)]
     elif source_page == 20:
@@ -294,7 +315,14 @@ def _manifest(source_page: int, labels: tuple[str, ...], page_plan: dict | None 
             {"object_id": f"page-{source_page}-source-node-{index}", "name": f"page-{source_page}-source-node-{index}", "type": "rect", "box_px": _box_px(x, y, w, h), "fill": "#EAF2F8", "stroke": "#6B7A90"}
             for index, (x, y, w, h) in enumerate(boxes)
         ]) + connectors,
-        "images": [], "charts": [], "asset_provenance": [],
+        "images": [],
+        "charts": ([{
+            "object_id": "huangshi-page-10-chart",
+            "name": "huangshi-page-10-chart",
+            "box_px": _box_px(1.0, 1.1, 8.0, 4.0),
+            **numeric_authority,
+        }] if numeric_authority else []),
+        "asset_provenance": [],
     }
 
 
@@ -447,9 +475,17 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
             chart_fact = _chart_fact(page_number, source_page, source_text, grammar)
             materials.write_text(json.dumps({"chart_facts": [chart_fact]}, ensure_ascii=False), encoding="utf-8")
             reconstruction_request = build_reconstruction_request(project, page_number=page_number)
-            assert "numeric_authority" not in reconstruction_request
+            if page_number == 10:
+                assert reconstruction_request["numeric_authority"] == chart_fact
+            else:
+                assert "numeric_authority" not in reconstruction_request
             assert reconstruction_request["page_plan"] == plan
-            manifest = _manifest(page_number, labels, plan)
+            manifest = _manifest(
+                page_number,
+                labels,
+                plan,
+                reconstruction_request.get("numeric_authority"),
+            )
         else:
             receipt = json.loads(
                 (project / "04_v6/images" / f"page_{page_number:03d}.json").read_text(encoding="utf-8")
@@ -482,7 +518,13 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
     assert {artifact.page_plan["primary_relationship"]["grammar"] for artifact in director_artifacts.values()} == {
         "analytical_table", "flow", "hierarchy", "geography", "causality", "quantitative_chart", "composition_architecture",
     }
-    assert all(not any(shape.has_chart for shape in slide.shapes) for slide in deck.slides)
+    assert sum(shape.has_chart for slide in deck.slides for shape in slide.shapes) == 1
+    assert not any(
+        shape.has_chart
+        for page_number, slide in enumerate(deck.slides, start=1)
+        if page_number != 10
+        for shape in slide.shapes
+    )
     for source_number in SELECTED:
         slide = deck.slides[source_number - 1]
         _grammar, labels = PAGE_CONTRACTS[source_number]
@@ -520,12 +562,22 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
         if source_number == 40:
             assert len({shape.width for shape in nodes[:3]}) == len({shape.height for shape in nodes[:3]}) == len({shape.top for shape in nodes[:3]}) == 1
             assert nodes[3].top > nodes[0].top
+        if source_number == 10:
+            chart_shape = next(shape for shape in slide.shapes if shape.has_chart)
+            assert chart_shape.name == "huangshi-page-10-chart"
+            chart = chart_shape.chart
+            assert [item.name for item in chart.series] == ["产业增加值目标"]
+            assert [item.label for item in chart.plots[0].categories] == ["数字经济核心产业", "通用人工智能产业"]
+            assert list(chart.series[0].values) == [420, 100]
+            assert by_name["huangshi-page-10-chart Unit"].text == "亿元"
+            assert by_name["huangshi-page-10-chart Period"].text == "2030年"
 
     with zipfile.ZipFile(deck_path) as package:
         embedded_svg = [package.read(name) for name in package.namelist() if name.startswith("ppt/media/") and name.endswith(".svg")]
         slide_xml = b"\n".join(package.read(name) for name in package.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml"))
-        assert not any(name.startswith("ppt/charts/") for name in package.namelist())
-        assert b"<c:chart" not in slide_xml and b"<c:plotArea" not in slide_xml
+        chart_xml = b"\n".join(package.read(name) for name in package.namelist() if name.startswith("ppt/charts/chart") and name.endswith(".xml"))
+        assert chart_xml
+        assert b"<c:chart" in slide_xml and b"<c:plotArea" in chart_xml
         assert all(term not in slide_xml.lower() for term in (b"axis", b"area", b"bubble", b"target line", b"difference arrow"))
     assert svg.read_bytes() in embedded_svg
     assert encoded_logo.encode("ascii") in svg.read_bytes()
