@@ -15,14 +15,22 @@
 - `c43169c` — initial v3 release-control refresh.
 - `f0fd75e` — installed-runtime import fix found by release hardening.
 - `08d573c` — release controls rebound to the install fix.
+- `de61a47` — fail-closed canonical validator import for source and installed runtimes.
+- `77926d6` — release controls regenerated from the import-hardening commit.
+
+## Review remediation
+
+- Removed the broad `ImportError` fallback from `workflow_v6_reconstruction.py`; internal dependency failures can no longer be mistaken for a missing top-level package.
+- A source checkout now adds the existing local `reconstruct-editable-slide/cli` directory to `sys.path`, then source and installed execution both use the single canonical `editppt.runtime.validate_pptx` import.
+- The regression test statically enforces the canonical import and rejects restoration of either `except ImportError` or the legacy top-level `validate_pptx` fallback.
 
 ## Verification
 
 - Task 12 collector consistency: pass. Candidate A has 5 authority-applicable pages and 0 compliant pages; candidate B has 6 applicable pages and 0 compliant pages. Manual fact-coverage counts remain baseline 6/8, A 4/8, B 5/8.
 - `python -m py_compile .../task-12-authority-evidence.py`: pass.
-- Relationship/numeric authority regression tests: `17 passed in 92.67s`.
-- Committed manifest hash test: `1 passed in 22.13s`.
-- Root release hardening in a clean committed worktree: `23 passed in 280.63s`.
+- Relationship/numeric authority and installed import-boundary regression tests: `18 passed in 88.10s`.
+- Committed manifest hash test after the final control refresh: `1 passed in 22.33s`.
+- Full release hardening at committed `77926d6` in a clean detached worktree: `23 passed in 285.68s`.
 - `git diff --check`: pass.
 
 ## Remaining release blockers
