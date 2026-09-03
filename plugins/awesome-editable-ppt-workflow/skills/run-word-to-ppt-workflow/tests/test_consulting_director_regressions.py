@@ -166,7 +166,7 @@ def test_director_template_context_uses_one_taskbook_helper_without_reviewing_di
     director = (scripts / "complex_page_experiment/director.py").read_text(encoding="utf-8")
     review = (scripts / "complex_page_experiment/review.py").read_text(encoding="utf-8")
 
-    assert director.count("confirmed_taskbook_prompt(") == 2
+    assert director.count("confirmed_taskbook_prompt(") == 1
     assert review.count("confirmed_taskbook_prompt(") == 1
     assert "CONFIRMED PRESENTATION TASKBOOK" in director
     assert "CONFIRMED PRESENTATION TASKBOOK" in review

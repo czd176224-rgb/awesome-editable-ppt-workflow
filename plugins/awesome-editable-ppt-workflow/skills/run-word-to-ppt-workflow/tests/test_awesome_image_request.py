@@ -580,7 +580,7 @@ def test_editppt_reconstruction_command_routes_to_real_provider_worker(tmp_path:
     assert (project / "05_v6/reconstruction_assets/page_001.clean-base.png").is_file()
 
 
-def test_reconstruction_skill_docs_default_to_accepted_image_without_model_edit():
+def test_reconstruction_skill_docs_default_to_accepted_image_with_only_sealed_exceptions():
     root = PLUGIN_ROOT / "skills/reconstruct-editable-slide"
     required = [root / "SKILL.md", root / "prompts/page-worker.md",
                 root / "references/cli-helper.md", root / "references/page-decision-tree.md"]
@@ -591,7 +591,9 @@ def test_reconstruction_skill_docs_default_to_accepted_image_without_model_edit(
     decisions = (root / "references/page-decision-tree.md").read_text(encoding="utf-8")
     for text in (worker, decisions):
         assert "accepted" in text
-        assert "only visual authority" in text
+        assert "visual authority" in text
+        assert "page_plan" in text
+        assert "core exhibit or reading path" in text
         assert "zero Image2" in text
         assert "explicitly" in text
         assert "editppt image reconstruct-edit" in text
