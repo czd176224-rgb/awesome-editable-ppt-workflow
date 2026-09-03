@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v3-compact-page-plan",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "indexTreeSha256": "fcd4eed4f801b0a8b43deaf567ee1001316ddf8d3a18e25e305defa92ab8d3c1",
+  "indexTreeSha256": "0110fc47caf58209bfa24740d3e3a63e850eb9a91bde71d9c7a67b791329c002",
   "files": {
     ".agents/plugins/marketplace.json": "a9ff9f849c8d3f256967f637d91560a479d766ed8b141dbf7689cea0e2689328",
     ".gitattributes": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
@@ -181,7 +181,7 @@
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_prompt_contract.py": "5e99ca8d02d082707a256ab2689d22866d174c64367e9744dcbc12ae48d6ac9a",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_qa.py": "dff1fd5a20df94c3e4bd40f3a3d305abee51d188d373fafb9c6683a2a8d2154a",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction_worker.py": "f7faaf41546f009812801b82f4cd845a03ca6f30f3860dd02e8b8835cfbc68bb",
-    "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction.py": "d9490ba326f06920954ba7d0df042e318a5dc9d0d1b5e3e8da3cef82d875516d",
+    "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction.py": "09455a61960e995a1dc0e61e0db6ca4abee2d4ef373b3bfc05f825fe326ff6bd",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_secure_io.py": "492917c118dcbb4986d9ad5b97bfcb494850dff66a2156f1f3a324f4d8a556e5",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_source.py": "07f87431413bcf6d11b5810c5fbe6f47ae297c103b9402810c9a6e7fac4398b9",
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_special_pages.py": "517b31dca1f1c0dfccadf1f74131679391434b907ab6bbe6b446b619f080a8be",
