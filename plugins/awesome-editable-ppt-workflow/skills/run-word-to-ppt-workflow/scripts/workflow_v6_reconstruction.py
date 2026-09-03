@@ -904,6 +904,32 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
     ]
     if any(not path.is_file() for path in pages):
         raise ValueError("a V6 finalized page package is missing")
+    chart_manifests = []
+    for page_number, page in enumerate(state["pages"], start=1):
+        manifest_path = (
+            root / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
+            / "pages" / "page_001" / "manifest.json"
+        )
+        if manifest_path.is_file():
+            normalized = normalize_manifest(_read_json(manifest_path))
+        else:
+            final_report_path = (
+                root / "06_v6" / "pages" / f"page_{page_number:03d}" / "page.json"
+            )
+            if not final_report_path.is_file():
+                raise ValueError("V6 finalized page report is missing")
+            final_report = _read_json(final_report_path)
+            receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
+            if (
+                final_report.get("accepted_receipt") is not None
+                or page.get("selected_candidate") is not None
+                or receipt_path.is_file()
+            ):
+                raise ValueError("V6 sealed reconstruction manifest is missing")
+            normalized = {"charts": []}
+        if page_number == 1:
+            normalized["charts"] = []
+        chart_manifests.append(normalized)
     output_dir = root / "08_final"
     output = output_dir / "deck.pptx"
     temporary = output_dir / f".deck-v6-{uuid.uuid4().hex[:8]}.tmp"
@@ -913,20 +939,6 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
         _copy_page_slide(path, deck, layout, page_number)
     with secure_io.hold_parent(root, temporary.relative_to(root), create=True):
         deck.save(temporary)
-        chart_manifests = []
-        for page_number in range(1, len(pages) + 1):
-            manifest_path = (
-                root / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
-                / "pages" / "page_001" / "manifest.json"
-            )
-            normalized = (
-                normalize_manifest(_read_json(manifest_path))
-                if manifest_path.is_file()
-                else {"charts": []}
-            )
-            if page_number == 1:
-                normalized["charts"] = []
-            chart_manifests.append(normalized)
         apply_native_charts(temporary, chart_manifests)
         reopened = Presentation(temporary)
         if len(reopened.slides) != len(pages):

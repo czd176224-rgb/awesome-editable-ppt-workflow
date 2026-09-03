@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from pptx import Presentation
+from pptx.chart.data import ChartData
 from pptx.dml.color import RGBColor
+from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.dml import MSO_THEME_COLOR
 from pptx.util import Cm
 
@@ -437,6 +439,74 @@ def test_finalize_and_assemble_add_fixed_layers_without_office_or_visual_qa(tmp_
     assert all(page["state"] == "page_complete" for page in load(project)["pages"])
 
 
+def test_assembly_allows_manifestless_genuine_native_direct_page(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "native-direct-body.pptx"
+    _body(body, "native-direct editable body")
+    final_report = finalize_reconstructed_page(
+        project, page_number=1, reconstructed_body=body,
+    )
+
+    assert "accepted_receipt" not in final_report
+    assert load(project)["pages"][0]["selected_candidate"] is None
+    assert not (project / "04_v6/images/page_001.json").exists()
+    assert not (
+        project / "05_v6/reconstruction_runs/page_001/pages/page_001/manifest.json"
+    ).exists()
+
+    report = assemble_v6_deck(project)
+
+    assert report["status"] == "complete"
+    assert (project / report["output"]).is_file()
+
+
+def test_assembly_rejects_sealed_page_when_manifest_is_missing(tmp_path: Path):
+    project = _project(tmp_path, 2)
+    for page_number in (1, 2):
+        body = tmp_path / f"body-{page_number}.pptx"
+        _body(body, f"editable body {page_number}")
+        finalize_reconstructed_page(
+            project, page_number=page_number, reconstructed_body=body,
+        )
+
+    page_path = project / "06_v6/pages/page_002/page.pptx"
+    page_deck = Presentation(page_path)
+    chart_data = ChartData()
+    chart_data.categories = ["A", "B"]
+    chart_data.add_series("目标", (420, 100))
+    page_deck.slides[0].shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        Cm(13), Cm(3), Cm(8), Cm(5),
+        chart_data,
+    )
+    page_deck.save(page_path)
+
+    state = load(project)
+    state["pages"][1]["selected_candidate"] = dict(state["pages"][1]["first_candidate"])
+    save(project, state)
+    receipt = _write_signed_receipt(project, 2)
+    final_report_path = project / "06_v6/pages/page_002/page.json"
+    final_report = json.loads(final_report_path.read_text(encoding="utf-8"))
+    receipt_path = project / "04_v6/images/page_002.json"
+    final_report["accepted_receipt"] = {
+        "path": receipt_path.relative_to(project).as_posix(),
+        "sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+    }
+    final_report_path.write_text(json.dumps(final_report), encoding="utf-8")
+    manifest_path = (
+        project / "05_v6/reconstruction_runs/page_002/pages/page_001/manifest.json"
+    )
+    assert not manifest_path.exists()
+    assert receipt["status"] == "accepted"
+
+    with pytest.raises(ValueError, match="sealed reconstruction manifest is missing"):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
+    source_page = Presentation(page_path)
+    assert sum(shape.has_chart for shape in source_page.slides[0].shapes) == 1
+
+
 def test_finalize_sets_whole_slide_background_and_recolors_non_emphasis_text_only(tmp_path: Path):
     project = _project(tmp_path, 1)
     body = tmp_path / "accent-body.pptx"
@@ -606,6 +676,10 @@ def test_assembly_accepts_role_specific_special_shapes_with_content_fixed_frame(
     (project / "02_v6" / "page_composition.json").write_text(
         json.dumps(composition, ensure_ascii=False), encoding="utf-8",
     )
+    state = load(project)
+    state["pages"][0]["selected_candidate"] = None
+    save(project, state)
+    (project / "04_v6/images/page_001.json").unlink()
     render_special_page(project, 1)
     body = tmp_path / "body-2.pptx"
     _body(body, "可编辑正文2")
