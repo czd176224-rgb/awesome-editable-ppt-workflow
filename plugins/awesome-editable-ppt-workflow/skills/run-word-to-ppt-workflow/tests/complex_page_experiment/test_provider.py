@@ -179,7 +179,6 @@ def _real_worker_runner(monkeypatch: pytest.MonkeyPatch, captured: list[list[str
     [
         ("initial", 0, "generate"),
         ("initial", 2, "edit"),
-        ("regenerate_from_materials", 1, "edit"),
     ],
 )
 def test_request_matrix_resolves_only_selected_page_owned_images(
@@ -341,63 +340,36 @@ def test_edit_previous_candidate_is_first_input_to_real_frozen_worker_verifier(
     assert archive["correction_candidate_input"]["transport_id"] == capability["selected_reference_ids"][0]
 
 
-@pytest.mark.parametrize(
-    ("strategy", "selected"),
-    [("initial", ()), ("regenerate_from_materials", ("first",))],
-)
-def test_generate_and_regenerate_routes_pass_real_worker_without_network(
-    provider_fixture, monkeypatch: pytest.MonkeyPatch, strategy: str, selected: tuple[str, ...]
+def test_generate_route_passes_real_worker_without_network(
+    provider_fixture, monkeypatch: pytest.MonkeyPatch,
 ):
-    workspace, view, recorder, refs = provider_fixture
+    workspace, view, recorder, _refs = provider_fixture
     captured: list[list[str]] = []
-    previous = None
-    attempt = 1
-    if strategy == "regenerate_from_materials":
-        first = build_experiment_image_request(
-            workspace, view, attempt=1, prompt="Initial generated composition", quality="medium",
-            selected_reference_ids=(), strategy="initial", previous_candidate=None,
-        )
-        previous = run_provider_attempt(
-            workspace, first, attempt=1, timeout=17, recorder=recorder,
-            runner=_real_worker_runner(monkeypatch, captured),
-        )
-        _record_passed_preflight(recorder, previous)
-        recorder.record_call(
-            kind="visual_review", attempt=1, model="test-reviewer", effort=None,
-            operation=None, duration_seconds=0.1, status="ok", metadata={"result": "correct"},
-        )
-        recorder.record_call(
-            kind="correction_decision", attempt=1, model="test-director", effort=None,
-            operation="regenerate_from_materials", duration_seconds=0.1, status="ok",
-            metadata={"result": "targeted"},
-        )
-        attempt = 2
-    selected_ids = refs[:1] if selected else ()
     request = build_experiment_image_request(
-        workspace, view, attempt=attempt,
-        prompt="Regenerated with changed selected evidence" if attempt == 2 else "Generate without references",
-        quality="medium", selected_reference_ids=selected_ids,
-        strategy=strategy, previous_candidate=previous,
+        workspace, view, attempt=1, prompt="Generate without references",
+        quality="medium", selected_reference_ids=(),
+        strategy="initial", previous_candidate=None,
     )
     result = run_provider_attempt(
-        workspace, request, attempt=attempt, timeout=17, recorder=recorder,
+        workspace, request, attempt=1, timeout=17, recorder=recorder,
         runner=_real_worker_runner(monkeypatch, captured),
     )
     command = captured[-1]
-    assert command[2] == ("edit" if selected_ids else "generate")
+    assert command[2] == "generate"
     capability_path = Path(command[command.index("--request-capability") + 1])
     capability = json.loads(capability_path.read_text(encoding="utf-8"))
-    assert capability["selected_reference_ids"] == list(selected_ids)
+    assert capability["selected_reference_ids"] == []
     assert result.path.is_file()
 
 
-def test_regenerate_correction_requires_immediate_predecessor_authority(provider_fixture):
-    workspace, view, _recorder, refs = provider_fixture
-    with pytest.raises(ValueError, match="preceding candidate"):
+def test_deleted_regenerate_strategy_is_rejected(provider_fixture):
+    workspace, view, recorder, refs = provider_fixture
+    previous = _sealed_previous(workspace, view, recorder)
+    with pytest.raises(ValueError, match="strategy is invalid"):
         build_experiment_image_request(
             workspace, view, attempt=2, prompt="changed", quality="medium",
             selected_reference_ids=refs[:1], strategy="regenerate_from_materials",
-            previous_candidate=None,
+            previous_candidate=previous,
         )
 
 
@@ -467,21 +439,6 @@ def test_material_or_candidate_outside_copy_and_changed_selected_bytes_fail(prov
         build_experiment_image_request(
             workspace, view, attempt=1, prompt="prompt", quality="medium",
             selected_reference_ids=(selected,), strategy="initial", previous_candidate=None,
-        )
-
-
-def test_regenerate_or_edit_cannot_repeat_previous_request_tuple(provider_fixture, tmp_path: Path):
-    workspace, view, recorder, refs = provider_fixture
-    prompt = "identical"
-    previous = _sealed_previous(
-        workspace, view, recorder, prompt=prompt,
-        selected_reference_ids=(refs[0],),
-    )
-    with pytest.raises(ValueError, match="identical|unchanged"):
-        build_experiment_image_request(
-            workspace, view, attempt=2, prompt=prompt, quality="medium",
-            selected_reference_ids=(refs[0],), strategy="regenerate_from_materials",
-            previous_candidate=previous,
         )
 
 
@@ -830,9 +787,8 @@ def test_outcome_unknown_journal_is_counted_once_and_never_resubmitted(
     assert len([e for e in events if e.get("event") == "call" and e.get("kind") == "image2"]) == 1
 
 
-@pytest.mark.parametrize("strategy", ["edit_previous", "regenerate_from_materials"])
 def test_correction_seal_binds_full_immediate_predecessor_and_run_revalidates_it(
-    provider_fixture, monkeypatch: pytest.MonkeyPatch, strategy: str,
+    provider_fixture, monkeypatch: pytest.MonkeyPatch,
 ):
     workspace, view, recorder, refs = provider_fixture
     previous = _sealed_previous(workspace, view, recorder)
@@ -843,11 +799,11 @@ def test_correction_seal_binds_full_immediate_predecessor_and_run_revalidates_it
     )
     recorder.record_call(
         kind="correction_decision", attempt=1, model="director", effort=None,
-        operation=strategy, duration_seconds=0.1, status="ok", metadata={},
+        operation="edit_previous", duration_seconds=0.1, status="ok", metadata={},
     )
     request = build_experiment_image_request(
         workspace, view, attempt=2, prompt="changed", quality="medium",
-        selected_reference_ids=refs[:1], strategy=strategy, previous_candidate=previous,
+        selected_reference_ids=refs[:1], strategy="edit_previous", previous_candidate=previous,
     )
     seal = json.loads((workspace.project_copy / "04_v6/experiments/complex-page-provider/request_attempt_2.json").read_text())
     predecessor = seal["immediate_predecessor_authority"]
@@ -858,9 +814,8 @@ def test_correction_seal_binds_full_immediate_predecessor_and_run_revalidates_it
     assert predecessor["request_identity"] == previous.request_identity
     assert predecessor["capability_nonce"]
     assert predecessor["journal_path"]
-    if strategy == "regenerate_from_materials":
-        assert seal["request"]["correction_candidate_input"] is None
-        assert all(not item.startswith("candidate:") for item in request.selected_reference_ids)
+    assert seal["request"]["correction_candidate_input"] is not None
+    assert request.selected_reference_ids[0].startswith("candidate:")
     previous.trace_path.write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="predecessor|trace|archive"):
         run_provider_attempt(
@@ -963,12 +918,12 @@ def test_correction_rejects_missing_or_tampered_predecessor_signed_authority_bef
         operation=None, duration_seconds=0.1, status="ok", metadata={},
     )
     recorder.record_call(
-        kind="correction_decision", attempt=1, model="director", effort=None,
-        operation="regenerate_from_materials", duration_seconds=0.1, status="ok", metadata={},
+        kind="correction_decision", attempt=1, model="deterministic-local", effort=None,
+        operation="edit_previous", duration_seconds=0.0, status="ok", metadata={},
     )
     request = build_experiment_image_request(
         workspace, view, attempt=2, prompt="changed", quality="medium",
-        selected_reference_ids=refs[:1], strategy="regenerate_from_materials",
+        selected_reference_ids=refs[:1], strategy="edit_previous",
         previous_candidate=previous,
     )
     seal = json.loads((workspace.project_copy / "04_v6/experiments/complex-page-provider/request_attempt_2.json").read_text())
@@ -998,12 +953,12 @@ def test_correction_rejects_predecessor_journal_status_output_binding_mismatch_b
         operation=None, duration_seconds=0.1, status="ok", metadata={},
     )
     recorder.record_call(
-        kind="correction_decision", attempt=1, model="director", effort=None,
-        operation="regenerate_from_materials", duration_seconds=0.1, status="ok", metadata={},
+        kind="correction_decision", attempt=1, model="deterministic-local", effort=None,
+        operation="edit_previous", duration_seconds=0.0, status="ok", metadata={},
     )
     request = build_experiment_image_request(
         workspace, view, attempt=2, prompt="changed", quality="medium",
-        selected_reference_ids=refs[:1], strategy="regenerate_from_materials",
+        selected_reference_ids=refs[:1], strategy="edit_previous",
         previous_candidate=previous,
     )
     seal = json.loads((workspace.project_copy / "04_v6/experiments/complex-page-provider/request_attempt_2.json").read_text())

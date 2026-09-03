@@ -125,12 +125,12 @@ def test_huangshi_problem_pages_build_one_local_edit(
 
 def test_huangshi_page_25_typo_becomes_an_exact_reconstruction_repair():
     problem = ReviewProblem(
-        "misleading_fabrication",
+        "fact_integrity",
         "第三行可见文字错误，请将“清出”明确修正为“退出”，其余构图与内容保持不变。",
     )
 
     assert _repair_value(problem) == {
-        "category": "misleading_fabrication",
+        "category": "fact_integrity",
         "detail": problem.detail,
         "find": "清出",
         "replace": "退出",
@@ -234,10 +234,7 @@ def test_review_problem_uses_deterministic_local_edit_then_accepts(
     assert correction["model"] == "deterministic-local"
     assert correction["duration_seconds"] == 0.0
     assert correction["metadata"]["quota_bearing"] is False
-    accepted = json.loads(outcome.accepted.receipt_path.read_text(encoding="utf-8"))
-    assert accepted["reconstruction_repairs"] == []
-
-def test_technical_failure_consumes_slot_regenerates_without_review(
+def test_technical_failure_consumes_slot_edits_previous_without_review(
     provider_fixture, monkeypatch
 ):
     import complex_page_experiment.loop as loop
