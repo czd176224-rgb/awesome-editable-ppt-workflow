@@ -13,6 +13,7 @@ import pytest
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE
+from pptx.oxml.xmlchemy import OxmlElement
 
 
 TESTS = Path(__file__).resolve().parent
@@ -30,7 +31,7 @@ from workflow_v6_reconstruction_worker import (  # noqa: E402
     PageWorkerResult,
     reconstruct_accepted_page,
 )
-from test_workflow_v6_reconstruction import _project  # noqa: E402
+from test_workflow_v6_reconstruction import _project, _write_signed_receipt  # noqa: E402
 
 
 OUTPUT = REPO / "tmp/v1.2.3-acceptance/synthetic"
@@ -52,7 +53,7 @@ def _accepted_outcome(project: Path) -> SimpleNamespace:
     return SimpleNamespace(status="accepted", accepted=SimpleNamespace(candidate=candidate))
 
 
-def _production_worker(manifest_factory, calls: list[dict]):
+def _production_worker(manifest_factory, calls: list[dict], post_build=None):
     def worker(request):
         page_request = json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
         accepted_request = json.loads((request.page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8"))
@@ -65,12 +66,15 @@ def _production_worker(manifest_factory, calls: list[dict]):
             capture_output=True, text=True, check=False,
         )
         assert dispatch.returncode == 0, dispatch.stderr
-        for command in (
+        commands = (
             [sys.executable, str(RUNTIME / "main.py"), "page", "build", str(request.page_dir)],
             [sys.executable, str(RUNTIME / "main.py"), "page", "validate", str(request.page_dir), "--report", "validation.json"],
-        ):
+        )
+        for index, command in enumerate(commands):
             completed = subprocess.run(command, capture_output=True, text=True, check=False)
             assert completed.returncode == 0, completed.stderr
+            if index == 0 and post_build is not None:
+                post_build(request.page_dir / "page.pptx")
         validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
         assert validation["passed"] is True
         calls.append({"request": page_request, "prompt": request.prompt_file.read_text(encoding="utf-8"), "manifest": manifest, "page_dir": request.page_dir})
@@ -82,6 +86,86 @@ def _production_worker(manifest_factory, calls: list[dict]):
 def _worker_chart(page_request: dict) -> dict:
     authority = page_request["numeric_authority"]
     return _manifest({"object_id": "sealed-chart", "name": "sealed-chart", "box_px": [190, 90, 1142, 620], **authority})
+
+
+def _relationship_manifest(page_request: dict) -> dict:
+    manifest = _worker_chart(page_request)
+    relationship = page_request["page_plan"]["primary_relationship"]
+    boxes = {
+        relationship["nodes"][0]["node_id"]: [80, 90, 260, 120],
+        relationship["nodes"][1]["node_id"]: [1560, 90, 260, 120],
+    }
+    manifest["shapes"] = [
+        {
+            "object_id": node_id,
+            "name": node_id,
+            "type": "rect",
+            "box_px": box,
+            "fill": "#EAF2F8",
+            "stroke": "#6B7A90",
+        }
+        for node_id, box in boxes.items()
+    ]
+    for index, edge in enumerate(relationship["edges"]):
+        start = boxes[edge["from_node"]]
+        end = boxes[edge["to_node"]]
+        manifest["shapes"].append({
+            "object_id": f"edge:{edge['from_node']}->{edge['to_node']}",
+            "name": f"edge:{edge['from_node']}->{edge['to_node']}",
+            "type": "line",
+            "points_px": [
+                start[0] + start[2] / 2,
+                start[1] + start[3] / 2 + index * 10,
+                end[0] + end[2] / 2,
+                end[1] + end[3] / 2 + index * 10,
+            ],
+            "stroke": "#6B7A90",
+        })
+    return manifest
+
+
+def _add_relationship_arrowheads(path: Path) -> None:
+    deck = Presentation(path)
+    for shape in deck.slides[0].shapes:
+        if shape.name.startswith("edge:"):
+            arrow = OxmlElement("a:tailEnd")
+            arrow.set("type", "triangle")
+            shape._element.spPr.get_or_add_ln().append(arrow)
+    deck.save(path)
+
+
+def _connector_endpoints(shape) -> tuple[int, int, int, int]:
+    xfrm = shape._element.xpath(".//a:xfrm")[0]
+    return (
+        shape.left + shape.width if xfrm.get("flipH") in {"1", "true"} else shape.left,
+        shape.top + shape.height if xfrm.get("flipV") in {"1", "true"} else shape.top,
+        shape.left if xfrm.get("flipH") in {"1", "true"} else shape.left + shape.width,
+        shape.top if xfrm.get("flipV") in {"1", "true"} else shape.top + shape.height,
+    )
+
+
+def _assert_relationship_geometry(slide, page_plan: dict) -> None:
+    named = {shape.name: shape for shape in slide.shapes}
+    relationship = page_plan["primary_relationship"]
+    assert {node["node_id"] for node in relationship["nodes"]} <= named.keys()
+
+    def inside(point: tuple[int, int], node) -> bool:
+        x, y = point
+        return (
+            node.left - 1 <= x <= node.left + node.width + 1
+            and node.top - 1 <= y <= node.top + node.height + 1
+        )
+
+    for edge in relationship["edges"]:
+        connector = named[f"edge:{edge['from_node']}->{edge['to_node']}"]
+        x1, y1, x2, y2 = _connector_endpoints(connector)
+        assert inside((x1, y1), named[edge["from_node"]])
+        assert inside((x2, y2), named[edge["to_node"]])
+        assert {
+            item.tag.rsplit("}", 1)[-1]: item.get("type")
+            for item in connector._element.spPr.get_or_add_ln()
+            if item.tag.rsplit("}", 1)[-1] in {"headEnd", "tailEnd"}
+        } == {"tailEnd": "triangle"}
 
 
 def _manifest(chart: dict) -> dict:
@@ -250,6 +334,56 @@ MATRIX = [
     ("option_comparison", _one_dimensional("options", "dot"), "comparison_table"),
     ("target_actual_variance", _one_dimensional("target", "dot", target=True), "goal_current_gap"),
 ]
+
+
+def test_final_editable_relationship_geometry_and_numeric_authority_match_sealed_request(
+    tmp_path: Path,
+) -> None:
+    project = _project(tmp_path / "relationship-and-numeric", 1)
+    receipt_path = project / "04_v6/images/page_001.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    relationship = receipt["page_plan"]["primary_relationship"]
+    relationship.update({
+        "grammar": "hierarchy",
+        "description": "Source and destination exchange a governed resource.",
+        "nodes": [
+            {"node_id": "source", "label": "Source", "fact_ids": ["body-1"]},
+            {"node_id": "destination", "label": "Destination", "fact_ids": ["body-1"]},
+        ],
+        "edges": [
+            {"from_node": "source", "to_node": "destination", "label": "feeds", "fact_ids": ["body-1"]},
+            {"from_node": "destination", "to_node": "source", "label": "returns", "fact_ids": ["body-1"]},
+        ],
+    })
+    _write_signed_receipt(project, 1, receipt)
+
+    chart = {**_one_dimensional("relationship-chart", "dot"), "relationship": "time_change"}
+    materials = project / "02_v6/page_materials/page_001.json"
+    materials.parent.mkdir(parents=True, exist_ok=True)
+    materials.write_text(json.dumps({"chart_facts": [chart]}), encoding="utf-8")
+    expected_authority = select_numeric_authority([chart])
+    assert expected_authority is not None
+
+    calls: list[dict] = []
+    result = reconstruct_accepted_page(
+        SimpleNamespace(project_copy=project, page_number=1),
+        _accepted_outcome(project),
+        page_worker=_production_worker(
+            _relationship_manifest,
+            calls,
+            post_build=_add_relationship_arrowheads,
+        ),
+    )
+
+    request = calls[0]["request"]
+    assert request["numeric_authority"] == expected_authority
+    slide = Presentation(project / result["final_page"]).slides[0]
+    _assert_relationship_geometry(slide, request["page_plan"])
+    named = {shape.name: shape for shape in slide.shapes}
+    assert named["sealed-chart Unit"].text == expected_authority["unit"]
+    assert named["sealed-chart Period"].text == expected_authority["period"]
+    assert [named[f"sealed-chart Category {index}"].text for index in (1, 2)] == ["A", "B"]
+    assert [named[f"sealed-chart Value {index}"].text for index in (1, 2)] == ["12", "18"]
 
 
 def test_nine_quantitative_cases_cover_ten_visual_marks_in_editable_pptx_and_previews() -> None:

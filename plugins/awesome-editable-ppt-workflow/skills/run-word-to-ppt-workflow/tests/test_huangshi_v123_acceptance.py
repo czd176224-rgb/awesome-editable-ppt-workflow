@@ -40,6 +40,7 @@ from workflow_v6_reconstruction import (  # noqa: E402
 )
 from workflow_v6_reconstruction_worker import PageWorkerResult, reconstruct_accepted_page  # noqa: E402
 from workflow_v6_state import create, load  # noqa: E402
+from test_workflow_v6_reconstruction import _write_signed_receipt  # noqa: E402
 
 
 DESKTOP = Path.home() / "Desktop"
@@ -267,9 +268,6 @@ def _build_project(root: Path, source: dict, logo_svg: Path) -> Path:
         candidate = {"path": image.relative_to(project).as_posix(), "attempt": 1, "operation": "generate"}
         page["first_candidate"] = dict(candidate)
         page["selected_candidate"] = dict(candidate)
-        (project / "04_v6/images" / f"page_{page_number:03d}.json").write_text(
-            json.dumps({"page_number": page_number, "selected": {**candidate, "sha256": digest}}), encoding="utf-8",
-        )
         pages.append(page)
 
     state = new_project(word_source={"path": "00_source/source.docx"}, logo_source={"path": "00_source/logo.svg"}, pages=pages)
@@ -287,6 +285,8 @@ def _build_project(root: Path, source: dict, logo_svg: Path) -> Path:
         "taskbook": taskbook, "taskbook_digest": taskbook_digest(taskbook),
     }
     create(project, state)
+    for page_number in range(1, source["page_count"] + 1):
+        _write_signed_receipt(project, page_number)
 
     paginated = {"pages": []}
     composition = {"artifact_version": "page-composition-v1", "page_count": source["page_count"], "warnings": [], "pages": []}
@@ -343,6 +343,10 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
             material_view = build_complete_page_material_view(workspace)
             value = _director_value(page_number, material_view, relationship, fallback)
             artifact = direct_page(workspace, material_view, timeout=30, invoke=lambda *_args, v=value, **_kwargs: _director_result(v))
+            receipt_path = project / "04_v6/images" / f"page_{page_number:03d}.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["page_plan"] = artifact.page_plan
+            _write_signed_receipt(project, page_number, receipt)
             director_prompts.append(artifact.actual_prompt)
             director_prompt = artifact.actual_prompt
             assert fallback in director_prompt and relationship in director_prompt
