@@ -13,7 +13,7 @@ from jsonschema import Draft202012Validator
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[2]
     / "schemas"
-    / "consulting_page_director_v2.schema.json"
+    / "consulting_page_director_v3.schema.json"
 )
 MODULE_PATH = (
     Path(__file__).resolve().parents[2]
@@ -29,18 +29,6 @@ VISUAL_DIRECTOR_REFERENCE = (
     / "visual_director.md"
 )
 
-EXPECTED_CREATIVE_FIELDS = {
-    "business_proposition",
-    "explanatory_lead",
-    "analytical_backbone",
-    "evidence_interpretation_conclusion",
-    "content_hierarchy",
-    "reading_path_and_density",
-    "takeaway_statement",
-    "supporting_visual_policy",
-    "anti_ai_visual_policy",
-}
-
 EXPECTED_PROMPT_FIELDS = {
     "task_and_canvas",
     "core_proposition_and_content",
@@ -51,18 +39,23 @@ EXPECTED_PROMPT_FIELDS = {
 }
 
 
-def test_v2_schema_defines_only_the_consulting_director_contract() -> None:
-    assert SCHEMA_PATH.is_file(), "consulting director v2 schema is missing"
+def test_v3_schema_defines_only_the_compact_consulting_director_contract() -> None:
+    assert SCHEMA_PATH.is_file(), "consulting director v3 schema is missing"
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
     Draft202012Validator.check_schema(schema)
     assert schema["properties"]["schema_version"] == {
         "type": "string",
-        "const": "awesome-consulting-page-director-v2",
+        "const": "awesome-consulting-page-director-v3",
     }
-    creative = schema["properties"]["creative_direction"]
-    assert set(creative["required"]) == EXPECTED_CREATIVE_FIELDS
-    assert set(creative["properties"]) == EXPECTED_CREATIVE_FIELDS
+    assert set(schema["required"]) == {
+        "schema_version",
+        "page_number",
+        "quality",
+        "page_plan",
+        "selected_references",
+    }
+    assert set(schema["properties"]) == set(schema["required"])
     prompt_sections = schema["$defs"]["promptSections"]
     assert set(prompt_sections["required"]) == EXPECTED_PROMPT_FIELDS
     assert set(prompt_sections["properties"]) == EXPECTED_PROMPT_FIELDS
@@ -88,9 +81,30 @@ def _load_compiler_module():
     return module
 
 
+def _word_facts() -> list[dict[str, object]]:
+    return [
+        {
+            "type": "paragraph",
+            "text": text,
+            "source_block_id": f"body-{index}",
+            "source_order": index,
+        }
+        for index, text in enumerate(
+            (
+                "Regional resources are available.",
+                "Resources enter the fund platform.",
+                "Operations support the entry path.",
+                "The source does not quantify flow volume.",
+            ),
+            start=1,
+        )
+    ]
+
+
 def _material_view(*, font_accent_allowed: bool = True):
     return SimpleNamespace(
         value={
+            "complete_word_content": _word_facts(),
             "visual_contract": {
                 "background_color": "#F7F7F7",
                 "primary_color": "#161616",
@@ -155,26 +169,29 @@ def _director_value() -> dict[str, object]:
     }
 
 
+def _correction_value() -> dict[str, object]:
+    return {
+        "schema_version": "awesome-page-correction-v2",
+        "page_number": 5,
+        "strategy": "edit_previous",
+        "problem_addressed": ["Repair the stated defect."],
+        "preserve": ["Preserve correct source facts."],
+        "selected_reference_ids": [],
+        "prompt_sections": {
+            "task_and_canvas": "Keep the existing body canvas.",
+            "core_proposition_and_content": "Preserve the source-backed proposition.",
+            "consulting_information_architecture": "Repair the stated relationship.",
+            "visual_style_and_color": "Retain the confirmed visual roles.",
+            "text_and_typography": "Keep all labels legible.",
+            "strict_prohibitions": "Do not introduce new facts.",
+        },
+    }
+
+
 def _compact_material_view():
     return SimpleNamespace(
         value={
-            "complete_word_content": [
-                {
-                    "type": "paragraph",
-                    "text": text,
-                    "source_block_id": f"body-{index}",
-                    "source_order": index,
-                }
-                for index, text in enumerate(
-                    (
-                        "Regional resources are available.",
-                        "Resources enter the fund platform.",
-                        "Operations support the entry path.",
-                        "The source does not quantify flow volume.",
-                    ),
-                    start=1,
-                )
-            ],
+            "complete_word_content": _word_facts(),
             "visual_contract": {
                 "background_color": "#F7F7F7",
                 "primary_color": "#161616",
@@ -187,12 +204,89 @@ def _compact_material_view():
     )
 
 
+def _compiled_sections(prompt: str) -> dict[str, str]:
+    headings = [line[3:] for line in prompt.splitlines() if line.startswith("## ")]
+    return {
+        heading: prompt.split(f"## {heading}\n", 1)[1].split("\n## ", 1)[0]
+        for heading in headings
+    }
+
+
 def test_compiler_builds_the_six_sections_from_the_compact_page_plan(
     record_property,
 ) -> None:
     module = _load_compiler_module()
     value = _director_value()
     material_view = _compact_material_view()
+    fact_ids = [
+        "FACT-REGIONAL-ORIGIN-SENTINEL",
+        "FACT-FUND-DESTINATION-SENTINEL",
+        "FACT-OPERATING-SUPPORT-SENTINEL",
+        "FACT-SOURCE-LIMIT-SENTINEL",
+    ]
+    for block, fact_id in zip(
+        material_view.value["complete_word_content"], fact_ids, strict=True
+    ):
+        block["source_block_id"] = fact_id
+    plan = value["page_plan"]
+    plan["page_purpose"] = "PAGE-PURPOSE-SENTINEL"
+    relationship = plan["primary_relationship"]
+    relationship.update(
+        {
+            "grammar": "causality",
+            "description": "PRIMARY-RELATIONSHIP-DESCRIPTION-SENTINEL",
+            "fact_ids": fact_ids[:2],
+            "visual_instruction": "PRIMARY-VISUAL-INSTRUCTION-SENTINEL",
+            "nodes": [
+                {
+                    "node_id": "NODE-ORIGIN-ID-SENTINEL",
+                    "label": "NODE-ORIGIN-LABEL-SENTINEL",
+                    "fact_ids": [fact_ids[0]],
+                },
+                {
+                    "node_id": "NODE-DESTINATION-ID-SENTINEL",
+                    "label": "NODE-DESTINATION-LABEL-SENTINEL",
+                    "fact_ids": [fact_ids[1]],
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "NODE-ORIGIN-ID-SENTINEL",
+                    "to_node": "NODE-DESTINATION-ID-SENTINEL",
+                    "label": "EDGE-LABEL-SENTINEL",
+                    "fact_ids": [fact_ids[1]],
+                }
+            ],
+        }
+    )
+    core = plan["core_exhibit"]
+    core.update(
+        {
+            "grammar": "geography",
+            "description": "CORE-EXHIBIT-DESCRIPTION-SENTINEL",
+            "fact_ids": fact_ids[:2],
+        }
+    )
+    plan["support_groups"] = [
+        {
+            "role": "support",
+            "label": "SUPPORT-GROUP-LABEL-SENTINEL",
+            "fact_ids": [fact_ids[2]],
+        },
+        {
+            "role": "note",
+            "label": "NOTE-GROUP-LABEL-SENTINEL",
+            "fact_ids": [fact_ids[3]],
+        },
+    ]
+    plan["reading_path"] = "READING-PATH-SENTINEL"
+    plan["local_visuals"] = [
+        {
+            "grammar": "flow",
+            "instruction": "LOCAL-VISUAL-INSTRUCTION-SENTINEL",
+            "fact_ids": [fact_ids[1]],
+        }
+    ]
 
     prompt = module.compile_consulting_six_part_prompt(
         value, material_view, font_accent_allowed=True
@@ -212,41 +306,16 @@ def test_compiler_builds_the_six_sections_from_the_compact_page_plan(
     for fact in facts:
         assert prompt.count(fact) == 1
 
-    plan = value["page_plan"]
-    assert plan["page_purpose"] in prompt
-    relationship = plan["primary_relationship"]
-    assert relationship["grammar"] in prompt
-    assert relationship["description"] in prompt
-    assert relationship["visual_instruction"] in prompt
-    for fact_id in relationship["fact_ids"]:
-        assert fact_id in prompt
-    for node in relationship["nodes"]:
-        assert node["node_id"] in prompt
-        assert node["label"] in prompt
-        for fact_id in node["fact_ids"]:
-            assert fact_id in prompt
-    for edge in relationship["edges"]:
-        assert edge["from_node"] in prompt
-        assert edge["to_node"] in prompt
-        assert edge["label"] in prompt
-        for fact_id in edge["fact_ids"]:
-            assert fact_id in prompt
-    core = plan["core_exhibit"]
-    assert core["grammar"] in prompt
-    assert core["description"] in prompt
-    for fact_id in core["fact_ids"]:
-        assert fact_id in prompt
+    sections = _compiled_sections(prompt)
+    architecture = sections["Consulting Information Architecture"]
+    assert plan["page_purpose"] in architecture
+    assert json.dumps(relationship, ensure_ascii=False, sort_keys=True) in architecture
+    assert json.dumps(core, ensure_ascii=False, sort_keys=True) in architecture
     for group in plan["support_groups"]:
-        assert group["role"] in prompt
-        assert group["label"] in prompt
-        for fact_id in group["fact_ids"]:
-            assert fact_id in prompt
-    assert plan["reading_path"] in prompt
+        assert json.dumps(group, ensure_ascii=False, sort_keys=True) in architecture
+    assert plan["reading_path"] in architecture
     for local_visual in plan["local_visuals"]:
-        assert local_visual["grammar"] in prompt
-        assert local_visual["instruction"] in prompt
-        for fact_id in local_visual["fact_ids"]:
-            assert fact_id in prompt
+        assert json.dumps(local_visual, ensure_ascii=False, sort_keys=True) in architecture
 
     positive, prohibited = module._color_constraints(
         material_view, font_accent_allowed=True
@@ -480,26 +549,9 @@ def test_compiler_legacy_mode_omits_only_the_new_page_gate() -> None:
     assert "derived shades of secondary color #CD202A" in prompt
 
 
-def test_compiler_rejects_the_legacy_six_part_shape() -> None:
-    module = _load_compiler_module()
-    value = _director_value()
-    value["prompt_sections"] = {
-        "scene_or_background": "A luminous scene.",
-        "subject_and_core_expression": "A hero object.",
-        "key_details": "Some labels.",
-        "composition_viewpoint_hierarchy_and_medium": "A cinematic view.",
-        "reference_roles_and_combination": "Use references.",
-        "preservation_and_fixed_exclusions": "Preserve facts.",
-    }
-
-    with pytest.raises(ValueError, match="consulting six-part shape"):
-        module.compile_consulting_six_part_prompt(value, _material_view())
-
-
 def test_compiler_accepts_the_v2_correction_authority() -> None:
     module = _load_compiler_module()
-    value = _director_value()
-    value["schema_version"] = "awesome-page-correction-v2"
+    value = _correction_value()
 
     prompt = module.compile_consulting_six_part_prompt(value, _material_view())
 
@@ -523,10 +575,10 @@ def test_visual_director_reference_teaches_the_consulting_report_recipe() -> Non
         assert required in text
 
 
-def test_runtime_exports_only_the_v2_compiler_and_schema() -> None:
+def test_runtime_exports_the_v3_director_schema_and_existing_compiler() -> None:
     from complex_page_experiment import director
 
-    assert director.SCHEMA.name == "consulting_page_director_v2.schema.json"
+    assert director.SCHEMA.name == "consulting_page_director_v3.schema.json"
     assert hasattr(director, "compile_consulting_six_part_prompt")
     assert not hasattr(director, "compile_six_part_prompt")
     assert not (
@@ -536,7 +588,9 @@ def test_runtime_exports_only_the_v2_compiler_and_schema() -> None:
     ).exists()
 
 
-def test_initial_director_and_correction_schema_use_the_v2_shape(tmp_path: Path) -> None:
+def test_initial_director_uses_v3_while_correction_retains_v2_sections(
+    tmp_path: Path,
+) -> None:
     from complex_page_experiment.director import _correction_schema, direct_page
     from test_director import _material_view as runtime_material_view
     from test_director import _result, _workspace
@@ -553,7 +607,8 @@ def test_initial_director_and_correction_schema_use_the_v2_shape(tmp_path: Path)
         invoke=lambda *args, **kwargs: _result(value),
     )
 
-    assert artifact.value["schema_version"] == "awesome-consulting-page-director-v2"
+    assert artifact.value["schema_version"] == "awesome-consulting-page-director-v3"
+    assert artifact.page_plan == value["page_plan"]
     assert "## Task and Canvas" in artifact.actual_prompt
     assert "## Strict Prohibitions" in artifact.actual_prompt
     correction_sections = _correction_schema()["properties"]["prompt_sections"]
