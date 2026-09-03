@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v3-compact-page-plan",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "bd6cb3cb58fcf1657b37377482065cada03ecaaeb8878422dd9f642a567d75da",
+  "sourceManifestSha256": "5b34fed2cf860de5bcc333db474fa10455113c2e5d78d1830070e785fc888e38",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -843,8 +843,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_image.py",
-      "bytes": 68520,
-      "sha256": "280b04a1450bb626f5c3ba2d7b3aeb10878f2277c29ead3c14c2292b0450c6ad"
+      "bytes": 68465,
+      "sha256": "a91b78a43ddf0979f6a9e48f945d2e504782312994261176c0b28fb89eadcf8d"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_materials.py",
@@ -1023,8 +1023,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_image_request.py",
-      "bytes": 38029,
-      "sha256": "77431d2a2f91bb24193a1d3b33e33cb59909bb59c37562df90c14a6c8650a957"
+      "bytes": 40405,
+      "sha256": "58cefc76ce8c8e2ae62aca6d0e9ca001db978fb5f4bc5fd7c3bf5c39276a02ea"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_awesome_live_creative_page.py",
@@ -1173,8 +1173,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_secure_io.py",
-      "bytes": 11088,
-      "sha256": "44b21ef9419fe69fa4bb8e9c534a91ad931dd866d09b8ef701f871b323768873"
+      "bytes": 10742,
+      "sha256": "b33429e50e7ed597a0ba492cf7180f79f6680fad7bcd2bbe328294be603654d1"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_workflow_v6_source.py",
@@ -1203,8 +1203,8 @@
     },
     {
       "path": "public-source-manifest.json",
-      "bytes": 48581,
-      "sha256": "bd6cb3cb58fcf1657b37377482065cada03ecaaeb8878422dd9f642a567d75da"
+      "bytes": 44642,
+      "sha256": "5b34fed2cf860de5bcc333db474fa10455113c2e5d78d1830070e785fc888e38"
     },
     {
       "path": "README.md",
