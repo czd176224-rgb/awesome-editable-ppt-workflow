@@ -926,6 +926,10 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
                 or receipt_path.is_file()
             ):
                 raise ValueError("V6 sealed reconstruction manifest is missing")
+            if any(shape.has_chart for shape in Presentation(pages[page_number - 1]).slides[0].shapes):
+                raise ValueError(
+                    "V6 manifestless native-direct page contains an undeclared native chart"
+                )
             normalized = {"charts": []}
         if page_number == 1:
             normalized["charts"] = []

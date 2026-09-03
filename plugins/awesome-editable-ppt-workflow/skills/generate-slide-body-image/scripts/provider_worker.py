@@ -19,6 +19,10 @@ import sys
 import time
 from urllib import error, request
 from urllib.parse import urlsplit
+
+WORKFLOW_SCRIPTS = Path(__file__).resolve().parents[2] / "run-word-to-ppt-workflow" / "scripts"
+if str(WORKFLOW_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(WORKFLOW_SCRIPTS))
 from provider_keyring import verification_key
 
 

@@ -460,6 +460,32 @@ def test_assembly_allows_manifestless_genuine_native_direct_page(tmp_path: Path)
     assert (project / report["output"]).is_file()
 
 
+def test_assembly_rejects_manifestless_page_2_native_chart_before_output(tmp_path: Path):
+    project = _project(tmp_path, 2)
+    for page_number in (1, 2):
+        body = tmp_path / f"native-direct-{page_number}.pptx"
+        _body(body, f"native-direct editable body {page_number}")
+        finalize_reconstructed_page(project, page_number=page_number, reconstructed_body=body)
+
+    page_path = project / "06_v6/pages/page_002/page.pptx"
+    page_deck = Presentation(page_path)
+    chart_data = ChartData()
+    chart_data.categories = ["A", "B"]
+    chart_data.add_series("目标", (420, 100))
+    page_deck.slides[0].shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        Cm(13), Cm(3), Cm(8), Cm(5),
+        chart_data,
+    )
+    page_deck.save(page_path)
+
+    with pytest.raises(ValueError, match="manifestless native-direct page contains an undeclared native chart"):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
+    assert sum(shape.has_chart for shape in Presentation(page_path).slides[0].shapes) == 1
+
+
 def test_assembly_rejects_sealed_page_when_manifest_is_missing(tmp_path: Path):
     project = _project(tmp_path, 2)
     for page_number in (1, 2):

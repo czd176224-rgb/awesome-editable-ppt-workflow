@@ -580,7 +580,7 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
     if legacy_director.exists() and not v2_director.exists():
         raise ValueError(
             "unfinished v1 page cannot reuse its legacy director or candidates; "
-            "restart this page from the consulting director v2 in a fresh page run"
+            "restart this page from the compact consulting director v3 in a fresh page run"
         )
     failed = _load_failed_outcome(workspace, recorder)
     if failed is not None:

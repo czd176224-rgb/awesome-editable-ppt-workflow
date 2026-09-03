@@ -1,4 +1,4 @@
-"""Private capability signing keyring with one bounded previous key."""
+"""Shared packaged capability signing keyring with one bounded previous key."""
 from __future__ import annotations
 
 import hashlib, hmac, json, os, secrets, stat, subprocess, sys, time

@@ -370,7 +370,7 @@ def test_recovery_happens_before_material_access_and_skips_every_call(
     ]
 
 
-def test_unfinished_v1_director_state_requires_clean_v2_page_restart_before_any_call(
+def test_unfinished_v1_director_state_requires_clean_v3_page_restart_before_any_call(
     provider_fixture,
 ):
     workspace, view, recorder, _refs = provider_fixture
@@ -382,7 +382,7 @@ def test_unfinished_v1_director_state_requires_clean_v2_page_restart_before_any_
 
     with pytest.raises(
         ValueError,
-        match="unfinished v1 page.*restart this page from the consulting director v2",
+        match="unfinished v1 page.*restart this page from the compact consulting director v3",
     ):
         run_candidate_loop(
             workspace,
