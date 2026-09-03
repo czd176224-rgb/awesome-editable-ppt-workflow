@@ -48,17 +48,42 @@ WORD = DESKTOP / "黄石市产业创新与母基金专业化管理合作建议_P
 LOGO = DESKTOP / "尚融logo.png"
 WORD_SHA256 = "519FC2C5DAA0B4A2E65954E6FA20DF461E04587749C69AFB5952C6535A4A4A11"
 LOGO_SHA256 = "9681840BACFBA51E87E47D687C1CA1F9C542F9C235577280447E96070726BCF0"
-SELECTED = (5, 10, 14, 20, 21, 40)
+SELECTED = (5, 10, 14, 20, 21, 31, 40, 41)
 OUTPUT = REPO / "tmp/v1.2.3-acceptance/huangshi"
 PREVIEW_FONT = str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts/msyh.ttc")
 
 PAGE_CONTRACTS = {
-    5: ("option_comparison", "comparison_table", ("科技成果40余项", "举办活动35场", "项目和人才团队30余个", "推动7个项目注册落地")),
-    10: ("target_actual_variance", "goal_current_gap", ("420亿元", "100亿元", "450家", "100个以上", "50家", "3—5家")),
-    14: ("project_stage_time", "roadmap_milestones", ("项目发现", "技术评价", "商业验证", "中试放大", "落地承接", "成长赋能", "并购退出")),
-    20: ("market_size_share", "equal_width_hierarchy", ("1+4+N", "产业发展基金", "天使类", "科创类", "产业类", "专项类", "N只细分子基金")),
-    21: ("option_comparison", "comparison_table", ("总规模百亿元", "总投资68.2亿元", "没有完整披露")),
-    40: ("project_stage_time", "roadmap_milestones", ("0—30天", "31—60天", "61—90天", "12个月")),
+    5: ("geography", ("武汉", "上海", "深圳", "北京", "黄石")),
+    10: ("quantitative_chart", ("420亿元", "100亿元", "450家", "100个以上", "50家", "3—5家")),
+    14: ("flow", ("项目发现", "技术评价", "商业验证", "中试放大", "落地承接", "成长赋能", "并购退出")),
+    20: ("hierarchy", ("1+4+N", "产业发展基金", "天使类", "科创类", "产业类", "专项类", "N只细分子基金")),
+    21: ("causality", ("总规模百亿元", "总投资68.2亿元", "没有完整披露")),
+    31: ("composition_architecture", ("产业研究与创新导入", "母基金管理", "项目与并购", "能源/AI及颠覆性技术", "专业服务")),
+    40: ("flow", ("0—30天", "31—60天", "61—90天", "12个月")),
+    41: ("analytical_table", ("资本形成", "产业投资", "科技转化", "企业成长", "绿色转型", "退出循环")),
+}
+
+STRUCTURAL_RELATIONSHIPS = {
+    5: (
+        (("external-centres", "武汉、上海、深圳、北京", ("word-block-000053",)), ("local-growth", "本地产业增量", ("word-block-000052",))),
+        (("external-centres", "local-growth", "资源转化", ("word-block-000052", "word-block-000053")),),
+    ),
+    14: (
+        tuple((f"stage-{index}", label, ("word-block-000125",)) for index, label in enumerate(PAGE_CONTRACTS[14][1], start=1)),
+        tuple((f"stage-{index}", f"stage-{index + 1}", None, ("word-block-000125",)) for index in range(1, 7)),
+    ),
+    20: (
+        (("mother-fund", "政府投资母基金", ("word-block-000166",)), ("angel", "天使类", ("word-block-000166",)), ("innovation", "科创类", ("word-block-000166",)), ("industry", "产业类", ("word-block-000166",)), ("special", "专项类", ("word-block-000166",)), ("subfunds", "N只细分子基金", ("word-block-000166",))),
+        tuple(("mother-fund", child, None, ("word-block-000166",)) for child in ("angel", "innovation", "industry", "special", "subfunds")),
+    ),
+    21: (
+        (("operating-evidence", "已经进入基金和项目落地阶段", ("word-block-000172", "word-block-000173", "word-block-000174", "word-block-000175", "word-block-000176")), ("disclosure-gap", "没有完整披露", ("word-block-000179",)), ("cautious-judgment", "专业化、市场化运营能力仍有进一步提升空间", ("word-block-000179",))),
+        (("operating-evidence", "cautious-judgment", "支持判断", ("word-block-000173", "word-block-000174", "word-block-000175", "word-block-000176", "word-block-000179")), ("disclosure-gap", "cautious-judgment", "约束判断", ("word-block-000179",))),
+    ),
+    40: (
+        (("days-0-30", "0—30天", ("word-block-000338",)), ("days-31-60", "31—60天", ("word-block-000338",)), ("days-61-90", "61—90天", ("word-block-000338",)), ("month-12", "12个月", ("word-block-000340", "word-block-000341", "word-block-000342", "word-block-000343", "word-block-000344", "word-block-000345", "word-block-000346"))),
+        (("days-0-30", "days-31-60", None, ("word-block-000338",)), ("days-31-60", "days-61-90", None, ("word-block-000338",)), ("days-61-90", "month-12", None, ("word-block-000338", "word-block-000340"))),
+    ),
 }
 
 
@@ -88,8 +113,6 @@ def _production_worker(manifest: dict, calls: list[dict], director_prompt: str |
         accepted_request = json.loads((request.page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8"))
         assert page_request == json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
         assert page_request.get("numeric_authority") == accepted_request.get("numeric_authority")
-        if director_prompt is not None:
-            assert "exact eight-row dual-mode relationship mapping" in director_prompt
         manifest_path = request.page_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         dispatch = subprocess.run(
@@ -144,53 +167,47 @@ def _style() -> dict:
 def _director_value(
     page_number: int,
     material_view,
-    relationship: str,
-    fallback: str,
+    grammar: str,
 ) -> dict:
     fact_ids = [
         str(block["source_block_id"])
         for block in material_view.value["complete_word_content"]
     ]
-    grammar = {
-        "option_comparison": "analytical_table",
-        "target_actual_variance": "composition_architecture",
-        "project_stage_time": "flow",
-        "market_size_share": "hierarchy",
-    }[relationship]
-    structural = grammar in {"flow", "hierarchy"}
+    relationship = STRUCTURAL_RELATIONSHIPS.get(page_number, ((), ()))
     nodes = [
-        {"node_id": f"fact-{index}", "label": f"Source fact {index}", "fact_ids": [fact_id]}
-        for index, fact_id in enumerate(fact_ids, start=1)
-    ] if structural else []
+        {"node_id": node_id, "label": label, "fact_ids": list(node_fact_ids)}
+        for node_id, label, node_fact_ids in relationship[0]
+    ]
     edges = [
         {
-            "from_node": f"fact-{index}",
-            "to_node": f"fact-{index + 1}",
-            "fact_ids": [fact_ids[index]],
+            "from_node": from_node,
+            "to_node": to_node,
+            **({"label": label} if label else {}),
+            "fact_ids": list(edge_fact_ids),
         }
-        for index in range(1, len(fact_ids))
-    ] if structural else []
+        for from_node, to_node, label, edge_fact_ids in relationship[1]
+    ]
     return {
         "schema_version": "awesome-consulting-page-director-v3",
         "page_number": page_number,
         "quality": "high",
         "page_plan": {
-            "page_purpose": "Present the selected source facts without inventing quantitative geometry.",
+            "page_purpose": "Present the complete source page through one source-bound main relationship.",
             "primary_relationship": {
                 "grammar": grammar,
-                "description": f"Use the {fallback} qualitative substitute for {relationship} because numeric dimensions are incomplete.",
+                "description": f"Use one {grammar} relationship grounded only in the mapped Word facts.",
                 "fact_ids": fact_ids,
-                "visual_instruction": f"Express {relationship} through the {fallback} structure with source facts mapped to its visible parts.",
+                "visual_instruction": f"Express the {grammar} relationship with source facts mapped to its visible parts.",
                 "nodes": nodes,
                 "edges": edges,
             },
             "core_exhibit": {
                 "grammar": grammar,
-                "description": f"A source-bound {fallback} exhibit.",
+                "description": f"One source-bound {grammar} exhibit.",
                 "fact_ids": fact_ids,
             },
             "support_groups": [],
-            "reading_path": "Read the source facts through the named relationship and qualitative substitute.",
+            "reading_path": "Read the complete source facts through the single main relationship.",
             "local_visuals": [],
         },
         "selected_references": [],
@@ -207,7 +224,34 @@ def _director_result(value: dict) -> CodexStructuredResult:
     )
 
 
-def _manifest(source_page: int, fallback: str, labels: tuple[str, ...]) -> dict:
+def _chart_fact(page_number: int, source_page: dict, source_text: str, grammar: str) -> dict:
+    if page_number == 10:
+        return {
+            "title": "2030年产业增加值目标",
+            "relationship": "target_by_industry",
+            "rendering_primitive": "column_bar",
+            "chart_variant": "bar",
+            "unit": "亿元",
+            "basis": "2030年产业增加值目标",
+            "period": "2030年",
+            "source_wording": source_page["blocks"][5]["text"],
+            "series": [{
+                "name": "产业增加值目标",
+                "categories": ["数字经济核心产业", "通用人工智能产业"],
+                "values": [420, 100],
+            }],
+        }
+    return {
+        "title": source_page["blocks"][1]["text"],
+        "relationship": grammar,
+        "source_wording": source_text,
+        "disabled_primitive": "quantitative_encoding",
+        "fallback": grammar,
+        "series": [],
+    }
+
+
+def _manifest(source_page: int, grammar: str, labels: tuple[str, ...]) -> dict:
     if source_page == 10:
         boxes = [(0.65 + column * 3.1, 1.35 + row * 1.65, 2.75, 1.1) for row in range(2) for column in range(3)]
     elif source_page == 20:
@@ -238,12 +282,12 @@ def _manifest(source_page: int, fallback: str, labels: tuple[str, ...]) -> dict:
         "text_inventory": [], "visual_inventory": [], "background_strategy": "native white body background",
         "quality_checks": {"font_size_calibrated": True, "visual_inventory_matched": True, "background_strategy_checked": True, "shape_corner_geometry_checked": True},
         "text_boxes": [
-            {"object_id": f"page-{source_page}-{fallback}-label-{index}", "name": f"page-{source_page}-{fallback}-label-{index}", "box_px": _box_px(x + 0.08, y + 0.15, w - 0.16, min(0.7, h - 0.2)), "text": label, "font_size": 12, "preview_font": PREVIEW_FONT, "align": "center"}
+            {"object_id": f"page-{source_page}-{grammar}-label-{index}", "name": f"page-{source_page}-{grammar}-label-{index}", "box_px": _box_px(x + 0.08, y + 0.15, w - 0.16, min(0.7, h - 0.2)), "text": label, "font_size": 12, "preview_font": PREVIEW_FONT, "align": "center"}
             for index, (label, (x, y, w, h)) in enumerate(zip(labels, boxes, strict=True))
         ],
         "tables": [],
         "shapes": [
-            {"object_id": f"page-{source_page}-{fallback}-node-{index}", "name": f"page-{source_page}-{fallback}-node-{index}", "type": "rect", "box_px": _box_px(x, y, w, h), "fill": "#EAF2F8", "stroke": "#6B7A90"}
+            {"object_id": f"page-{source_page}-{grammar}-node-{index}", "name": f"page-{source_page}-{grammar}-node-{index}", "type": "rect", "box_px": _box_px(x, y, w, h), "fill": "#EAF2F8", "stroke": "#6B7A90"}
             for index, (x, y, w, h) in enumerate(boxes)
         ] + connectors,
         "images": [], "charts": [], "asset_provenance": [],
@@ -330,33 +374,59 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
     svg.write_text(f'<svg xmlns="http://www.w3.org/2000/svg" width="220" height="46"><image width="220" height="46" href="data:image/png;base64,{encoded_logo}"/></svg>', encoding="utf-8")
     project = _build_project(tmp_path, source, svg)
     source_pages = {page["page_number"]: page for page in source["pages"]}
+    composition = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
+    page_mapping = {page["output_page_number"]: page["source_page_number"] for page in composition["pages"]}
+    assert {page_number: page_mapping[page_number] for page_number in SELECTED} == {
+        page_number: page_number for page_number in SELECTED
+    }
     director_prompts = []
+    director_artifacts = {}
     worker_calls: list[dict] = []
 
     for page_number, source_page in source_pages.items():
         director_prompt = None
         if page_number in SELECTED:
-            relationship, fallback, labels = PAGE_CONTRACTS[page_number]
+            grammar, labels = PAGE_CONTRACTS[page_number]
             source_text = _page_text(source_page)
             assert all(label in source_text for label in labels)
             workspace = open_live_page_workspace(project, page_number)
             material_view = build_complete_page_material_view(workspace)
-            value = _director_value(page_number, material_view, relationship, fallback)
+            _title, title_source_id = _page_title(source_page)
+            source_ids = [
+                block["source_block_id"] for block in source_page["blocks"]
+                if block["source_block_id"] != title_source_id
+            ]
+            assert material_view.value["page_number"] == page_number
+            assert [block["source_block_id"] for block in material_view.value["complete_word_content"]] == source_ids
+            value = _director_value(page_number, material_view, grammar)
             artifact = direct_page(workspace, material_view, timeout=30, invoke=lambda *_args, v=value, **_kwargs: _director_result(v))
+            plan = artifact.page_plan
+            assert plan["primary_relationship"]["grammar"] == grammar
+            assert plan["core_exhibit"]["grammar"] == grammar
+            assert plan["primary_relationship"]["fact_ids"] == source_ids
+            assert plan["core_exhibit"]["fact_ids"] == source_ids
+            assert not plan["support_groups"]
+            assert artifact.actual_prompt.count("## ") == 6
+            assert grammar in artifact.actual_prompt
+            assert all(source_id in artifact.actual_prompt for source_id in source_ids)
             receipt_path = project / "04_v6/images" / f"page_{page_number:03d}.json"
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-            receipt["page_plan"] = artifact.page_plan
+            receipt["page_plan"] = plan
             _write_signed_receipt(project, page_number, receipt)
             director_prompts.append(artifact.actual_prompt)
+            director_artifacts[page_number] = artifact
             director_prompt = artifact.actual_prompt
-            assert fallback in director_prompt and relationship in director_prompt
-            qualitative = {"title": source_page["blocks"][1]["text"], "relationship": relationship, "source_wording": source_text, "disabled_primitive": "quantitative_encoding", "fallback": fallback, "series": []}
             materials = project / "02_v6/page_materials" / f"page_{page_number:03d}.json"
             materials.parent.mkdir(parents=True, exist_ok=True)
-            materials.write_text(json.dumps({"chart_facts": [qualitative]}, ensure_ascii=False), encoding="utf-8")
+            chart_fact = _chart_fact(page_number, source_page, source_text, grammar)
+            materials.write_text(json.dumps({"chart_facts": [chart_fact]}, ensure_ascii=False), encoding="utf-8")
             reconstruction_request = build_reconstruction_request(project, page_number=page_number)
-            assert "numeric_authority" not in reconstruction_request
-            manifest = _manifest(page_number, fallback, labels)
+            if page_number == 10:
+                assert reconstruction_request["numeric_authority"] == chart_fact
+            else:
+                assert "numeric_authority" not in reconstruction_request
+            assert reconstruction_request["page_plan"] == plan
+            manifest = _manifest(page_number, grammar, labels)
         else:
             manifest = _manifest(page_number, "source_page", (source_page["blocks"][2].get("text", "Source page"),))
         sealed_request = build_reconstruction_request(project, page_number=page_number)
@@ -376,27 +446,28 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
     shutil.copy2(project / assembly["output"], deck_path)
     deck = Presentation(deck_path)
     assert len(deck.slides) == 42
+    assert set(director_artifacts) == set(SELECTED)
+    assert {artifact.page_plan["primary_relationship"]["grammar"] for artifact in director_artifacts.values()} == {
+        "analytical_table", "flow", "hierarchy", "geography", "causality", "quantitative_chart", "composition_architecture",
+    }
     assert all(not any(shape.has_chart for shape in slide.shapes) for slide in deck.slides)
     for source_number in SELECTED:
         slide = deck.slides[source_number - 1]
-        fallback = PAGE_CONTRACTS[source_number][1]
+        grammar, labels = PAGE_CONTRACTS[source_number]
         by_name = {shape.name: shape for shape in slide.shapes}
         names = set(by_name)
         assert "fixed-frame-logo" in names
-        assert any(fallback in name for name in names)
+        assert any(grammar in name for name in names)
         assert not any(term in name.casefold() for name in names for term in ("axis", "gantt", "mekko", "target line", "difference arrow"))
         slide_text = "\n".join(shape.text for shape in slide.shapes if getattr(shape, "has_text_frame", False))
-        assert all(label in slide_text for label in PAGE_CONTRACTS[source_number][2])
+        assert all(label in slide_text for label in labels)
         assert by_name["fixed-frame-title"].text == source_pages[source_number]["blocks"][1]["text"]
         assert by_name["fixed-frame-page-number"].text == str(source_number)
-        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{fallback}-label-")]
-        nodes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{fallback}-node-")]
-        assert len(label_shapes) == len(PAGE_CONTRACTS[source_number][2])
+        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{grammar}-label-")]
+        nodes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{grammar}-node-")]
+        assert len(label_shapes) == len(labels)
         assert all(shape.has_text_frame for shape in label_shapes)
         assert len(nodes) == len(label_shapes)
-        if source_number in {5, 10}:
-            assert len({shape.width for shape in nodes}) == len({shape.height for shape in nodes}) == 1
-            assert len({shape.width * shape.height for shape in nodes}) == 1
         if source_number == 14:
             assert len(nodes) == 7
             assert len({shape.width for shape in nodes}) == len({shape.top for shape in nodes}) == 1
@@ -426,14 +497,15 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
         assert all(term not in slide_xml.lower() for term in (b"axis", b"area", b"bubble", b"target line", b"difference arrow"))
     assert svg.read_bytes() in embedded_svg
     assert encoded_logo.encode("ascii") in svg.read_bytes()
-    assert all("exact eight-row dual-mode relationship mapping" in prompt and "numeric axes" in prompt for prompt in director_prompts)
+    assert all("source facts mapped to its visible parts" in prompt and "numeric axes" in prompt for prompt in director_prompts)
 
     findings = {
-        "unsupported_from_real_manuscript": ["line", "scatter", "bubble", "waterfall", "true_mekko"],
-        "reason": "selected manuscript pages do not supply the complete comparable dimensions required for these quantitative encodings",
+        "covered_grammars": {str(page): PAGE_CONTRACTS[page][0] for page in SELECTED},
+        "unsupported_quantitative_primitives": ["line", "scatter", "bubble", "waterfall", "true_mekko"],
+        "reason": "the selected source facts support one bar comparison on page 10, but not the other quantitative primitives",
         "production_path": ["extract_docx_pages.extract", "build_complete_page_material_view", "direct_page", "build_reconstruction_request", "write_pptx", "finalize_reconstructed_page", "assemble_v6_deck"],
         "optional_preview": "set EDITPPT_OPTIONAL_OFFICECLI_VALIDATION=1 and run the optional assembled-preview test",
-        "remaining_limitations": ["external Image2 and director model calls are deterministic boundary stubs in this controlled acceptance"],
+        "remaining_limitations": ["external Image2 and director model calls are deterministic boundary stubs; this test proves contracts and production plumbing, not generated aesthetics"],
     }
     (OUTPUT / "acceptance-findings.json").write_text(json.dumps(findings, ensure_ascii=False, indent=2), encoding="utf-8")
     assert all(page["state"] == "page_complete" for page in load(project)["pages"])
@@ -467,9 +539,9 @@ def test_huangshi_optional_assembled_powerpoint_preview(tmp_path: Path) -> None:
         preview_path.parent.mkdir(parents=True, exist_ok=True)
         preview.save(preview_path)
         by_name = {shape.name: shape for shape in slide.shapes}
-        fallback = PAGE_CONTRACTS[source_number][1]
+        grammar = PAGE_CONTRACTS[source_number][0]
         assert _preview_has_ink(preview, by_name["fixed-frame-title"], deck.slide_width, deck.slide_height)
         assert _preview_has_ink(preview, by_name["fixed-frame-logo"], deck.slide_width, deck.slide_height)
         assert _preview_has_ink(preview, by_name["fixed-frame-page-number"], deck.slide_width, deck.slide_height)
-        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{fallback}-label-")]
+        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{grammar}-label-")]
         assert all(_preview_has_ink(preview, shape, deck.slide_width, deck.slide_height) for shape in label_shapes)
