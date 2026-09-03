@@ -19,9 +19,13 @@ from test_workflow_v6_reconstruction import _body, _project, _write_signed_recei
 from workflow_v6_reconstruction import (  # noqa: E402
     assemble_v6_deck,
     build_reconstruction_request,
-    finalize_reconstructed_page,
+    finalize_reconstructed_page as _finalize_reconstructed_page,
 )
 from workflow_v6_state import load, save  # noqa: E402
+
+
+def finalize_reconstructed_page(*args, **kwargs):
+    return _finalize_reconstructed_page(*args, authority_mode="native_direct", **kwargs)
 
 
 def _remove_transient_pre_acceptance_inputs(project: Path) -> None:

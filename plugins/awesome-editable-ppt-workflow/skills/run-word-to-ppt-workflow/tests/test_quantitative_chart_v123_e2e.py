@@ -498,6 +498,34 @@ def test_finalization_rejects_missing_numeric_label_unit_or_period(
         )
 
 
+@pytest.mark.parametrize("missing", [
+    "accepted_reconstruction_request.json", "manifest.json",
+])
+def test_finalization_fails_closed_when_sealed_worker_artifact_is_missing(
+    tmp_path: Path, missing: str,
+) -> None:
+    project, _receipt = _relationship_project(tmp_path / missing.removesuffix(".json"))
+
+    def remove_authority(path: Path) -> None:
+        deck = Presentation(path)
+        node = next(item for item in deck.slides[0].shapes if item.name == "destination")
+        node._element.getparent().remove(node._element)
+        deck.save(path)
+        (path.parent / missing).unlink()
+
+    with pytest.raises(ValueError, match="sealed reconstruction"):
+        reconstruct_accepted_page(
+            SimpleNamespace(project_copy=project, page_number=1),
+            _accepted_outcome(project),
+            page_worker=_production_worker(
+                _relationship_manifest,
+                [],
+                post_build=_add_relationship_arrowheads,
+                post_validate=remove_authority,
+            ),
+        )
+
+
 def test_nine_quantitative_cases_cover_ten_visual_marks_in_editable_pptx_and_previews() -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     entries = []

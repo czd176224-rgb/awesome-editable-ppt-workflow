@@ -60,7 +60,9 @@ def _successful_worker(calls: list, text: str = "Editable worker output"):
         calls.append(request)
         body = request.page_dir / "worker-body.pptx"
         _body(body, text)
-        return PageWorkerResult(status="completed", reconstructed_body=body)
+        return PageWorkerResult(
+            status="completed", reconstructed_body=body, authority_mode="native_direct",
+        )
 
     return invoke
 
@@ -162,7 +164,9 @@ def test_page_worker_request_copies_numeric_authority_before_whole_request_hash(
         assert completed.returncode == 0, completed.stderr
         body = request.page_dir / "numeric-authority.pptx"
         _body(body, "Numeric authority")
-        return PageWorkerResult(status="completed", reconstructed_body=body)
+        return PageWorkerResult(
+            status="completed", reconstructed_body=body, authority_mode="native_direct",
+        )
 
     reconstruct_accepted_page(
         _workspace(project), _accepted_outcome(project), page_worker=worker,
@@ -282,7 +286,9 @@ def test_unreadable_text_uses_paddle_once_then_same_page_worker(tmp_path: Path):
             )
         body = request.page_dir / "paddle-assisted.pptx"
         _body(body, "Paddle assisted editable output")
-        return PageWorkerResult(status="completed", reconstructed_body=body)
+        return PageWorkerResult(
+            status="completed", reconstructed_body=body, authority_mode="native_direct",
+        )
 
     def paddle(request):
         paddle_calls.append(request)

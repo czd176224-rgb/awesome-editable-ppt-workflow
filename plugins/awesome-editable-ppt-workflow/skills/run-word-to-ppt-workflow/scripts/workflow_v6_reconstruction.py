@@ -616,14 +616,40 @@ def _inside(point: tuple[int, int], shape: object) -> bool:
 
 
 def _require_final_authority(
-    root: Path, page_number: int, reconstructed_body: Path, deck: Presentation,
+    root: Path,
+    page_number: int,
+    reconstructed_body: Path,
+    deck: Presentation,
+    authority_mode: str,
 ) -> Mapping[str, Any] | None:
     """Verify sealed worker authority before the host publishes the editable page."""
+    if authority_mode == "native_direct":
+        receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
+        if not receipt_path.is_file():
+            page = _load_reconstruction_state(root)["pages"][page_number - 1]
+            if page.get("state") not in {"accepted", "reconstructing", "page_complete"} or page.get(
+                "selected_candidate"
+            ) is not None:
+                raise ValueError("V6 native-direct acceptance authority is missing")
+            return None
+        receipt_bytes = secure_io.read_bytes(root, receipt_path.relative_to(root))
+        receipt = verify_signed_acceptance_receipt(
+            open_live_page_workspace(root, page_number), receipt_bytes,
+        )
+        if receipt.get("page_number") != page_number:
+            raise ValueError("V6 native-direct acceptance authority is invalid")
+        return {
+            "path": receipt_path.relative_to(root).as_posix(),
+            "sha256": hashlib.sha256(receipt_bytes).hexdigest(),
+        }
+    if authority_mode != "sealed_reconstruction":
+        raise ValueError("V6 finalization authority mode is invalid")
     request_path = reconstructed_body.parent / "accepted_reconstruction_request.json"
     manifest_path = reconstructed_body.parent / "manifest.json"
-    # Direct native finalization predates the manifest worker boundary.
     if not request_path.is_file():
-        return None
+        raise ValueError("V6 sealed reconstruction request is missing")
+    if not manifest_path.is_file():
+        raise ValueError("V6 sealed reconstruction manifest is missing")
     request = _read_json(request_path)
     accepted = request.get("accepted_receipt")
     if not isinstance(accepted, Mapping) or accepted.get("path") != (
@@ -643,9 +669,6 @@ def _require_final_authority(
         or request.get("page_plan") != receipt.get("page_plan")
     ):
         raise ValueError("V6 sealed acceptance receipt relationship is invalid")
-    # Test-only injected workers may omit runtime artifacts; the production worker cannot.
-    if not manifest_path.is_file():
-        return accepted
     canonical_request = _read_json(
         root / "05_v6" / "reconstruction_requests" / f"page_{page_number:03d}.json"
     )
@@ -733,7 +756,11 @@ def _require_final_authority(
 
 
 def finalize_reconstructed_page(
-    project: Path, *, page_number: int, reconstructed_body: Path
+    project: Path,
+    *,
+    page_number: int,
+    reconstructed_body: Path,
+    authority_mode: str = "sealed_reconstruction",
 ) -> dict[str, Any]:
     secure_io.reject_reparse_chain(Path(project))
     root = Path(project).resolve()
@@ -746,7 +773,7 @@ def finalize_reconstructed_page(
         raise ValueError("V6 reconstructed body must contain exactly one slide")
     _validate_reconstructed_text_repairs(root, page_number, opened)
     accepted_receipt = _require_final_authority(
-        root, page_number, reconstructed_body, opened,
+        root, page_number, reconstructed_body, opened, authority_mode,
     )
     page_index = page_number - 1
     page = state["pages"][page_index]

@@ -589,6 +589,16 @@ def test_dot_readback_rejects_changed_title(tmp_path: Path) -> None:
     assert any(item["field"] == "charts[0].title" for item in violations)
 
 
+def test_dot_readback_accepts_integral_float_value_labels(tmp_path: Path) -> None:
+    chart = _one_dimensional("dot")
+    chart["series"][0]["values"] = [12.0, 18.0]
+    manifest = _manifest(chart)
+    out = tmp_path / "dot-integral-floats.pptx"
+    write_pptx(manifest, out, tmp_path / "manifest.json")
+
+    assert validate_pptx.quantitative_chart_readback_violations(out, [manifest]) == []
+
+
 @pytest.mark.parametrize(
     ("damage", "field"),
     [

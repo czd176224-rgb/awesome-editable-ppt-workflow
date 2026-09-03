@@ -23,12 +23,16 @@ from workflow_v6_contract import new_page, new_project  # noqa: E402
 from workflow_v6_reconstruction import (  # noqa: E402
     assemble_v6_deck,
     build_reconstruction_request,
-    finalize_reconstructed_page,
+    finalize_reconstructed_page as _finalize_reconstructed_page,
 )
 from workflow_v6_state import create, load, save  # noqa: E402
 from awesome_page_materials import publish_page_materials  # noqa: E402
 from director_taskbook import project_emphasis_pages, taskbook_digest  # noqa: E402
 from complex_page_experiment.loop import signing_key  # noqa: E402
+
+
+def finalize_reconstructed_page(*args, **kwargs):
+    return _finalize_reconstructed_page(*args, authority_mode="native_direct", **kwargs)
 
 
 def _page_plan(page_number: int) -> dict[str, object]:

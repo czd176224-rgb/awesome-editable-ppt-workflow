@@ -13,12 +13,15 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from test_accepted_image_worker_reconstruction import (  # noqa: E402
+from test_accepted_image_worker_reconstruction import _workspace  # noqa: E402
+from test_quantitative_chart_v123_e2e import (  # noqa: E402
     _accepted_outcome,
-    _successful_worker,
-    _workspace,
+    _add_relationship_arrowheads,
+    _production_worker,
+    _relationship_manifest,
+    _relationship_project,
 )
-from test_workflow_v6_reconstruction import _project, _write_signed_receipt  # noqa: E402
+from test_workflow_v6_reconstruction import _write_signed_receipt  # noqa: E402
 from workflow_v6_reconstruction_worker import reconstruct_accepted_page  # noqa: E402
 
 
@@ -26,11 +29,13 @@ from workflow_v6_reconstruction_worker import reconstruct_accepted_page  # noqa:
 def test_completed_recovery_rejects_stale_replaced_or_deleted_acceptance_receipt(
     tmp_path: Path, defect: str,
 ) -> None:
-    project = _project(tmp_path, 1)
+    project, _receipt = _relationship_project(tmp_path)
     reconstruct_accepted_page(
         _workspace(project),
         _accepted_outcome(project),
-        page_worker=_successful_worker([]),
+        page_worker=_production_worker(
+            _relationship_manifest, [], post_build=_add_relationship_arrowheads,
+        ),
     )
     receipt_path = project / "04_v6/images/page_001.json"
     if defect == "deleted":
