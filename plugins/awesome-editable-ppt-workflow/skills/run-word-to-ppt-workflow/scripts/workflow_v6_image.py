@@ -108,10 +108,6 @@ class ImageRequest:
     page_number: int | None = None
 
 
-def _capability_secret() -> bytes:
-    return signing_key()[1]
-
-
 def _issue_capability(
     request: ImageRequest, *, attempt: int,
     output: Path | None = None, trace: Path | None = None,
@@ -147,6 +143,7 @@ def _issue_capability(
             "reference_id": reference_id, "role": role, "sha256": digest,
             "bytes_b64": base64.b64encode(data).decode("ascii"),
         })
+    key_id, key = signing_key()
     payload = {
         "schema_version": "awesome-image-request-capability-v3",
         "plugin_id": request.plugin_id, "plugin_version": request.plugin_version,
@@ -168,7 +165,7 @@ def _issue_capability(
         "input_sha256s": list(request.input_sha256s), "image_roles": list(request.image_roles),
         "attempt": attempt, "nonce": secrets.token_hex(16),
         "issued_at": now, "not_before": now - 5, "expires_at": now + 300,
-        "key_id": signing_key()[0],
+        "key_id": key_id,
         "project_identity": {
             "plugin_id": state.get("plugin_id"), "plugin_version": state.get("plugin_version"),
             "workflow_contract": state.get("workflow_contract"),
@@ -194,7 +191,7 @@ def _issue_capability(
         "selected_references": selected_references,
     }
     unsigned = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    value = {**payload, "hmac_sha256": hmac.new(_capability_secret(), unsigned, hashlib.sha256).hexdigest()}
+    value = {**payload, "hmac_sha256": hmac.new(key, unsigned, hashlib.sha256).hexdigest()}
     data = (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     relative_path = Path("04_v6") / "image_request_capabilities" / f"page_{request.page_number:03d}.attempt_{attempt}.{payload['nonce']}.json"
     return secure_io.atomic_write_bytes(root, relative_path, data)
@@ -236,6 +233,7 @@ def issue_reconstruction_capability(
                           sort_keys=True, separators=(",", ":")).encode("utf-8")
     output_relative = Path("05_v6") / "reconstruction_assets" / f"page_{page_number:03d}.{output_kind}.png"
     trace_relative = output_relative.with_suffix(".trace.json")
+    key_id, key = signing_key()
     payload = {
         "schema_version": "awesome-reconstruction-image-capability-v1",
         "plugin_id": PLUGIN_ID, "plugin_version": PLUGIN_VERSION,
@@ -260,11 +258,11 @@ def issue_reconstruction_capability(
         "ui_bytes_b64": base64.b64encode(ui_bytes).decode("ascii"),
         "output_path": output_relative.as_posix(), "trace_path": trace_relative.as_posix(),
         "issued_at": now, "not_before": now - 5, "expires_at": now + 300,
-        "key_id": signing_key()[0], "nonce": secrets.token_hex(16),
+        "key_id": key_id, "nonce": secrets.token_hex(16),
     }
     payload["prompt_sha256"] = hashlib.sha256(payload["prompt"].encode("utf-8")).hexdigest()
     unsigned = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    sealed = {**payload, "hmac_sha256": hmac.new(_capability_secret(), unsigned, hashlib.sha256).hexdigest()}
+    sealed = {**payload, "hmac_sha256": hmac.new(key, unsigned, hashlib.sha256).hexdigest()}
     relative_path = Path("04_v6") / "reconstruction_capabilities" / f"page_{page_number:03d}.{purpose}.{sealed['nonce']}.json"
     return secure_io.atomic_write_bytes(root, relative_path, (json.dumps(
         sealed, ensure_ascii=False, sort_keys=True, separators=(",", ":")
