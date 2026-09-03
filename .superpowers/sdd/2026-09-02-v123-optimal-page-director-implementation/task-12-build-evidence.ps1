@@ -12,6 +12,9 @@ $pages = @(5, 10, 14, 20, 21, 31, 40, 41)
 $wordPath = 'C:\Users\24927\Desktop\黄石市产业创新与母基金专业化管理合作建议_PPT生成专用Word副本_V3.docx'
 $pngLogoPath = 'C:\Users\24927\Desktop\尚融logo.png'
 $runtimeScriptsRelative = 'plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts'
+$repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+$authorityHelper = Join-Path $PSScriptRoot 'task-12-authority-evidence.py'
+$authorityRuntimeScripts = Join-Path $repoRoot $runtimeScriptsRelative
 
 function Read-Json([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
@@ -94,6 +97,14 @@ function Get-PptxObjectCounts([string]$Path) {
     finally { $archive.Dispose() }
 }
 
+function Get-SealedAuthorityEvidence([string]$PageDirectory) {
+    $json = & python $authorityHelper --page-dir $PageDirectory --runtime-scripts $authorityRuntimeScripts 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "sealed authority evidence failed for $PageDirectory`n$($json -join "`n")"
+    }
+    return ($json -join "`n") | ConvertFrom-Json
+}
+
 function Html([AllowNull()][string]$Value) {
     if ($null -eq $Value) { return '' }
     return [Net.WebUtility]::HtmlEncode($Value)
@@ -148,6 +159,7 @@ function Collect-Page([string]$RunName, [string]$Project, [int]$PageNumber) {
         $manifestLabels = @($manifest.text_boxes).Count
     }
     $pptxCounts = Get-PptxObjectCounts $pptxPath
+    $authorityEvidence = Get-SealedAuthorityEvidence $reconstructionRoot
 
     return [ordered]@{
         page_number = $PageNumber
@@ -208,18 +220,15 @@ function Collect-Page([string]$RunName, [string]$Project, [int]$PageNumber) {
             validation_path = $validationPath
             manifest_path = $manifestPath
             runtime_validation = if ($validation) { $validation.runtime_validation } else { $null }
-            editable_connector_validation = [ordered]@{
+            editable_object_inventory = [ordered]@{
                 manifest_line_shapes = $shapeLines
                 pptx_connector_shapes = $pptxCounts.connectors
-            }
-            editable_chart_validation = [ordered]@{
                 pptx_native_chart_shapes = $pptxCounts.native_charts
-                note = 'Zero native charts is allowed when the accepted analytical exhibit is reconstructed as editable native shapes and labels.'
-            }
-            editable_label_validation = [ordered]@{
                 manifest_text_boxes = $manifestLabels
                 pptx_text_labels = $pptxCounts.text_labels
+                note = 'Inventory only. Object counts are not sealed-authority validation.'
             }
+            sealed_authority_validation = $authorityEvidence
         }
         comparison_asset = $assetRelative
     }
@@ -272,6 +281,8 @@ foreach ($run in $runs) {
         reconstructed_pages = @($run.pages | Where-Object { $_.reconstruction.passed }).Count
         first_pass_acceptances = @($run.pages | Where-Object { $_.generation.first_pass_acceptance }).Count
         failed_or_incomplete_pages = @($run.pages | Where-Object { -not $_.reconstruction.passed }).Count
+        sealed_authority_applicable_pages = @($run.pages | Where-Object { $_.reconstruction.sealed_authority_validation.applicable }).Count
+        sealed_authority_compliant_pages = @($run.pages | Where-Object { $_.reconstruction.sealed_authority_validation.compliant }).Count
     }
 }
 
@@ -307,7 +318,7 @@ foreach ($runName in @('baseline', 'candidate-a', 'candidate-b')) {
 }
 
 $result = [ordered]@{
-    schema_version = 'huangshi-task12-real-ab-v1'
+    schema_version = 'huangshi-task12-real-ab-v2'
     generated_at = (Get-Date).ToString('o')
     selected_pages = $pages
     inputs = [ordered]@{
@@ -348,7 +359,9 @@ $cards = foreach ($pageNumber in $pages) {
     $word = $word -replace "`r?`n", '<br>'
     $cells = foreach ($page in @($baseline, $candidateA, $candidateB)) {
         $image = if ($page.comparison_asset) { '<img src="{0}" alt="page {1}">' -f $page.comparison_asset, $pageNumber } else { '<div class="missing">No accepted/reconstructed artifact</div>' }
-        $status = Html "$($page.generation.final_status); attempts=$($page.generation.attempt_count); reconstruction=$($page.reconstruction.passed)"
+        $authority = $page.reconstruction.sealed_authority_validation
+        $authorityStatus = if (-not $authority.available) { 'unavailable' } elseif (-not $authority.applicable) { 'not-applicable' } elseif ($authority.compliant) { 'pass' } else { 'fail' }
+        $status = Html "$($page.generation.final_status); attempts=$($page.generation.attempt_count); reconstruction=$($page.reconstruction.passed); sealed_authority=$authorityStatus"
         '<td><div class="meta">{0}</div>{1}</td>' -f $status, $image
     }
     $relationship = if ($candidateA.instructions.primary_relationship) { Html $candidateA.instructions.primary_relationship.description } else { 'not available' }
