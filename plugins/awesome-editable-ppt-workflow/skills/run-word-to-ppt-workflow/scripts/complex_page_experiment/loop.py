@@ -22,7 +22,7 @@ from workflow_v6_contract import transition_page, validate_project
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 from workflow_v6_state import mutation_lock, save
 
-from .director import CorrectionDecision, DirectorArtifact, decide_correction, direct_page
+from .director import DirectorArtifact, direct_page
 from .evidence import EvidenceRecorder, RECOVERY_CALLS
 from .materials import CompletePageMaterialView, build_complete_page_material_view
 from .provider import (
@@ -40,12 +40,6 @@ from .workspace import ExperimentWorkspace, verify_source_unchanged
 SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "complex_page_acceptance_v1.schema.json"
 EXPERIMENT_RECEIPT = "accepted_image.json"
 FAILED_RECEIPT = "failed_outcome.json"
-_MECHANICAL_REVIEW_CATEGORIES = frozenset({
-    "fixed_layer_violation",
-    "misleading_fabrication",
-    "ai_heavy_reporting_style",
-    "semantic_color_misuse",
-})
 _EXACT_TEXT_REPAIR = re.compile(
     r"将[^“\"]{0,24}[“\"](?P<find>[^”\"]{1,100})[”\"]"
     r"[^。；]{0,48}?(?:修正|改为|更正)[^“\"]{0,12}[“\"]"
@@ -529,12 +523,8 @@ def _record_director(recorder: EvidenceRecorder, director: DirectorArtifact) -> 
     recorder.record_call(kind="page_director", attempt=1, model=director.model, effort=director.effort, operation="page_creative_direction", duration_seconds=director.duration_seconds, status="ok", metadata={"selected_reference_count": len(director.selected_reference_ids), "quality": director.quality})
 
 
-def _record_correction(recorder: EvidenceRecorder, decision: CorrectionDecision, attempt: int) -> None:
-    recorder.record_call(kind="correction_decision", attempt=attempt, model=decision.model, effort=decision.effort, operation=decision.strategy, duration_seconds=decision.duration_seconds, status="ok", metadata={"problem_count": len(decision.problem_addressed), "selected_reference_count": len(decision.selected_reference_ids)})
-
-
-def _record_mechanical_correction(
-    recorder: EvidenceRecorder, review: VisualReview, attempt: int,
+def _record_local_correction(
+    recorder: EvidenceRecorder, attempt: int,
 ) -> None:
     recorder.record_call(
         kind="correction_decision",
@@ -544,27 +534,34 @@ def _record_mechanical_correction(
         operation="edit_previous",
         duration_seconds=0.0,
         status="ok",
-        metadata={"problem_count": len(review.problems), "quota_bearing": False},
+        metadata={"problem_count": 1, "quota_bearing": False},
     )
 
 
-def _mechanical_correction(
+def _local_correction(
     review: VisualReview,
     director: DirectorArtifact,
     *,
     next_attempt: int,
-) -> tuple[str, tuple[str, ...], Literal["edit_previous"]] | None:
-    categories = {problem.category for problem in review.problem_records}
-    if not categories or not categories <= _MECHANICAL_REVIEW_CATEGORIES:
-        return None
-    fixes = "; ".join(review.problems)
+) -> tuple[str, tuple[str, ...], Literal["edit_previous"]]:
+    if len(review.problem_records) != 1 or review.problems != (
+        review.problem_records[0].detail,
+    ):
+        raise ValueError("local correction requires exactly one signed review problem")
+    problem = review.problem_records[0]
+    if not problem.detail.strip():
+        raise ValueError("local correction requires a concrete visible defect")
+    if not director.page_plan:
+        raise ValueError("local correction requires the frozen director page plan")
     prompt = (
-        f"{director.actual_prompt}\n\n"
-        f"Independent-review correction attempt {next_attempt}: edit the previous candidate "
-        f"and fix only these defects: {fixes}. Preserve every unaffected visual relationship. "
-        "Do not add, paraphrase, or expand any visible source text."
+        f"VISIBLE DEFECT\n{problem.category}: {problem.detail.strip()}\n\n"
+        f"REQUIRED REPAIR\nCorrection attempt {next_attempt}: repair exactly this visible defect "
+        "on the previous candidate; make no other change.\n\n"
+        "MUST STAY UNCHANGED\nPreserve the accepted composition, every already-correct region, "
+        "the frozen page plan, all complete facts, the confirmed colors, and the fixed title, "
+        "logo, footer, and page-number boundaries."
     )
-    return prompt, director.selected_reference_ids, "edit_previous"
+    return prompt, (), "edit_previous"
 
 
 def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, recorder: EvidenceRecorder, material_view_factory: Callable[[ExperimentWorkspace], CompletePageMaterialView], director_invoke: Callable[..., CodexStructuredResult], reviewer_invoke: Callable[..., CodexStructuredResult], provider_runner: Callable[[list[str], int], None], max_corrections: int) -> LoopOutcome:
@@ -600,9 +597,7 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
         _record_director(recorder, director)
         prompt = director.actual_prompt
         selected = director.selected_reference_ids
-        strategy: Literal["initial", "edit_previous", "regenerate_from_materials"] = "initial"
-        previous_decision: CorrectionDecision | None = None
-        previous_decision_candidate: Path | None = None
+        strategy: Literal["initial", "edit_previous"] = "initial"
         while True:
             attempt = len(attempts) + 1
             previous = attempts[-1] if attempts else None
@@ -631,20 +626,10 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
                         correction_count=corrections, recorder=recorder,
                     )
                 verify_source_unchanged(workspace)
-                mechanical = _mechanical_correction(
+                prompt, selected, strategy = _local_correction(
                     review, director, next_attempt=attempt + 1,
                 )
-                if mechanical is not None:
-                    prompt, selected, strategy = mechanical
-                    _record_mechanical_correction(recorder, review, attempt)
-                    for problem in review.problem_records:
-                        if problem not in reconstruction_repairs:
-                            reconstruction_repairs.append(problem)
-                else:
-                    decision = decide_correction(workspace, material_view, director, previous_candidate=candidate.path, problems=last_problems, timeout=timeout, invoke=director_invoke, previous_decision=previous_decision, previous_request_candidate=previous_decision_candidate)
-                    _record_correction(recorder, decision, attempt)
-                    previous_decision, previous_decision_candidate = decision, candidate.path
-                    prompt, selected, strategy = decision.actual_prompt, decision.selected_reference_ids, decision.strategy
+                _record_local_correction(recorder, attempt)
             else:
                 last_problems = preflight.problems
                 if corrections >= max_corrections:
@@ -652,8 +637,16 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
                         workspace, attempts=attempts, problems=last_problems,
                         correction_count=corrections, recorder=recorder,
                     )
-                prompt = prompt + f"\n\nTechnical correction attempt {attempt + 1}: regenerate the same intended content and fix only: {'; '.join(last_problems)}"
-                strategy = "regenerate_from_materials"
+                prompt = (
+                    f"TECHNICAL DEFECT\n{'; '.join(last_problems)}\n\n"
+                    f"REQUIRED REPAIR\nCorrection attempt {attempt + 1}: repair exactly this "
+                    "technical defect on the previous candidate; make no other change.\n\n"
+                    "MUST STAY UNCHANGED\nPreserve the accepted composition, every correct region, "
+                    "the frozen page plan, all complete facts, the confirmed colors, and the fixed "
+                    "title, logo, footer, and page-number boundaries."
+                )
+                selected = ()
+                strategy = "edit_previous"
             corrections += 1
     finally:
         verify_source_unchanged(workspace)

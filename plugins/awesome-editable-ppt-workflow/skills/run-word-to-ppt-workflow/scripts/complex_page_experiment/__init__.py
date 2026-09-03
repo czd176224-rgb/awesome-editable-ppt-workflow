@@ -15,10 +15,8 @@ from .materials import (
     validate_published_complete_page_material_view,
 )
 from .director import (
-    CorrectionDecision,
     DirectorArtifact,
     compile_consulting_six_part_prompt,
-    decide_correction,
     direct_page,
 )
 from .evidence import EvidenceRecorder, sample_resources
@@ -53,10 +51,8 @@ __all__ = [
     "build_complete_page_material_view",
     "validate_complete_page_material_view",
     "validate_published_complete_page_material_view",
-    "CorrectionDecision",
     "DirectorArtifact",
     "compile_consulting_six_part_prompt",
-    "decide_correction",
     "direct_page",
     "EvidenceRecorder",
     "sample_resources",

@@ -16,7 +16,7 @@ from codex_subscription_runtime import CodexStructuredResult
 from complex_page_experiment import build_complete_page_material_view
 from complex_page_experiment.director import DirectorArtifact
 from complex_page_experiment.loop import (
-    _mechanical_correction,
+    _local_correction,
     _repair_value,
     load_accepted_image_seal,
     run_candidate_loop,
@@ -28,14 +28,14 @@ from complex_page_experiment.review import (
     review_candidate_once,
 )
 from provider_keyring import signing_key
-from test_director import _director_value, _prompt_sections, _result
+from test_director import _director_value, _result
 from test_provider import _real_worker_runner, provider_fixture  # noqa: F401
 from workflow_v6_state import load, save
 
 
 def _review_result(
     decision: str,
-    category: str = "clear_subject_departure",
+    category: str = "severe_usability",
     detail: str = "candidate is clearly off topic",
 ):
     problems = [] if decision == "accept" else [
@@ -70,38 +70,6 @@ def _off_ratio_response(*, marker_in_safe_region: bool) -> bytes:
     return json.dumps(response, sort_keys=True).encode("utf-8")
 
 
-def _correction_result(view, strategy: str, marker: str):
-    value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": 1,
-        "strategy": strategy,
-        "problem_addressed": ["candidate is clearly off topic"],
-        "preserve": ["preserve the valid composition"],
-        "selected_reference_ids": [],
-        "prompt_sections": _prompt_sections(),
-    }
-    value["prompt_sections"]["text_and_typography"] += f" Correction {marker}."
-    return CodexStructuredResult(
-        value=value, thread_id=f"correction-{marker}", turn_id="turn",
-        model="correction-model", model_provider="test", auth_mode="chatgpt",
-        plan_type="plus", usage={}, safe_trace={}, effort="high",
-        duration_seconds=0.1, startup_reused=True,
-    )
-
-
-def _invoke_sequence(view, *, strategy="regenerate_from_materials"):
-    corrections = iter([_correction_result(view, strategy, "one"),
-                        _correction_result(view, strategy, "two")])
-
-    def invoke(_project, **kwargs):
-        if kwargs["role"] == "awesome-page-director":
-            return _result(_director_value(view))
-        assert kwargs["role"] == "awesome-page-correction"
-        return next(corrections)
-
-    return invoke
-
-
 def _director_only(view):
     def invoke(_project, **kwargs):
         assert kwargs["role"] == "awesome-page-director"
@@ -111,23 +79,21 @@ def _director_only(view):
 
 
 HUANGSHI_PROBLEM_PAGES = (
-    (3, (("misleading_fabrication", "删除来源未提供的能力扩写，仅保留来源明确授权的四项能力名称。"),), True),
-    (25, (("misleading_fabrication", "将可见错字“清出表现挂钩”修正为源文“退出表现挂钩”，其余构图保持不变。"),), True),
-    (9, (("fixed_layer_violation", "删除正文图顶部与固定页标题重复的标题，保留正文构图。"),), True),
-    (10, (("semantic_color_misuse", "删除未经确认的绿色语义，将结构恢复为黑灰和少量确认红色。"),), True),
-    (35, (
-        ("unusable_17_8_composition", "完整呈现五类成果并恢复四周留白。"),
-        ("consulting_argument_failure", "补齐职责界定到成果承接的完整论证路径。"),
-    ), False),
+    (3, (("fact_integrity", "删除来源未提供的能力扩写，仅保留来源明确授权的四项能力名称。"),)),
+    (25, (("fact_integrity", "将可见错字“清出表现挂钩”修正为源文“退出表现挂钩”，其余构图保持不变。"),)),
+    (9, (("severe_usability", "删除正文图顶部与固定页标题重复的标题，保留正文构图。"),)),
+    (10, (("primary_relationship", "恢复来源定义的主关系，其余构图保持不变。"),)),
+    (35, (("core_exhibit_prominence", "放大核心成果承接图，使其成为明确视觉中心。"),)),
 )
 
 
-@pytest.mark.parametrize("page_number,problems,mechanical", HUANGSHI_PROBLEM_PAGES)
-def test_huangshi_problem_pages_keep_the_quality_routing_boundary(
-    page_number, problems, mechanical
+@pytest.mark.parametrize("page_number,problems", HUANGSHI_PROBLEM_PAGES)
+def test_huangshi_problem_pages_build_one_local_edit(
+    page_number, problems
 ):
     director = DirectorArtifact(
-        value={}, actual_prompt=f"page {page_number} source prompt",
+        value={"page_plan": {"page_purpose": f"frozen page {page_number}"}},
+        actual_prompt=f"page {page_number} source prompt",
         selected_reference_ids=(), quality="high", model="director",
         effort="high", duration_seconds=1.0, model_provider="test", usage={},
         runtime_trace={}, thread_id="thread", turn_id="turn",
@@ -138,15 +104,23 @@ def test_huangshi_problem_pages_keep_the_quality_routing_boundary(
         problem_records=tuple(ReviewProblem(category, detail) for category, detail in problems),
     )
 
-    correction = _mechanical_correction(review, director, next_attempt=2)
+    frozen = json.loads(json.dumps(director.value))
+    prompt, selected, strategy = _local_correction(review, director, next_attempt=2)
 
-    assert (correction is not None) is mechanical
-    if correction is not None:
-        prompt, selected, strategy = correction
-        assert strategy == "edit_previous"
-        assert selected == ()
-        assert all(detail in prompt for _category, detail in problems)
-        assert "Do not add, paraphrase, or expand any visible source text" in prompt
+    assert strategy == "edit_previous"
+    assert selected == ()
+    assert prompt.count(problems[0][1]) == 1
+    assert prompt.startswith("VISIBLE DEFECT\n")
+    assert "\n\nREQUIRED REPAIR\n" in prompt
+    assert "\n\nMUST STAY UNCHANGED\n" in prompt
+    for boundary in (
+        "accepted composition", "already-correct region", "frozen page plan",
+        "complete facts", "confirmed colors", "fixed title", "logo", "footer",
+        "page-number boundaries",
+    ):
+        assert boundary in prompt
+    assert director.actual_prompt not in prompt
+    assert director.value == frozen
 
 
 def test_huangshi_page_25_typo_becomes_an_exact_reconstruction_repair():
@@ -163,6 +137,26 @@ def test_huangshi_page_25_typo_becomes_an_exact_reconstruction_repair():
     }
 
 
+def test_local_correction_rejects_more_than_one_review_problem():
+    director = DirectorArtifact(
+        value={"page_plan": {"page_purpose": "frozen"}}, actual_prompt="full prompt",
+        selected_reference_ids=(), quality="high", model="director", effort="high",
+        duration_seconds=1.0, model_provider="test", usage={}, runtime_trace={},
+        thread_id="thread", turn_id="turn",
+    )
+    problems = (
+        ReviewProblem("fact_integrity", "First defect."),
+        ReviewProblem("severe_usability", "Second defect."),
+    )
+    review = VisualReview(
+        "correct", tuple(problem.detail for problem in problems), "reviewer", "high", 1.0,
+        problem_records=problems,
+    )
+
+    with pytest.raises(ValueError, match="exactly one signed review problem"):
+        _local_correction(review, director, next_attempt=2)
+
+
 def _run(provider_fixture, monkeypatch, reviews, *, max_corrections=2,
          material_factory=None, director_invoke=None):
     workspace, view, recorder, _refs = provider_fixture
@@ -173,7 +167,7 @@ def _run(provider_fixture, monkeypatch, reviews, *, max_corrections=2,
         timeout=17,
         recorder=recorder,
         material_view_factory=material_factory or (lambda _workspace: view),
-        director_invoke=director_invoke or _invoke_sequence(view),
+        director_invoke=director_invoke or _director_only(view),
         reviewer_invoke=lambda *_args, **_kwargs: next(review_values),
         provider_runner=runner,
         max_corrections=max_corrections,
@@ -201,13 +195,14 @@ def test_first_valid_candidate_accepts_without_default_extra_candidates(
 @pytest.mark.parametrize(
     "category",
     [
-        "fixed_layer_violation",
-        "misleading_fabrication",
-        "ai_heavy_reporting_style",
-        "semantic_color_misuse",
+        "fact_integrity",
+        "primary_relationship",
+        "core_exhibit_prominence",
+        "quantitative_truth",
+        "severe_usability",
     ],
 )
-def test_mechanical_review_problem_skips_correction_model_then_accepts(
+def test_review_problem_uses_deterministic_local_edit_then_accepts(
     provider_fixture, monkeypatch, category
 ):
     workspace, view, recorder, outcome = _run(
@@ -226,6 +221,8 @@ def test_mechanical_review_problem_skips_correction_model_then_accepts(
     ).read_text(encoding="utf-8"))
     assert second["strategy"] == "edit_previous"
     assert second["request"]["correction_candidate_input"] is not None
+    assert second["request"]["selected_material_reference_ids"] == []
+    assert second["request"]["image_roles"] == ["previous-candidate-to-correct"]
     assert outcome.attempts[0].request_identity != outcome.attempts[1].request_identity
     summary = recorder.finalize()
     assert summary["call_totals"]["image2"] == 2
@@ -238,33 +235,7 @@ def test_mechanical_review_problem_skips_correction_model_then_accepts(
     assert correction["duration_seconds"] == 0.0
     assert correction["metadata"]["quota_bearing"] is False
     accepted = json.loads(outcome.accepted.receipt_path.read_text(encoding="utf-8"))
-    assert accepted["reconstruction_repairs"] == [
-        {"category": category, "detail": "candidate is clearly off topic"}
-    ]
-
-
-def test_ambiguous_review_problem_keeps_correction_model_fallback(
-    provider_fixture, monkeypatch
-):
-    workspace, _view, recorder, outcome = _run(
-        provider_fixture,
-        monkeypatch,
-        [_review_result("correct", category="consulting_argument_failure"),
-         _review_result("accept")],
-        director_invoke=_invoke_sequence(
-            provider_fixture[1], strategy="regenerate_from_materials"
-        ),
-    )
-
-    assert outcome.status == "accepted"
-    second = json.loads((
-        workspace.project_copy / "04_v6/experiments" / workspace.experiment_id /
-        "request_attempt_2.json"
-    ).read_text(encoding="utf-8"))
-    assert second["strategy"] == "regenerate_from_materials"
-    assert second["request"]["correction_candidate_input"] is None
-    assert recorder.finalize()["call_totals"]["correction_decision"] == 1
-
+    assert accepted["reconstruction_repairs"] == []
 
 def test_technical_failure_consumes_slot_regenerates_without_review(
     provider_fixture, monkeypatch
@@ -302,7 +273,7 @@ def test_technical_failure_consumes_slot_regenerates_without_review(
 def test_budget_never_creates_fourth_candidate_or_fallback(
     provider_fixture, monkeypatch, max_corrections, expected_attempts
 ):
-    _workspace, _view, recorder, outcome = _run(
+    workspace, _view, recorder, outcome = _run(
         provider_fixture,
         monkeypatch,
         [_review_result("correct")] * expected_attempts,
@@ -316,6 +287,14 @@ def test_budget_never_creates_fourth_candidate_or_fallback(
     assert outcome.failure_problems == ("candidate is clearly off topic",)
     assert not list(provider_fixture[0].project_copy.glob("04_v6/images/page_001.json"))
     assert recorder.finalize()["call_totals"]["image2"] == expected_attempts
+    for attempt in range(2, expected_attempts + 1):
+        seal = json.loads((
+            workspace.project_copy / "04_v6/experiments" / workspace.experiment_id /
+            f"request_attempt_{attempt}.json"
+        ).read_text(encoding="utf-8"))
+        assert seal["strategy"] == "edit_previous"
+        assert seal["request"]["selected_material_reference_ids"] == []
+        assert seal["request"]["correction_candidate_input"]["attempt"] == attempt - 1
 
 
 def test_recovery_happens_before_material_access_and_skips_every_call(
@@ -445,25 +424,16 @@ def test_review_sees_center_cropped_candidate_rejects_lost_body_then_recovery_us
             )
         if not red_survives:
             return _review_result(
-                "correct", category="unusable_17_8_composition", detail=crop_problem
+                "correct", category="severe_usability", detail=crop_problem
             )
         return _review_result("accept")
-
-    corrections = iter([_correction_result(view, "regenerate_from_materials", "safe-region")])
-
-    def director_invoke(_project: Path, **kwargs):
-        if kwargs["role"] == "awesome-page-director":
-            return _result(_director_value(view))
-        correction = next(corrections)
-        correction.value["problem_addressed"] = [crop_problem]
-        return correction
 
     first = run_candidate_loop(
         workspace,
         timeout=17,
         recorder=recorder,
         material_view_factory=lambda _workspace: view,
-        director_invoke=director_invoke,
+        director_invoke=_director_only(view),
         reviewer_invoke=reviewer_invoke,
         provider_runner=provider_runner,
     )
@@ -778,7 +748,7 @@ def test_rejected_candidate_cannot_be_forged_accepted_without_new_review(
         run_candidate_loop(
             workspace, timeout=17, recorder=recorder,
             material_view_factory=lambda _workspace: view,
-            director_invoke=_invoke_sequence(view),
+            director_invoke=_director_only(view),
             reviewer_invoke=lambda *_args, **_kwargs: next(reviews),
             provider_runner=_real_worker_runner(monkeypatch, []),
         )

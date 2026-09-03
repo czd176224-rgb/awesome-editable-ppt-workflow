@@ -25,28 +25,6 @@ _CUSTODY_PATTERNS = (
     re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE),
     re.compile(r"\b(?:sha-?256|digest|receipt[_ -]?id)\b", re.IGNORECASE),
 )
-_SENTENCE_PARTS = re.compile(r"[^.!?;。！？；\r\n]+[.!?;。！？；]?")
-_FIXED_TERMS = (
-    re.compile(r"\btitle\b", re.IGNORECASE),
-    re.compile(r"\blogo\b", re.IGNORECASE),
-    re.compile(r"\bfooter\b", re.IGNORECASE),
-    re.compile(r"\bpage(?:[_ -]+)number\b", re.IGNORECASE),
-)
-_SAFE_REGION = re.compile(r"\b(?:central|largest|safe)\b.*\b17:8\b", re.IGNORECASE)
-_CANVAS_BACKGROUND = re.compile(
-    r"(?:\bcanvas\s+background\b|"
-    r"\b(?:canvas|background)\b.*\b(?:color|grid|texture|gradient|glow)\b|"
-    r"\b(?:color|grid|texture|gradient|glow)\b.*\b(?:canvas|background)\b)",
-    re.IGNORECASE,
-)
-_BACKGROUND_EFFECT = re.compile(
-    r"\b(?:texture|gradient|glow|fog|vortex|burlap|linen|paper)\b",
-    re.IGNORECASE,
-)
-_FOREGROUND_CONTEXT = re.compile(
-    r"\b(?:foreground|subject|evidence|person|people|object|arrange|arrangement|relationship|garment)\b",
-    re.IGNORECASE,
-)
 
 _TASK_CONSTRAINT = (
     "Generate a 1904x896 slide body. At any output ratio, keep all meaningful content inside the "
@@ -399,28 +377,6 @@ def _page_plan_architecture(
     return "\n".join(("\n".join(lines), *reference_lines))
 
 
-def _without_compiler_owned_clauses(text: str, *, task_section: bool) -> str:
-    kept: list[str] = []
-    for match in _SENTENCE_PARTS.finditer(text):
-        clause = match.group(0).strip()
-        if not clause:
-            continue
-        task_background_effect = (
-            task_section
-            and _BACKGROUND_EFFECT.search(clause)
-            and not _FOREGROUND_CONTEXT.search(clause)
-        )
-        if (
-            any(pattern.search(clause) for pattern in _FIXED_TERMS)
-            or _SAFE_REGION.search(clause)
-            or _CANVAS_BACKGROUND.search(clause)
-            or task_background_effect
-        ):
-            continue
-        kept.append(clause)
-    return " ".join(kept)
-
-
 def _join(parts: Sequence[str]) -> str:
     return "\n".join(part for part in parts if part)
 
@@ -431,62 +387,30 @@ def compile_consulting_six_part_prompt(
 ) -> str:
     """Compile exactly six consulting-report sections in their sealed order."""
     schema_version = value.get("schema_version")
-    if schema_version not in {
-        "awesome-consulting-page-director-v3",
-        "awesome-page-correction-v2",
-    }:
-        raise ValueError("consulting prompt requires a v3 director or v2 correction authority")
+    if schema_version != "awesome-consulting-page-director-v3":
+        raise ValueError("consulting prompt requires a v3 director authority")
     positive_color, prohibited_color = _color_constraints(
         material_view, font_accent_allowed=font_accent_allowed
     )
-    if schema_version == "awesome-page-correction-v2":
-        sections = _validated_sections(value)
-        for _heading, key in SECTION_SPECS:
-            original = sections[key]
-            sections[key] = _without_compiler_owned_clauses(
-                original, task_section=key == "task_and_canvas"
-            )
-            sections[key] = sections[key].replace(positive_color, "").replace(
-                prohibited_color, ""
-            ).strip()
-            fixed_or_safe_restatement = any(
-                pattern.search(original) for pattern in _FIXED_TERMS
-            ) or _SAFE_REGION.search(original)
-            if not sections[key] and (
-                key != "task_and_canvas" or fixed_or_safe_restatement
-            ):
-                raise ValueError(
-                    f"consulting prompt section {key} contains only compiler-owned boundary clauses"
-                )
-        sections["task_and_canvas"] = _join(
-            (sections["task_and_canvas"], _background_constraint(material_view), _TASK_CONSTRAINT)
-        )
-        sections["core_proposition_and_content"] = _join(
-            (VISIBLE_COPY_BOUNDARY, sections["core_proposition_and_content"], FRONTEND_FIDELITY)
-        )
-        sections["consulting_information_architecture"] = _join(
-            (sections["consulting_information_architecture"], _ARCHITECTURE_CONSTRAINT, LOCAL_VISUAL_SCOPE)
-        )
-    else:
-        architecture = _page_plan_architecture(value, material_view).replace(
-            positive_color, ""
-        ).replace(prohibited_color, "")
-        sections = {
-            "task_and_canvas": _TASK_CONSTRAINT,
-            "core_proposition_and_content": _join(
-                (VISIBLE_COPY_BOUNDARY, _complete_fact_content(material_view), FRONTEND_FIDELITY)
-            ),
-            "consulting_information_architecture": _join(
-                (architecture, _ARCHITECTURE_CONSTRAINT, LOCAL_VISUAL_SCOPE)
-            ),
-            "visual_style_and_color": "",
-            "text_and_typography": "",
-            "strict_prohibitions": "",
-        }
+    architecture = _page_plan_architecture(value, material_view).replace(
+        positive_color, ""
+    ).replace(prohibited_color, "")
+    sections = {
+        "task_and_canvas": _TASK_CONSTRAINT,
+        "core_proposition_and_content": _join(
+            (VISIBLE_COPY_BOUNDARY, _complete_fact_content(material_view), FRONTEND_FIDELITY)
+        ),
+        "consulting_information_architecture": _join(
+            (architecture, _ARCHITECTURE_CONSTRAINT, LOCAL_VISUAL_SCOPE)
+        ),
+        "visual_style_and_color": "",
+        "text_and_typography": "",
+        "strict_prohibitions": "",
+    }
     sections["visual_style_and_color"] = _join(
         (
             sections["visual_style_and_color"],
-            _background_constraint(material_view) if schema_version != "awesome-page-correction-v2" else "",
+            _background_constraint(material_view),
             positive_color,
         )
     )

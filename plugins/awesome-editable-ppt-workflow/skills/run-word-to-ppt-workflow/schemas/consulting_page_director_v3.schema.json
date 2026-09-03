@@ -146,26 +146,6 @@
         "instruction": {"type": "string", "minLength": 1},
         "fact_ids": {"$ref": "#/$defs/factIds"}
       }
-    },
-    "promptSections": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "task_and_canvas",
-        "core_proposition_and_content",
-        "consulting_information_architecture",
-        "visual_style_and_color",
-        "text_and_typography",
-        "strict_prohibitions"
-      ],
-      "properties": {
-        "task_and_canvas": {"type": "string", "minLength": 1},
-        "core_proposition_and_content": {"type": "string", "minLength": 1},
-        "consulting_information_architecture": {"type": "string", "minLength": 1},
-        "visual_style_and_color": {"type": "string", "minLength": 1},
-        "text_and_typography": {"type": "string", "minLength": 1},
-        "strict_prohibitions": {"type": "string", "minLength": 1}
-      }
     }
   }
 }

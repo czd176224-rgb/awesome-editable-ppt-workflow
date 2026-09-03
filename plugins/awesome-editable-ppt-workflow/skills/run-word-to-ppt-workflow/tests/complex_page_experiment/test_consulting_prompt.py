@@ -29,16 +29,6 @@ VISUAL_DIRECTOR_REFERENCE = (
     / "visual_director.md"
 )
 
-EXPECTED_PROMPT_FIELDS = {
-    "task_and_canvas",
-    "core_proposition_and_content",
-    "consulting_information_architecture",
-    "visual_style_and_color",
-    "text_and_typography",
-    "strict_prohibitions",
-}
-
-
 def test_v3_schema_defines_only_the_compact_consulting_director_contract() -> None:
     assert SCHEMA_PATH.is_file(), "consulting director v3 schema is missing"
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -56,9 +46,7 @@ def test_v3_schema_defines_only_the_compact_consulting_director_contract() -> No
         "selected_references",
     }
     assert set(schema["properties"]) == set(schema["required"])
-    prompt_sections = schema["$defs"]["promptSections"]
-    assert set(prompt_sections["required"]) == EXPECTED_PROMPT_FIELDS
-    assert set(prompt_sections["properties"]) == EXPECTED_PROMPT_FIELDS
+    assert "promptSections" not in schema["$defs"]
 
     serialized = json.dumps(schema, ensure_ascii=False)
     for legacy_name in (
@@ -166,25 +154,6 @@ def _director_value() -> dict[str, object]:
             ],
         },
         "selected_references": [],
-    }
-
-
-def _correction_value() -> dict[str, object]:
-    return {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": 5,
-        "strategy": "edit_previous",
-        "problem_addressed": ["Repair the stated defect."],
-        "preserve": ["Preserve correct source facts."],
-        "selected_reference_ids": [],
-        "prompt_sections": {
-            "task_and_canvas": "Keep the existing body canvas.",
-            "core_proposition_and_content": "Preserve the source-backed proposition.",
-            "consulting_information_architecture": "Repair the stated relationship.",
-            "visual_style_and_color": "Retain the confirmed visual roles.",
-            "text_and_typography": "Keep all labels legible.",
-            "strict_prohibitions": "Do not introduce new facts.",
-        },
     }
 
 
@@ -913,73 +882,12 @@ def test_compiler_legacy_mode_omits_only_the_new_page_gate() -> None:
     assert "derived shades of secondary color #CD202A" in prompt
 
 
-def test_compiler_accepts_the_v2_correction_authority() -> None:
+def test_compiler_rejects_deleted_correction_v2_authority() -> None:
     module = _load_compiler_module()
-    value = _correction_value()
+    value = _director_value()
+    value["schema_version"] = "awesome-page-correction-v2"
 
-    prompt = module.compile_consulting_six_part_prompt(value, _material_view())
-
-    assert "## Consulting Information Architecture" in prompt
-
-
-def test_correction_rejects_a_section_reduced_to_compiler_owned_boilerplate() -> None:
-    module = _load_compiler_module()
-    value = _correction_value()
-    value["prompt_sections"]["core_proposition_and_content"] = (
-        "Do not generate title, logo, footer, or page number."
-    )
-
-    with pytest.raises(ValueError, match="only compiler-owned boundary clauses"):
-        module.compile_consulting_six_part_prompt(value, _material_view())
-
-
-def test_non_mechanical_correction_runs_through_temporary_v2_compiler(tmp_path: Path) -> None:
-    from complex_page_experiment.director import decide_correction
-    from test_director import (
-        _compact_artifact,
-        _director_value as runtime_director_value,
-        _material_view as runtime_material_view,
-        _prompt_sections,
-        _result,
-        _workspace,
-    )
-
-    workspace = _workspace(tmp_path)
-    material_view = runtime_material_view(workspace)
-    director = _compact_artifact(runtime_director_value(material_view))
-    candidate = workspace.project_copy / "candidate-task-3.png"
-    candidate.write_bytes(b"candidate-task-3")
-    problem = "The hierarchy is unusable."
-    value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": workspace.page_number,
-        "strategy": "edit_previous",
-        "problem_addressed": [problem],
-        "preserve": ["Preserve correct source facts."],
-        "selected_reference_ids": ["word-image:word-photo"],
-        "prompt_sections": _prompt_sections(suffix=" with TASK-3-CORRECTION-SENTINEL"),
-    }
-
-    decision = decide_correction(
-        workspace,
-        material_view,
-        director,
-        previous_candidate=candidate,
-        problems=[problem],
-        timeout=60,
-        invoke=lambda *args, **kwargs: _result(value),
-    )
-
-    assert "TASK-3-CORRECTION-SENTINEL" in decision.actual_prompt
-    assert decision.strategy == "edit_previous"
-
-
-def test_compiler_rejects_model_authored_v2_director_sections() -> None:
-    module = _load_compiler_module()
-    value = _correction_value()
-    value["schema_version"] = "awesome-consulting-page-director-v2"
-
-    with pytest.raises(ValueError, match="v3 director or v2 correction"):
+    with pytest.raises(ValueError, match="v3 director authority"):
         module.compile_consulting_six_part_prompt(value, _material_view())
 
 
@@ -1032,10 +940,10 @@ def test_runtime_exports_the_v3_director_schema_and_existing_compiler() -> None:
     ).exists()
 
 
-def test_initial_director_uses_v3_while_correction_retains_v2_sections(
+def test_initial_director_uses_v3_compact_page_plan(
     tmp_path: Path,
 ) -> None:
-    from complex_page_experiment.director import _correction_schema, direct_page
+    from complex_page_experiment.director import direct_page
     from test_director import _material_view as runtime_material_view
     from test_director import _result, _workspace
 
@@ -1055,6 +963,3 @@ def test_initial_director_uses_v3_while_correction_retains_v2_sections(
     assert artifact.page_plan == value["page_plan"]
     assert "## Task and Canvas" in artifact.actual_prompt
     assert "## Strict Prohibitions" in artifact.actual_prompt
-    correction_sections = _correction_schema()["properties"]["prompt_sections"]
-    assert set(correction_sections["required"]) == EXPECTED_PROMPT_FIELDS
-    assert set(correction_sections["properties"]) == EXPECTED_PROMPT_FIELDS
