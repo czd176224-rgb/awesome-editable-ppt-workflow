@@ -47,11 +47,37 @@ def test_public_regression_fixture_covers_the_four_consulting_body_patterns() ->
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda case: str(case["id"]))
 def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None:
+    facts = [case["proposition"], case["explanatory_lead"], case["takeaway"]]
     value = {
-        "schema_version": "awesome-consulting-page-director-v2",
-        "prompt_sections": case["prompt_sections"],
+        "schema_version": "awesome-consulting-page-director-v3",
+        "page_number": 1,
+        "quality": "high",
+        "page_plan": {
+            "page_purpose": case["proposition"],
+            "primary_relationship": {
+                "grammar": "composition_architecture",
+                "description": case["analytical_backbone"],
+                "fact_ids": ["body-1"],
+                "visual_instruction": case["prompt_sections"]["consulting_information_architecture"],
+                "nodes": [],
+                "edges": [],
+            },
+            "core_exhibit": {
+                "grammar": "composition_architecture",
+                "description": case["analytical_backbone"],
+                "fact_ids": ["body-1", "body-2", "body-3"],
+            },
+            "support_groups": [],
+            "reading_path": case["analytical_backbone"],
+            "local_visuals": [],
+        },
+        "selected_references": [],
     }
     material_view = {
+        "complete_word_content": [
+            {"type": "paragraph", "text": text, "source_block_id": f"body-{index}", "source_order": index}
+            for index, text in enumerate(facts, start=1)
+        ],
         "visual_contract": {
             "background_color": case["colors"]["background"],
             "primary_color": case["colors"]["primary"],
@@ -72,7 +98,11 @@ def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None
     assert case["colors"]["background"] in prompt
     assert case["colors"]["primary"] in prompt
     assert case["colors"]["secondary"] in prompt
-    assert "evidence, interpretation, and conclusion" in prompt
+    # Prompt size remains diagnostic only; correctness is content and boundary preservation.
+    assert len(prompt) > sum(len(text) for text in facts)
+    assert "Communicate one source-supported main message" in prompt
+    assert "one source-supported main message in a coherent reading path" in prompt
+    assert "no invented takeaway" in prompt
     assert "Do not generate title, logo, footer, or page number" in prompt
     assert "This is not a user-confirmed emphasis page" in prompt
     assert "Do not use any secondary-color-family shade for any text object" in prompt

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -48,72 +49,87 @@ _FOREGROUND_CONTEXT = re.compile(
 )
 
 _TASK_CONSTRAINT = (
-    "Generate one coherent consulting-report slide body at 1904x896. Regardless of the provider's "
-    "eventual canvas aspect ratio, place all body text, charts, diagrams, tables, annotations, "
-    "connectors, references, and key decoration inside the central largest 17:8 content region; "
-    "leave a visibly empty perimeter on all four sides. Do not generate title, logo, footer, or "
-    "page number; those are supplied as fixed PowerPoint layers."
+    "Generate a 1904x896 slide body. At any output ratio, keep all meaningful content inside the "
+    "central largest 17:8 content region with a visibly empty perimeter on all four sides. "
+    "Give the source-supported main relationship the strongest visual priority."
 )
 
-_ARGUMENT_CONSTRAINT = (
-    "The page must communicate one business proposition and retain explanatory copy that "
-    "connects evidence, interpretation, and conclusion, ending with an explicit takeaway."
+LOCAL_CHART_SCOPE = (
+    "Compose the whole slide first around its argument, facts, mechanisms, relationships, and "
+    "source-supported conclusions where present. Freely combine faithful prose, process or hierarchy diagrams, optional local "
+    "charts, and conclusions in one reading path. Choose a professional chart only when its local "
+    "data has complete, compatible dimensions and improves communication; even complete data does "
+    "not require a chart. The chart footprint follows the argument, not the presence of numbers. "
+    "Standalone KPIs, dates, and counts may remain exact text or labels. The eight relationship "
+    "examples are an optional local toolkit, not a page template or compulsory substitution. "
+    "Keep source-grounded qualitative relationships visible without requiring a named substitute. "
+    "Data-scale restrictions apply to data marks, not ordinary layout size, position, or hierarchy; "
+    "visual emphasis must not masquerade as measured magnitude."
 )
 
 _QUANTITATIVE_CONTENT_CONSTRAINT = (
-    "Use a quantitative form only when source evidence is complete and unambiguous for the "
-    "subject, unit, period, basis, categories, and values required by that form. Preserve every "
-    "source value and label exactly; do not calculate new metrics, infer missing values, or mix "
-    "incompatible subjects, units, periods, or bases. When those dimensions are incomplete, use "
-    "the named qualitative substitute and make the source-stated relationship visibly legible. "
-    "When a page contains financial, valuation, investment, or operating data, preserve subject, "
-    "unit, period, basis, actual/forecast status, source-stated assumptions, and total-to-component "
-    "relationships. Keep facts, assumptions, calculated results, analytical judgments, and "
-    "recommendations distinct."
+    "Data marks need complete compatible source values and labels: subject, unit, period, basis, "
+    "categories, actual/forecast status, source-stated assumptions and total-to-component relationships; "
+    "do not calculate new metrics or infer missing values."
 )
 
-_VISIBLE_TEXT_CUSTODY = (
-    "business_proposition, explanatory_lead, and takeaway_statement are planning instructions, "
-    "not visible slide copy. Every visible word or label must use exact contiguous spans from "
-    "complete_word_content. Do not paraphrase, summarize, expand, or invent "
-    "visible wording. The prohibition is against text expansion, not visual semantic expansion: "
-    "use color, spatial position, shapes, connectors, and visual hierarchy to make relationships "
-    "already explicit in complete_word_content visible without adding explanatory wording."
+LOCAL_VISUAL_SCOPE = (
+    "Compose the whole slide first: mix prose, tables, diagrams and optional local charts. "
+    "Use charts only when they help; complete data does not require a chart. KPIs, dates and counts may stay text. "
+    "Measured-scale restrictions govern data marks, not ordinary layout size, position, or hierarchy."
+)
+
+VISIBLE_COPY_BOUNDARY = (
+    "Role labels, prompt section headings, and quote introducers are instruction metadata, "
+    "not visible copy: render only the source wording, never its instruction introducer. "
+    "Source-authored headings and labels remain allowed; separate layout instructions from visible words."
+)
+
+SEMANTIC_FIDELITY = (
+    "Word is the semantic authority. Preserve every distinct fact, explanation, relationship, "
+    "and conclusion, including subjects, names, numbers, dates, units, bases, conditions, "
+    "exceptions, degree of certainty, and their scope. Lossless rewording, regrouping, and "
+    "text-to-diagram conversion are allowed; this is not a word-for-word copying rule. Shared "
+    "labels may remove repetition only when their applicability stays explicit and no distinct "
+    "information is lost. Visual semantic expansion exposes source-supported relationships, "
+    "not new claims, causal links, ranks, or measured values. Follow the frozen page composition: "
+    "do not split source body pages for layout density. Existing TOC continuations and source-backed "
+    "section/closing additions remain authoritative. Do not move additional information across "
+    "assigned pages or hide it in notes or appendices. Planning "
+    "instructions, not visible slide copy, describe the design; they are not factual authority."
+)
+
+FRONTEND_FIDELITY = (
+    "Preserve every distinct fact, explanation, relationship, "
+    "and conclusion with its subject, names, numbers, dates, units, bases, conditions, exceptions, "
+    "degree of certainty, and scope. Lossless rewording, regrouping, and text-to-diagram conversion "
+    "are allowed with explicit shared-label scope. Preserve meaningful sequence, membership and "
+    "ownership; parallel rows and paragraphs may be reordered. Keep facts, assumptions, calculated "
+    "results, analytical judgments and recommendations distinct. Follow the frozen page composition: "
+    "do not split source body pages for layout density; existing TOC continuations and source-backed "
+    "section/closing additions stand. Keep all assigned information visible, not in notes or other pages."
 )
 
 _ARCHITECTURE_CONSTRAINT = (
-    "Choose one content-driven analytical backbone, build the page skeleton before placing text, "
-    "and make every module participate in the "
-    "same reading path; do not substitute disconnected cards or one decorative panorama for "
-    "the page argument. Make source-explicit process, hierarchy, parallelism, membership, "
-    "comparison, and causality visible as a complete page skeleton. Labels, legends, numbering, "
-    "and spatial structure remain the primary information carriers. Color may make an existing "
-    "relationship explicit but must not create a relationship that complete_word_content does not state."
+    "Communicate one source-supported main message in a coherent reading path. Let relationships "
+    "shape space; attach complete explanations and scoped qualifiers to their subjects without "
+    "duplicating full prose. Visual focus is not authority rank or measured magnitude. "
+    "Use a source-supported conclusion where present, no invented takeaway."
 )
 
-_DUAL_MODE_RELATIONSHIP_CONSTRAINT = """Apply a row below only when complete_word_content explicitly contains that relationship. If none of the eight relationships is source-explicit, do not introduce a chart or any named qualitative substitute. Apply this exact eight-row dual-mode relationship mapping:
-increase_decrease_drivers: use a scaled cumulative bridge/waterfall only with verified start, changes, and end; otherwise use an equal-weight positive/negative driver bridge with no cumulative baseline or computed end value.
-change_over_time: use a line or column chart only with explicit periods and values; otherwise use a timeline or stage-evolution roadmap with no implied slope or magnitude.
-two_variable_relationship: use a scatter plot only with numeric x/y values; use a clearly labelled qualitative quadrant only when the source supplies the two qualitative axes and item classifications; otherwise use a comparison table.
-third_variable_size: encode bubble size only from a real non-negative third numeric variable; otherwise use uniform-size nodes with no size ranking.
-market_size_share: use a Mekko/variable rectangle only with complete width and share values; otherwise use an equal-width hierarchy or portfolio matrix with no area-based claim.
-project_stage_time: use a Gantt only with explicit start/end or start/duration; otherwise use an ordered roadmap or milestone sequence when dates/durations are absent.
-option_comparison: use a bar/dot plot only when comparable values or source ratings exist; otherwise use a native comparison table with source-backed criteria and wording.
-target_actual_variance: use bar/dot plus target line or difference arrow only when both values share a unit/basis; otherwise use a goal-current-gap narrative structure with no target line, arrow magnitude, or calculated variance."""
-
 _TYPOGRAPHY_CONSTRAINT = (
-    "Render source-authorized Simplified Chinese accurately and legibly, with presentation-scale "
-    "hierarchy for explanatory lead, analytical labels, evidence, interpretation, and takeaway. "
-    "Apply TTS-style quantitative label discipline: every quantitative mark must identify its "
-    "subject and keep its unit, period, and basis explicit through the chart heading, secondary heading, axis, "
-    "legend, data label, or adjacent source-exact annotation."
+    "Render accurate, legible Simplified Chinese with presentation-scale hierarchy and complete data labels."
 )
 
 _QUALITATIVE_PROHIBITION = (
-    "Without complete source values, do not use numeric axes, proportional geometry, bubble-size "
-    "ranking, target-line magnitude, or difference magnitude. A qualitative substitute must not "
-    "masquerade as measured scale; use labels, equal sizing, sequence, grouping, connectors, and "
-    "source wording to signal the relationship visibly."
+    "Do not invent causal links, loops, ranks, or values, or add claims. Qualitative geometry is "
+    "not measured magnitude: data marks must not imply unsupported numeric axes, proportions, "
+    "size ranking or differences."
+)
+
+_FIXED_AND_SOURCE_PROHIBITION = (
+    "Word is the semantic authority. Do not generate title, logo, footer, or page number; those "
+    "are supplied as fixed PowerPoint layers."
 )
 
 
@@ -162,38 +178,26 @@ def _color_constraints(
     soft = _mix_hex(secondary, (255, 255, 255), 0.70)
     wash = _mix_hex(secondary, (255, 255, 255), 0.88)
     positive = (
-        "Treat the confirmed background color as the canvas base; "
-        f"use primary color {colors['primary_color']} for primary text and neutral structure. "
-        f"Use derived shades of secondary color {secondary} when color has a source-grounded "
-        f"structural duty: strong {strong}, the confirmed secondary as base, support {support}, "
-        f"soft {soft}, and wash {wash}. "
-        "The same hue communicates parallel items, the same "
-        "category, or common membership. Ordered light-to-dark shades may communicate only a "
-        "source-explicit process, hierarchy, stage, or visual focus. Cross-hue colors may be used "
-        "only for source-explicit risk, status, rating, or positive/negative business meaning. "
-        "Labels, legends, numbering, and spatial structure remain primary; color is supporting "
-        "evidence and never invents meaning. When the source contains any of these relationships, "
-        "use at least two visibly distinct tones from this family across the analytical backbone, "
-        "not merely one accent line or colored text; parallel peers keep the same tone while their "
-        "shared group, axis, stage, or focal node may use another tone. A page with no color duty "
-        "may remain black, white, and gray."
+        f"Use primary color {colors['primary_color']} for primary text and neutral structure. "
+        f"Use derived shades of secondary color {secondary}: strong {strong}, base, support {support}, "
+        f"soft {soft}, wash {wash}. Allow large fills, wide paths, and structural geometry for "
+        "grouping and visual hierarchy, not measured magnitude. For source relationships use at "
+        "least two visibly distinct tones: parallel peers keep the same tone; their group or focal "
+        "structure may differ. No color duty: neutrals suffice."
     )
     if font_accent_allowed is True:
         positive += (
-            " This is a user-confirmed emphasis page: secondary-color-family shades may be used "
-            "selectively for important text, but they are optional and must remain restrained."
+            " This is a user-confirmed emphasis page: secondary-color-family text is optional and restrained."
         )
     elif font_accent_allowed is False:
         positive += (
             " This is not a user-confirmed emphasis page. Do not use any secondary-color-family "
-            "shade for any text object. Use primary or neutral text color plus weight, size, "
-            "position, shape, or hierarchy for local emphasis. Secondary-color-family shades "
+            "shade for any text object; use primary or neutral text. Secondary-color-family shades "
             "remain allowed for text-box fills, shapes, borders, nodes, and connectors."
         )
     prohibited = (
-        "Do not use color as the sole carrier of a fact or relationship, assign ordered color "
-        "depth to merely parallel categories, or introduce cross-hue business semantics absent "
-        "from complete_word_content."
+        "Do not use color as the sole carrier of a fact or relationship, rank parallel peers by "
+        "shade, or invent cross-hue business semantics."
     )
     return positive, prohibited
 
@@ -222,6 +226,73 @@ def _validated_sections(value: Mapping[str, object]) -> dict[str, str]:
             raise ValueError("compiled prompt contains a local custody path, digest, or receipt ID")
         result[key] = " ".join(text.split())
     return result
+
+
+def _render_complete_source_block(block: object) -> str:
+    if not isinstance(block, Mapping):
+        raise ValueError("complete Word content block must be a mapping")
+    block_type = block.get("type")
+    if block_type in {"paragraph", "list"}:
+        text = block.get("text")
+        if not isinstance(text, str):
+            raise ValueError(f"complete Word {block_type} block text is missing")
+        if block_type == "paragraph":
+            return text
+        marker = "1." if block.get("list_kind") == "number" else "-"
+        level = block.get("level", 0)
+        indent = "  " * level if isinstance(level, int) and level > 0 else ""
+        return f"{indent}{marker} {text}"
+    if block_type == "table":
+        rows = block.get("rows")
+        if not isinstance(rows, list) or any(not isinstance(row, list) for row in rows):
+            raise ValueError("complete Word table rows are missing")
+        if any(any(not isinstance(cell, str) for cell in row) for row in rows):
+            raise ValueError("complete Word table cells must be text")
+        return "\n".join(" | ".join(row) for row in rows)
+    raise ValueError(f"unsupported complete Word block type: {block_type}")
+
+
+def _complete_fact_content(material_view: object) -> str:
+    blocks = _material_value(material_view).get("complete_word_content")
+    if not isinstance(blocks, list):
+        raise ValueError("complete material view Word content is missing")
+    ordered = sorted(
+        enumerate(blocks),
+        key=lambda item: (
+            item[1].get("source_order", item[0])
+            if isinstance(item[1], Mapping)
+            else item[0]
+        ),
+    )
+    return "\n".join(_render_complete_source_block(block) for _index, block in ordered)
+
+
+def _canonical_text(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _page_plan_architecture(value: Mapping[str, object]) -> str:
+    plan = value.get("page_plan")
+    if not isinstance(plan, Mapping):
+        raise ValueError("consulting page plan is missing")
+    lines = [f"Page purpose: {plan.get('page_purpose', '')}"]
+    for label, key in (
+        ("Primary relationship", "primary_relationship"),
+        ("Core exhibit", "core_exhibit"),
+        ("Support groups", "support_groups"),
+        ("Reading path", "reading_path"),
+        ("Local visuals", "local_visuals"),
+    ):
+        lines.append(f"{label}: {_canonical_text(plan.get(key))}")
+    selected = value.get("selected_references")
+    if not isinstance(selected, list):
+        raise ValueError("selected references are missing")
+    lines.extend(
+        f"Reference {reference['material_id']}: use: {reference['use']}; preserve: {reference['preserve']}"
+        for reference in selected
+        if isinstance(reference, Mapping)
+    )
+    return "\n".join(lines)
 
 
 def _without_compiler_owned_clauses(text: str, *, task_section: bool) -> str:
@@ -255,58 +326,68 @@ def compile_consulting_six_part_prompt(
     font_accent_allowed: bool | None = False,
 ) -> str:
     """Compile exactly six consulting-report sections in their sealed order."""
-    if value.get("schema_version") not in {
-        "awesome-consulting-page-director-v2",
+    schema_version = value.get("schema_version")
+    if schema_version not in {
+        "awesome-consulting-page-director-v3",
         "awesome-page-correction-v2",
     }:
-        raise ValueError("consulting prompt requires a v2 director or correction authority")
-    sections = _validated_sections(value)
+        raise ValueError("consulting prompt requires a v3 director or v2 correction authority")
     positive_color, prohibited_color = _color_constraints(
         material_view, font_accent_allowed=font_accent_allowed
     )
-    for _heading, key in SECTION_SPECS:
-        original = sections[key]
-        sections[key] = _without_compiler_owned_clauses(
-            original, task_section=key == "task_and_canvas"
-        )
-        sections[key] = sections[key].replace(positive_color, "").replace(
-            prohibited_color, ""
-        ).strip()
-        fixed_or_safe_restatement = any(
-            pattern.search(original) for pattern in _FIXED_TERMS
-        ) or _SAFE_REGION.search(original)
-        if not sections[key] and (
-            key != "task_and_canvas" or fixed_or_safe_restatement
-        ):
-            raise ValueError(
-                f"consulting prompt section {key} contains only compiler-owned boundary clauses"
+    if schema_version == "awesome-page-correction-v2":
+        sections = _validated_sections(value)
+        for _heading, key in SECTION_SPECS:
+            original = sections[key]
+            sections[key] = _without_compiler_owned_clauses(
+                original, task_section=key == "task_and_canvas"
             )
-    sections["task_and_canvas"] = _join(
-        (sections["task_and_canvas"], _background_constraint(material_view), _TASK_CONSTRAINT)
-    )
-    sections["core_proposition_and_content"] = _join(
-        (
-            sections["core_proposition_and_content"],
-            _ARGUMENT_CONSTRAINT,
-            _VISIBLE_TEXT_CUSTODY,
-            _QUANTITATIVE_CONTENT_CONSTRAINT,
+            sections[key] = sections[key].replace(positive_color, "").replace(
+                prohibited_color, ""
+            ).strip()
+        sections["task_and_canvas"] = _join(
+            (sections["task_and_canvas"], _background_constraint(material_view), _TASK_CONSTRAINT)
         )
-    )
-    sections["consulting_information_architecture"] = _join(
-        (
-            sections["consulting_information_architecture"],
-            _ARCHITECTURE_CONSTRAINT,
-            _DUAL_MODE_RELATIONSHIP_CONSTRAINT,
+        sections["core_proposition_and_content"] = _join(
+            (VISIBLE_COPY_BOUNDARY, sections["core_proposition_and_content"], FRONTEND_FIDELITY)
         )
-    )
+        sections["consulting_information_architecture"] = _join(
+            (sections["consulting_information_architecture"], _ARCHITECTURE_CONSTRAINT, LOCAL_VISUAL_SCOPE)
+        )
+    else:
+        architecture = _page_plan_architecture(value).replace(
+            positive_color, ""
+        ).replace(prohibited_color, "")
+        sections = {
+            "task_and_canvas": _TASK_CONSTRAINT,
+            "core_proposition_and_content": _join(
+                (VISIBLE_COPY_BOUNDARY, _complete_fact_content(material_view), FRONTEND_FIDELITY)
+            ),
+            "consulting_information_architecture": _join(
+                (architecture, _ARCHITECTURE_CONSTRAINT, LOCAL_VISUAL_SCOPE)
+            ),
+            "visual_style_and_color": "",
+            "text_and_typography": "",
+            "strict_prohibitions": "",
+        }
     sections["visual_style_and_color"] = _join(
-        (sections["visual_style_and_color"], positive_color)
+        (
+            sections["visual_style_and_color"],
+            _background_constraint(material_view) if schema_version != "awesome-page-correction-v2" else "",
+            positive_color,
+        )
     )
     sections["text_and_typography"] = _join(
         (sections["text_and_typography"], _TYPOGRAPHY_CONSTRAINT)
     )
     sections["strict_prohibitions"] = _join(
-        (sections["strict_prohibitions"], prohibited_color, _QUALITATIVE_PROHIBITION)
+        (
+            sections["strict_prohibitions"],
+            _FIXED_AND_SOURCE_PROHIBITION,
+            _QUANTITATIVE_CONTENT_CONSTRAINT,
+            prohibited_color,
+            _QUALITATIVE_PROHIBITION,
+        )
     )
     return "\n\n".join(
         f"## {heading}\n{sections[key]}" for heading, key in SECTION_SPECS
