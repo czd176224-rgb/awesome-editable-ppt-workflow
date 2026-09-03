@@ -360,8 +360,28 @@ def _validate_director_value(
 
     page_plan = value["page_plan"]
     assert isinstance(page_plan, Mapping)
+    if value["page_number"] != material_view.value["page_number"]:
+        raise ValueError("director page_number must match the material page")
     if not str(page_plan["page_purpose"]).strip():
         raise ValueError("page_purpose must contain non-whitespace text")
+    relationship = page_plan["primary_relationship"]
+    assert isinstance(relationship, Mapping)
+    nodes = relationship["nodes"]
+    edges = relationship["edges"]
+    assert isinstance(nodes, list) and isinstance(edges, list)
+    for node in nodes:
+        if not str(node["node_id"]).strip() or not str(node["label"]).strip():
+            raise ValueError("relationship node_id and label must contain non-whitespace text")
+    for edge in edges:
+        if "label" in edge and not str(edge["label"]).strip():
+            raise ValueError("relationship edge label must contain non-whitespace text")
+    if relationship["grammar"] in {"flow", "hierarchy", "geography", "causality"}:
+        if not str(relationship["visual_instruction"]).strip():
+            raise ValueError("structural visual_instruction must contain non-whitespace text")
+        if not nodes:
+            raise ValueError("structural primary relationship requires source-bound nodes")
+        if not edges:
+            raise ValueError("structural primary relationship requires at least one edge")
     _validate_fact_allocation(page_plan, material_view)
     selected = value["selected_references"]
     assert isinstance(selected, list)

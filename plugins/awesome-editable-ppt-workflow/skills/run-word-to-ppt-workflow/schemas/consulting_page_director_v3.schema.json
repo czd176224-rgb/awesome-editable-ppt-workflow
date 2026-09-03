@@ -115,27 +115,7 @@
         "visual_instruction": {"type": "string", "minLength": 1},
         "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
         "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "grammar": {
-                "type": "string",
-                "enum": ["flow", "hierarchy", "geography", "causality"]
-              }
-            },
-            "required": ["grammar"]
-          },
-          "then": {
-            "properties": {
-              "visual_instruction": {"type": "string", "minLength": 1, "pattern": "\\S"},
-              "nodes": {"minItems": 1},
-              "edges": {"minItems": 1}
-            }
-          }
-        }
-      ]
+      }
     },
     "exhibit": {
       "type": "object",
