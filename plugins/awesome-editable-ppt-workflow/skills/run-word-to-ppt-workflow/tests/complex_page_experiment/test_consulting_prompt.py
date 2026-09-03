@@ -399,7 +399,7 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
     assert "complete explanations and scoped qualifiers" in prompt
     assert "instruction metadata, not visible copy" in prompt
     assert "Lossless rewording, regrouping, and text-to-diagram conversion are allowed" in prompt
-    assert "Do not invent causal links, loops, ranks, or values, or add claims" in prompt
+    assert "do not calculate new metrics, infer missing values" in prompt
     assert "Let relationships shape space" in prompt
     assert "parallel peers keep the same tone" in prompt
     assert "derived shades of secondary color #CD202A" in prompt
@@ -407,7 +407,7 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
     assert "support #E1797F" in prompt
     assert "soft #F0BCBF" in prompt
     assert "wash #F9E4E5" in prompt
-    assert "grouping and visual hierarchy" in prompt
+    assert "Labels, legends, numbering, and spatial structure remain primary" in prompt
     assert "at least two visibly distinct tones" in prompt
     assert "Do not use color as the sole carrier of a fact or relationship" in prompt
     assert "This is a user-confirmed emphasis page" in prompt
@@ -439,6 +439,21 @@ def test_specific_page_relations_survive_in_six_part_prompt() -> None:
     assert "".join(relationship.split()) in "".join(prompt.split())
     assert len([line for line in prompt.splitlines() if line.startswith("## ")]) == 6
     assert "creative_direction" not in prompt
+
+
+def test_page_purpose_repeating_a_complete_fact_uses_only_its_source_id() -> None:
+    module = _load_compiler_module()
+    value = _director_value()
+    fact = _word_facts()[0]["text"]
+    value["page_plan"]["page_purpose"] = fact
+
+    prompt = module.compile_consulting_six_part_prompt(value, _material_view())
+    sections = _compiled_sections(prompt)
+
+    assert prompt.count(fact) == 1
+    assert fact in sections["Core Proposition and Content"]
+    assert fact not in sections["Consulting Information Architecture"]
+    assert "[source fact body-1 in section 2]" in sections["Consulting Information Architecture"]
 
 
 @pytest.mark.parametrize("content,relationships", [
@@ -509,12 +524,11 @@ def test_lean_prompt_allows_spatial_and_color_structure_without_measured_claims(
     )
 
     assert design in "".join(prompt.split())
-    assert "large fills, wide paths, and structural geometry" in prompt
     assert "ordinary layout size, position, or hierarchy" in prompt
-    assert "not measured magnitude" in prompt
-    assert "source-explicit process, hierarchy, stage, or visual focus" not in prompt
+    assert "masquerade as measured scale" in prompt
+    assert "source-explicit process, hierarchy, stage, or visual focus" in prompt
     assert "at least two visibly distinct tones" in prompt
-    assert "invent causal links, loops, ranks, or values" in prompt
+    assert "proportional geometry" in prompt
     assert len([line for line in prompt.splitlines() if line.startswith("## ")]) == 6
 
 
@@ -682,9 +696,9 @@ def test_compiler_keeps_quantitative_and_qualitative_discipline_inside_six_secti
         assert analysis_layer in prompt
     for forbidden_geometry in (
         "numeric axes",
-        "proportions",
-        "size ranking",
-        "differences",
+        "proportional geometry",
+        "bubble-size ranking",
+        "difference magnitude",
     ):
         assert forbidden_geometry in prompt
     assert "do not calculate new metrics" in prompt
@@ -698,13 +712,13 @@ def test_compiled_prompt_keeps_charts_optional_and_local() -> None:
     )
 
     assert "Compose the whole slide first" in prompt
-    assert "complete compatible source values and labels" in prompt
+    assert "source evidence is complete and unambiguous" in prompt
     assert "Use charts only when they help" in prompt
     assert "KPIs, dates and counts may stay text" in prompt
     assert "complete data does not require a chart" in prompt
     assert "ordinary layout size, position, or hierarchy" in prompt
-    assert "Data marks need complete compatible source values and labels" in prompt
-    assert "use the named qualitative substitute" not in prompt
+    assert "Use a quantitative form only" in prompt
+    assert "use the named qualitative substitute" in prompt
     assert "otherwise use" not in prompt
 
 
@@ -777,6 +791,17 @@ def test_compiler_accepts_the_v2_correction_authority() -> None:
     prompt = module.compile_consulting_six_part_prompt(value, _material_view())
 
     assert "## Consulting Information Architecture" in prompt
+
+
+def test_correction_rejects_a_section_reduced_to_compiler_owned_boilerplate() -> None:
+    module = _load_compiler_module()
+    value = _correction_value()
+    value["prompt_sections"]["core_proposition_and_content"] = (
+        "Do not generate title, logo, footer, or page number."
+    )
+
+    with pytest.raises(ValueError, match="only compiler-owned boundary clauses"):
+        module.compile_consulting_six_part_prompt(value, _material_view())
 
 
 def test_non_mechanical_correction_runs_through_temporary_v2_compiler(tmp_path: Path) -> None:

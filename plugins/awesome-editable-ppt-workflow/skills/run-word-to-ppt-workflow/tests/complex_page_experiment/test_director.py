@@ -1053,9 +1053,9 @@ def test_compiler_owns_the_sealed_ui_canvas_background() -> None:
     prompt = compile_consulting_six_part_prompt(
         value, _compiler_material_view("#FFFFFF")
     )
-    scene = _compiled_prompt_sections(prompt)["Task and Canvas"]
+    style = _compiled_prompt_sections(prompt)["Visual Style and Color"]
 
-    assert "#FFFFFF" in scene
+    assert "#FFFFFF" in style
     assert prompt.count("#FFFFFF") == 1
 
 
