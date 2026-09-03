@@ -919,8 +919,11 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
                 root / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
                 / "pages" / "page_001" / "manifest.json"
             )
-            manifest = _read_json(manifest_path) if manifest_path.is_file() else {"charts": []}
-            normalized = normalize_manifest(manifest)
+            normalized = (
+                normalize_manifest(_read_json(manifest_path))
+                if manifest_path.is_file()
+                else {"charts": []}
+            )
             if page_number == 1:
                 normalized["charts"] = []
             chart_manifests.append(normalized)
