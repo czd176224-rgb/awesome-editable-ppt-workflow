@@ -329,8 +329,13 @@ def _validate_director_value(
     font_accent_allowed: bool = False,
 ) -> tuple[str, ...]:
     schema = _load_schema()
+    validated_value = json.loads(json.dumps(value))
+    relationship = validated_value.get("page_plan", {}).get("primary_relationship", {})
+    for edge in relationship.get("edges", []):
+        if isinstance(edge, dict):
+            edge.setdefault("label", None)
     errors = sorted(
-        Draft202012Validator(schema).iter_errors(dict(value)),
+        Draft202012Validator(schema).iter_errors(validated_value),
         key=lambda error: list(error.absolute_path),
     )
     if errors:
@@ -352,7 +357,7 @@ def _validate_director_value(
         if not str(node["node_id"]).strip() or not str(node["label"]).strip():
             raise ValueError("relationship node_id and label must contain non-whitespace text")
     for edge in edges:
-        if "label" in edge and not str(edge["label"]).strip():
+        if edge.get("label") is not None and not str(edge["label"]).strip():
             raise ValueError("relationship edge label must contain non-whitespace text")
     if relationship["grammar"] in {"flow", "hierarchy", "geography", "causality"}:
         if not str(relationship["visual_instruction"]).strip():
