@@ -49,10 +49,12 @@ function Get-RuntimeProvenance([string]$Root, [string]$ExpectedCommit) {
     $clean = [string]::IsNullOrWhiteSpace($status)
     $matchesExpected = $head -eq $ExpectedCommit
     if (-not $matchesExpected -or -not $clean) {
-        throw "runtime provenance mismatch: root=$Root expected=$ExpectedCommit actual=$head clean=$clean"
+        throw "runtime checkout-state mismatch: root=$Root expected=$ExpectedCommit actual=$head clean=$clean"
     }
     return [ordered]@{
-        verified = $true
+        checkout_state_verified = $true
+        run_binding_verified = $false
+        run_binding_note = 'No genuine pre-run timestamped execution receipt binds this preserved checkout to the historical run. Checkout identity is verified; run binding is explicitly unverified.'
         source_root = $Root
         scripts_path = Join-Path $Root $runtimeScriptsRelative
         expected_commit = $ExpectedCommit
@@ -242,9 +244,8 @@ $runs = foreach ($spec in $runSpecs) {
         name = $spec.name
         label = $spec.label
         project_root = $spec.project
-        runtime_source_commit = $provenance.actual_head
+        preserved_checkout_head = $provenance.actual_head
         runtime_provenance = $provenance
-        run_pages_command = "python $($provenance.scripts_path)\word_to_editable_ppt.py v6 run-pages --project `"$($spec.project)`" --pages $($pages -join ' ')"
         plugin_id = $workflow.plugin_id
         plugin_version = $workflow.plugin_version
         word_project_sha256 = $workflow.word_source.sha256
@@ -363,7 +364,7 @@ $cards = foreach ($pageNumber in $pages) {
 $html = @"
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Task 12 Huangshi real A/B</title>
 <style>body{margin:0;background:#eef2f1;color:#15201e;font:14px/1.5 "Microsoft YaHei",sans-serif}main{max-width:1900px;margin:auto;padding:24px}h1{margin:0 0 8px}p{color:#52615e}section{background:white;border:1px solid #ccd8d5;border-radius:12px;margin:20px 0;padding:16px;box-shadow:0 4px 18px #173f3512}h2{margin:0 0 12px;font-size:20px}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{border:1px solid #d4ddda;vertical-align:top;padding:8px}th{background:#e7efed}th:first-child,td:first-child{width:18%}th:last-child,td:last-child{width:16%}img{width:100%;height:auto;display:block}.facts{font-size:12px}.notes{font-size:12px}.meta{font-size:11px;color:#53625f;margin-bottom:6px}.missing{min-height:120px;display:grid;place-items:center;color:#a22626;background:#fafafa}</style>
-</head><body><main><h1>Huangshi Task 12 — real plugin A/B comparison</h1><p>Same Word bytes, logo bytes, taskbook, and visual contract. Document content is kept in the first column; generated instructions are reported only in result notes and the machine-readable manifest.</p><p><strong>Manual complete-fact-coverage pass counts:</strong> baseline $($manualPassCounts.baseline)/8; candidate A $($manualPassCounts.'candidate-a')/8; candidate B $($manualPassCounts.'candidate-b')/8. Release conclusion: $($manualAudit.release_conclusion).</p>$($cards -join "`n")</main></body></html>
+</head><body><main><h1>Huangshi Task 12 — real plugin A/B comparison</h1><p>Same Word bytes, logo bytes, taskbook, and visual contract. Document content is kept in the first column; generated instructions are reported only in result notes and the machine-readable manifest.</p><p><strong>Runtime provenance:</strong> preserved checkout state verified for baseline and candidate sources; historical run binding unverified because no genuine pre-run timestamped execution receipt exists.</p><p><strong>Manual complete-fact-coverage pass counts:</strong> baseline $($manualPassCounts.baseline)/8; candidate A $($manualPassCounts.'candidate-a')/8; candidate B $($manualPassCounts.'candidate-b')/8. Release conclusion: $($manualAudit.release_conclusion).</p>$($cards -join "`n")</main></body></html>
 "@
 $htmlPath = Join-Path $OutputRoot 'task-12-ab-comparison.html'
 $html | Set-Content -LiteralPath $htmlPath -Encoding utf8
