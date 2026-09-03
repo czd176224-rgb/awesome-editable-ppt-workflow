@@ -110,61 +110,6 @@ class ImageRequest:
 
 def _capability_secret() -> bytes:
     return signing_key()[1]
-    # Legacy single-key initialization below remains migration-only unreachable.
-    base = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser().resolve()
-    directory = base / "plugin-secrets"
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if v6_media._is_link_or_reparse(directory):
-        raise ValueError("plugin capability secret directory is unsafe")
-    path = directory / "awesome-editable-ppt-workflow.image-request.key"
-    if not path.exists():
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
-        try:
-            fd = os.open(path, flags, 0o600)
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(secrets.token_bytes(32))
-        except FileExistsError:
-            pass
-    if v6_media._is_link_or_reparse(path):
-        raise ValueError("plugin capability secret is unsafe")
-    if os.name == "nt":
-        import subprocess as _sp
-        sid_result = _sp.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True, check=False)
-        sid_match = re.search(r"S-1-5-(?:\d+-)+\d+", sid_result.stdout)
-        if sid_result.returncode != 0 or sid_match is None:
-            raise ValueError("plugin capability secret owner SID cannot be verified")
-        owner_sid = sid_match.group(0)
-        if not path.exists():
-            raise ValueError("plugin capability secret disappeared before ACL verification")
-        _sp.run(["icacls", str(path), "/inheritance:r", "/grant:r",
-                 f"*{owner_sid}:(F)", "*S-1-5-18:(F)", "*S-1-5-32-544:(F)"],
-                capture_output=True, text=True, check=True)
-        acl_script = (
-            "& { param($p) $ErrorActionPreference='Stop'; (Get-Acl -LiteralPath $p).Access | ForEach-Object {"
-            "$sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value;"
-            "Write-Output ($sid+'|'+$_.AccessControlType+'|'+$_.FileSystemRights+'|'+$_.IsInherited)} }"
-        )
-        acl = _sp.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", acl_script, str(path)],
-                      capture_output=True, text=True, check=False)
-        if acl.returncode != 0 or not acl.stdout.strip():
-            raise ValueError("plugin capability secret ACL cannot be verified")
-        acl_sids = set()
-        for line in acl.stdout.splitlines():
-            fields = line.strip().split("|")
-            if len(fields) != 4 or fields[1] != "Allow" or fields[3] != "False":
-                raise ValueError("plugin capability secret ACL is inherited or denied")
-            acl_sids.add(fields[0])
-        allowed = {owner_sid, "S-1-5-18", "S-1-5-32-544"}
-        if not allowed.issubset(acl_sids) or not acl_sids.issubset(allowed):
-            raise ValueError("plugin capability secret ACL contains broad or unknown trustees")
-    else:
-        mode = path.stat().st_mode & 0o777
-        if mode & 0o077:
-            raise ValueError("plugin capability secret must be owner-only")
-    data = path.read_bytes()
-    if len(data) != 32:
-        raise ValueError("plugin capability secret is invalid")
-    return data
 
 
 def _issue_capability(

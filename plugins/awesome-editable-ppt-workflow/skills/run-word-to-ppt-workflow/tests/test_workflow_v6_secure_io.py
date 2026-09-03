@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import inspect
 import os
 import subprocess
 import sys
@@ -22,6 +24,14 @@ import codex_gpt_image  # noqa: E402
 
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="real Windows junction race test")
+
+
+def test_image_capability_secret_uses_only_the_shared_keyring() -> None:
+    function = ast.parse(inspect.getsource(workflow_v6_image._capability_secret)).body[0]
+
+    assert isinstance(function, ast.FunctionDef)
+    assert len(function.body) == 1
+    assert ast.unparse(function.body[0]) == "return signing_key()[1]"
 
 
 def _junction(link: Path, target: Path) -> None:
