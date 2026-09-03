@@ -9,6 +9,7 @@
 - Every Huangshi sealed manifest derives from its page's signed plan. The acceptance fixture also applies the existing relationship-arrowhead reconstruction helper before final readback.
 - Review fix round 1 restores page 10's source-backed `420`/`100` numeric authority (`亿元`, `2030年`) and builds one editable native bar chart. Final deck readback verifies its series, category labels, values, unit and period; only the other 41 pages assert that no chart exists.
 - Multi-page assembly now preserves editable charts on non-first pages by omitting their non-copyable source relationship during slide XML transfer and rebuilding them from the persisted worker manifest with the existing native-chart builder. Existing native-direct pages without a worker manifest remain supported.
+- Review fix round 2 makes that fallback fail closed: manifestless assembly is allowed only when the final page report has no accepted receipt, project state has no selected candidate, and no acceptance receipt exists. A sealed or accepted page missing its reconstruction manifest is rejected before slide copying or final deck output, so an editable chart cannot be silently dropped.
 - The release gate runs Huangshi acceptance after the existing authority suites, not in the initial generic test batch.
 - `public-source-manifest.json` and `public-release-audit.json` were regenerated from clean committed state with the existing export script.
 
@@ -19,6 +20,8 @@
 - `625c997` — restore Huangshi page 10 numeric authority and preserve native charts in assembled decks.
 - `19334d7` — retain compatibility with manifestless native-direct page assembly.
 - `42914eb` — regenerate public controls from the final chart-preserving code commit.
+- `4fc896f` — require reconstruction manifests for sealed/accepted page assembly and add paired native-direct/sealed regressions.
+- `7cbc991` — regenerate public controls from the fail-closed committed source.
 
 ## Verification
 
@@ -31,6 +34,9 @@
 - Review fix round 1 clean authority/Huangshi suite: `37 passed, 1 skipped in 215.17s`.
 - Review fix round 1 clean director/compiler suite: `143 passed in 28.86s`; public contract/metadata suite: `15 passed in 22.84s`.
 - Review fix round 1 clean final release-hardening after regenerated controls: `24 passed in 295.40s`.
+- Review fix round 2 paired manifestless assembly regressions: `2 passed in 5.88s`.
+- Review fix round 2 assembly/authority/quantitative/Huangshi suite: `39 passed, 1 skipped in 214.13s`.
+- Review fix round 2 clean final release-hardening after regenerated controls: `24 passed in 290.14s`.
 - `verify.ps1 -MetadataOnly`: `verify-metadata-preflight=ok`.
 - Removed-v2 active-surface scan: clean.
 - `git diff --check`: pass.
