@@ -110,7 +110,7 @@ def _copied_state_without_material_reads(workspace: ExperimentWorkspace) -> dict
     return cast(dict[str, Any], value)
 
 
-def _verify_signed_receipt(workspace: ExperimentWorkspace, data: bytes) -> dict[str, object]:
+def verify_signed_acceptance_receipt(workspace: ExperimentWorkspace, data: bytes) -> dict[str, object]:
     value = _json(data, "accepted-image receipt")
     errors = sorted(Draft202012Validator(_schema()).iter_errors(value), key=lambda error: list(error.absolute_path))
     if errors:
@@ -358,17 +358,17 @@ def load_accepted_image_seal(workspace: ExperimentWorkspace) -> AcceptedImageSea
         return None
     if present == (True, False):
         experiment_bytes = read_bytes(root, experiment_relative, max_bytes=4 * 1024 * 1024)
-        _verify_signed_receipt(workspace, experiment_bytes)
+        verify_signed_acceptance_receipt(workspace, experiment_bytes)
         atomic_write_bytes(root, canonical_receipt, experiment_bytes)
     elif present == (False, True):
         canonical_bytes = read_bytes(root, canonical_receipt, max_bytes=4 * 1024 * 1024)
-        _verify_signed_receipt(workspace, canonical_bytes)
+        verify_signed_acceptance_receipt(workspace, canonical_bytes)
         atomic_write_bytes(root, experiment_relative, canonical_bytes)
     experiment_bytes = read_bytes(root, experiment_relative, max_bytes=4 * 1024 * 1024)
     canonical_bytes = read_bytes(root, canonical_receipt, max_bytes=4 * 1024 * 1024)
     if experiment_bytes != canonical_bytes:
         raise ValueError("accepted-image receipts do not match")
-    value = _verify_signed_receipt(workspace, experiment_bytes)
+    value = verify_signed_acceptance_receipt(workspace, experiment_bytes)
     _validate_sealed_checkpoint(workspace, value)
     state = _copied_state_without_material_reads(workspace)
     page = state["pages"][workspace.page_number - 1]
@@ -441,6 +441,7 @@ def _acceptance_value(workspace: ExperimentWorkspace, material_view: CompletePag
         "source_snapshot_sha256": workspace.source_snapshot_sha256,
         "source_identity": archive["source_identity"], "ui_revision": archive["ui_revision"],
         "ui_digest": archive["ui_digest"], "material_view_sha256": archive["page_material_digest"],
+        "page_plan": director.page_plan,
         "candidate": candidate_value,
         "candidate_history_sha256": _history_digest(workspace, attempts, prompt=False),
         "prompt_history_sha256": _history_digest(workspace, attempts, prompt=True),
@@ -468,7 +469,7 @@ def _acceptance_value(workspace: ExperimentWorkspace, material_view: CompletePag
     key_id, key = signing_key()
     value["key_id"] = key_id
     value["hmac_sha256"] = hmac.new(key, _canonical(value).rstrip(b"\n"), hashlib.sha256).hexdigest()
-    _verify_signed_receipt(workspace, _canonical(value))
+    verify_signed_acceptance_receipt(workspace, _canonical(value))
     return value
 
 
@@ -509,8 +510,8 @@ def seal_accepted_image(workspace: ExperimentWorkspace, *, material_view: Comple
     experiment_path = _publish_same_or_new(workspace.project_copy, experiment_relative, payload)
     canonical_receipt = _canonical_receipt(workspace)
     _publish_same_or_new(workspace.project_copy, canonical_receipt, payload)
-    _verify_signed_receipt(workspace, read_bytes(workspace.project_copy, experiment_relative))
-    _verify_signed_receipt(workspace, read_bytes(workspace.project_copy, canonical_receipt))
+    verify_signed_acceptance_receipt(workspace, read_bytes(workspace.project_copy, experiment_relative))
+    verify_signed_acceptance_receipt(workspace, read_bytes(workspace.project_copy, canonical_receipt))
     candidate_value = cast(Mapping[str, object], value["candidate"])
     state_candidate = {"path": candidate_value["path"], "sha256": candidate_value["sha256"], "attempt": candidate_value["attempt"], "receipt_path": canonical_receipt.as_posix()}
     _transition_copied_page(workspace, state_candidate, len(attempts))

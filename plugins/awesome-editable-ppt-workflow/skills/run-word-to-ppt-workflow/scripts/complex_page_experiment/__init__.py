@@ -38,6 +38,7 @@ from .loop import (
     load_accepted_image_seal,
     run_candidate_loop,
     seal_accepted_image,
+    verify_signed_acceptance_receipt,
 )
 
 __all__ = [
@@ -69,4 +70,5 @@ __all__ = [
     "load_accepted_image_seal",
     "run_candidate_loop",
     "seal_accepted_image",
+    "verify_signed_acceptance_receipt",
 ]

@@ -13,7 +13,10 @@ import pytest
 from PIL import Image
 
 from codex_subscription_runtime import CodexStructuredResult
-from complex_page_experiment import build_complete_page_material_view
+from complex_page_experiment import (
+    build_complete_page_material_view,
+    verify_signed_acceptance_receipt,
+)
 from complex_page_experiment.director import DirectorArtifact
 from complex_page_experiment.loop import (
     _local_correction,
@@ -190,6 +193,43 @@ def test_first_valid_candidate_accepts_without_default_extra_candidates(
     assert summary["call_totals"]["image2"] == 1
     assert summary["call_totals"]["visual_review"] == 1
     assert summary["call_totals"]["correction_decision"] == 0
+
+
+@pytest.mark.parametrize(
+    "path,replacement",
+    [
+        (("primary_relationship", "nodes", 0, "node_id"), "tampered-node"),
+        (("primary_relationship", "edges", 0, "to_node"), "tampered-endpoint"),
+        (("primary_relationship", "grammar"), "flow"),
+        (("core_exhibit", "fact_ids", 0), "tampered-fact"),
+        (("reading_path",), "tampered reading path"),
+    ],
+)
+def test_accepted_receipt_seals_exact_v3_page_plan(
+    provider_fixture, monkeypatch, path, replacement,
+):
+    workspace, view, _recorder, outcome = _run(
+        provider_fixture, monkeypatch, [_review_result("accept")]
+    )
+    assert outcome.accepted is not None
+    receipt = json.loads(outcome.accepted.receipt_path.read_text(encoding="utf-8"))
+    assert receipt["page_plan"] == _director_value(view)["page_plan"]
+    verify_signed_acceptance_receipt(
+        workspace, outcome.accepted.receipt_path.read_bytes()
+    )
+
+    target = receipt["page_plan"]
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = replacement
+
+    with pytest.raises(ValueError, match="signature"):
+        verify_signed_acceptance_receipt(
+            workspace,
+            (json.dumps(
+                receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ) + "\n").encode(),
+        )
 
 
 @pytest.mark.parametrize(
