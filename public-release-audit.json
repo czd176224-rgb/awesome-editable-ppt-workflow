@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v3-compact-page-plan",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "1ee72ce1d4e7fd8bd9663e7502d9673bc4412f72cec426440165a788382d5d8e",
+  "sourceManifestSha256": "79f55f6bdf81e5cd46a80207f890ea2d6859e8e56bf6294f6e227106fbe00d5f",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -98,8 +98,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/README.md",
-      "bytes": 3823,
-      "sha256": "ac733a99a81955afe9c55c8999da56e3ac62d69ee331a89840fc8f7e1550a22b"
+      "bytes": 4019,
+      "sha256": "dcaa15533b80cfd192d4a4c2fe7f7a1821327171c07259ef6f147dc6e2ea3a58"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/scripts/check_current_runtime.py",
@@ -873,8 +873,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction.py",
-      "bytes": 40069,
-      "sha256": "c7a9f4088e1f651c728ef1d936ef01c95d4f14afff60369d2f4bac7eaf05ebd0"
+      "bytes": 41612,
+      "sha256": "355df80f20869acfa86e136b263b194f0eed2f527ab2c0d1192f5f94694a8930"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/workflow_v6_reconstruction_worker.py",
@@ -1068,8 +1068,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_huangshi_v123_acceptance.py",
-      "bytes": 33397,
-      "sha256": "4a7ae738641d5827da322307a1fe2ab6fe3cd2b0e948ab7d33bd234a95a99a1c"
+      "bytes": 35496,
+      "sha256": "f48ab1369af735ec2a0e9447f5de4a7fc616fd4c14ed41a083405eb46037b419"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_internal_closed_design_plan.py",
@@ -1204,7 +1204,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 48582,
-      "sha256": "1ee72ce1d4e7fd8bd9663e7502d9673bc4412f72cec426440165a788382d5d8e"
+      "sha256": "79f55f6bdf81e5cd46a80207f890ea2d6859e8e56bf6294f6e227106fbe00d5f"
     },
     {
       "path": "README.md",
