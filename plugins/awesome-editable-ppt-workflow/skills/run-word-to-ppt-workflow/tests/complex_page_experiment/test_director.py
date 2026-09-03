@@ -58,8 +58,10 @@ TASKBOOK_VALUES = (
 )
 TASKBOOK_BOUNDARY = (
     "This taskbook is a user-confirmed presentation constraint, not factual source material. "
-    "It may change emphasis, hierarchy, reading path, evidence framing, and takeaway selection "
-    "only; it must not add, omit, rewrite, or move Word content."
+    "It may guide only how Word information maps to the compact page plan. Lossless within-page "
+    "rewording and regrouping are "
+    "allowed; the taskbook cannot authorize new facts, omitted information, altered meaning, "
+    "or moving content between pages."
 )
 
 
@@ -920,13 +922,25 @@ def test_director_request_injects_one_reference_between_authority_and_materials_
 def test_director_request_defines_only_the_compact_page_plan(tmp_path: Path):
     call, _sections = _captured_director_request(tmp_path)
     prompt = str(call["prompt"])
-    assert "Return only the compact v3 page plan and selected references" in prompt
+    assert "Return only selected references and these compact v3 page-plan fields" in prompt
     assert "complete data does not require a chart" in prompt
     assert "analytical_table" in prompt
     assert "flow, hierarchy, geography" in prompt
     assert "causality, quantitative_chart, or composition_architecture" in prompt
     assert "source_block_id exactly once" in prompt
-    for removed in ("machine audit", "creative direction", "prompt_sections"):
+    for removed in (
+        "machine audit",
+        "creative direction",
+        "prompt_sections",
+        "business_proposition",
+        "analytical_backbone",
+        "explanatory_lead",
+        "content_hierarchy",
+        "reading_path_and_density",
+        "takeaway_statement",
+        "evidence_interpretation_conclusion",
+        "supporting_visual_policy",
+    ):
         assert removed not in prompt.casefold()
 
 

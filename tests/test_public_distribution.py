@@ -89,7 +89,8 @@ def test_current_release_metadata_and_user_contract_are_consistent():
     assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
     assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert package["designAcceptancePolicy"] == "single-independent-review-with-at-most-two-corrections"
-    assert package["qaPolicyVersion"] == "sole-independent-consulting-visual-review-v2"
+    assert package["qaPolicyVersion"] == "sole-independent-five-hard-error-review-v3"
+    assert package["localRepairEndpoint"] == "deterministic-previous-image-local-edit-no-model-fallback"
     assert package["reconstructionVersion"] == "accepted-image-codex-worker-v2-sealed-text-repairs"
     docs = "\n".join(read(path) for path in (
         "README.md", "docs/RELEASE.md", "docs/USER_GUIDE.zh-CN.md", "docs/TROUBLESHOOTING.zh-CN.md"
@@ -133,7 +134,7 @@ def test_export_creates_public_metadata_and_removes_private_material(tmp_path):
     assert package["marketplace"] == "editable-ppt-public"
     assert package["repository"] == "czd176224-rgb/awesome-editable-ppt-workflow"
     assert package["repositoryVisibility"] == "public"
-    assert package["releaseStatus"] == "published-public-marketplace"
+    assert package["releaseStatus"] == "development-not-release-ready"
     audit = json.loads((output / "public-release-audit.json").read_text(encoding="utf-8-sig"))
     source_manifest = json.loads((output / "public-source-manifest.json").read_text(encoding="utf-8-sig"))
     assert audit["schemaVersion"] == "public-release-audit-v1"

@@ -81,10 +81,10 @@ if (
     $Package.marketplace -ne "editable-ppt-public" -or
     $Package.marketplacePreviewIdentity -ne "editable-ppt-public" -or
     $Package.repository -ne "czd176224-rgb/awesome-editable-ppt-workflow" -or
-    $Package.releaseStatus -ne "published-public-marketplace" -or
+    $Package.releaseStatus -ne "development-not-release-ready" -or
     $Package.repositoryVisibility -ne "public"
 ) {
-    throw "Public source metadata is not already sealed for the public marketplace."
+    throw "Public source metadata is not sealed for the reviewed development snapshot."
 }
 
 $MarketplacePath = Join-Path $OutputPath ".agents\plugins\marketplace.json"

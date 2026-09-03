@@ -40,7 +40,10 @@ from workflow_v6_reconstruction import (  # noqa: E402
 )
 from workflow_v6_reconstruction_worker import PageWorkerResult, reconstruct_accepted_page  # noqa: E402
 from workflow_v6_state import create, load  # noqa: E402
-from test_quantitative_chart_v123_e2e import _connector_endpoints  # noqa: E402
+from test_quantitative_chart_v123_e2e import (  # noqa: E402
+    _add_relationship_arrowheads,
+    _connector_endpoints,
+)
 from test_workflow_v6_reconstruction import _write_signed_receipt  # noqa: E402
 
 
@@ -121,12 +124,14 @@ def _production_worker(manifest: dict, calls: list[dict], director_prompt: str |
             capture_output=True, text=True, check=False,
         )
         assert dispatch.returncode == 0, dispatch.stderr
-        for command in (
+        for index, command in enumerate((
             [sys.executable, str(RUNTIME / "main.py"), "page", "build", str(request.page_dir)],
             [sys.executable, str(RUNTIME / "main.py"), "page", "validate", str(request.page_dir), "--report", "validation.json"],
-        ):
+        )):
             completed = subprocess.run(command, capture_output=True, text=True, check=False)
             assert completed.returncode == 0, completed.stdout or completed.stderr
+            if index == 0:
+                _add_relationship_arrowheads(request.page_dir / "page.pptx")
         validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
         assert validation["passed"] is True
         calls.append({"page_request": page_request, "accepted_request": accepted_request, "manifest": json.loads(manifest_path.read_text(encoding="utf-8")), "prompt": request.prompt_file.read_text(encoding="utf-8")})
@@ -226,22 +231,6 @@ def _director_result(value: dict) -> CodexStructuredResult:
 
 
 def _chart_fact(page_number: int, source_page: dict, source_text: str, grammar: str) -> dict:
-    if page_number == 10:
-        return {
-            "title": "2030年产业增加值目标",
-            "relationship": "target_by_industry",
-            "rendering_primitive": "column_bar",
-            "chart_variant": "bar",
-            "unit": "亿元",
-            "basis": "2030年产业增加值目标",
-            "period": "2030年",
-            "source_wording": source_page["blocks"][5]["text"],
-            "series": [{
-                "name": "产业增加值目标",
-                "categories": ["数字经济核心产业", "通用人工智能产业"],
-                "values": [420, 100],
-            }],
-        }
     return {
         "title": source_page["blocks"][1]["text"],
         "relationship": grammar,
@@ -458,15 +447,21 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
             chart_fact = _chart_fact(page_number, source_page, source_text, grammar)
             materials.write_text(json.dumps({"chart_facts": [chart_fact]}, ensure_ascii=False), encoding="utf-8")
             reconstruction_request = build_reconstruction_request(project, page_number=page_number)
-            if page_number == 10:
-                assert reconstruction_request["numeric_authority"] == chart_fact
-            else:
-                assert "numeric_authority" not in reconstruction_request
+            assert "numeric_authority" not in reconstruction_request
             assert reconstruction_request["page_plan"] == plan
             manifest = _manifest(page_number, labels, plan)
         else:
-            manifest = _manifest(page_number, (source_page["blocks"][2].get("text", "Source page"),))
+            receipt = json.loads(
+                (project / "04_v6/images" / f"page_{page_number:03d}.json").read_text(encoding="utf-8")
+            )
+            plan = receipt["page_plan"]
+            manifest = _manifest(
+                page_number,
+                (source_page["blocks"][2].get("text", "Source page"),),
+                plan,
+            )
         sealed_request = build_reconstruction_request(project, page_number=page_number)
+        assert sealed_request["page_plan"] == plan
         before = len(worker_calls)
         reconstruct_accepted_page(
             SimpleNamespace(project_copy=project, page_number=page_number),

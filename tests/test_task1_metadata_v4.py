@@ -25,7 +25,7 @@ def test_public_metadata_exposes_only_the_awesome_v1_product():
     assert package["releaseTag"] == "v1.2.3"
     assert package["workflowContractVersion"] == "awesome-word-ppt-workflow-v1"
     assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
-    assert package["qaPolicyVersion"] == "sole-independent-consulting-visual-review-v2"
+    assert package["qaPolicyVersion"] == "sole-independent-five-hard-error-review-v3"
     assert marketplace["plugins"] == [{
         **marketplace["plugins"][0],
         "name": "awesome-editable-ppt-workflow",

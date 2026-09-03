@@ -349,6 +349,12 @@ def test_hosted_workflows_prepare_secure_root_and_skip_only_office_bound_tests()
         assert "-SkipOfficeTests" in workflow
 
 
+def test_release_gate_runs_huangshi_acceptance_after_authority_suites():
+    gate = text("scripts/release_gate.ps1")
+    assert gate.index('foreach ($suite in @(') < gate.index('$HuangshiAcceptanceTest -q')
+    assert "Post-authority Huangshi acceptance failed." in gate
+
+
 def test_release_gate_validates_export_from_clean_public_development_checkout(tmp_path: Path):
     require_export_checkout()
     checkout = tmp_path / "checkout"

@@ -6,6 +6,8 @@ Public Codex plugin for converting a paginated Word document plus an SVG Logo in
 
 The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `consulting-page-director-v3-compact-page-plan`.
 
+This source branch is `development-not-release-ready`; a marketplace identity or historical A/B artifact is not release-readiness proof.
+
 - One Word page becomes one slide. The body is 1904x896 (17:8).
 - Non-contiguous Word page labels such as `第4页`、`第33页`、`第26页` remain in the user's order.
 - The first visible Word paragraph is the slide-title authority; later headings stay in the body.
@@ -13,14 +15,15 @@ The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is 
 - One three-step UI confirms a whole-deck director preset, the visual contract and a seven-field presentation taskbook. Word remains the factual and page-content authority.
 - The confirmed background color becomes the native whole-slide background on every final PPT page, while positioned fills may still structure the page body.
 - The confirmed emphasis content is conservatively matched to Word pages in the background. Only those pages may use the secondary-color family for text; non-emphasis pages retain hierarchy through weight, size, position, shapes and fills without secondary-family text.
-- One consulting page director turns each body into a coherent business argument with explanatory copy, an analytical backbone, evidence-to-interpretation-to-conclusion flow, and an explicit takeaway.
+- One consulting page director outputs only `page_purpose`, `primary_relationship`, `core_exhibit`, `support_groups`, `reading_path`, and `local_visuals`. Conclusions are used only when supplied by the source.
 - The director makes explicit source relationships visible through color, position, shape, connectors and hierarchy, including process, level, parallelism, ownership, comparison and causality.
 - Complete source-backed numeric dimensions can become editable native charts or editable special-chart shapes; incomplete relationships use named non-scaled substitutes and never invent quantitative geometry.
 - The sealed Image2 prompt has exactly six consulting-report sections. The compiler owns the canvas, fixed-layer exclusions, semantic color roles, accent limits, and formal-report prohibitions.
 - The single final UI submission is the sole material/reference authority. Every staged reference requires explicit keep/remove; the backend cannot reinterpret it afterward.
 - Zero confirmed references uses Image2 `generate`; 1-16 confirmed refs uses `edit`, preserving their ordered role descriptions.
 - Reference fusion is high-fidelity best effort, never a pixel-perfect guarantee.
-- The final adapted candidate receives a single independent consulting visual review. It rejects disconnected module grids, semantic-color misuse, and AI-heavy spectacle unsuitable for formal reporting. Only an explicit acceptance may enter reconstruction; a rejected page may use at most two corrections.
+- The final adapted candidate receives one independent review with exactly five hard-error categories: `fact_integrity`, `primary_relationship`, `core_exhibit_prominence`, `quantitative_truth`, and `severe_usability`.
+- A rejected page may receive at most two deterministic local edits of the immediately previous image. Each edit repairs one concrete defect, preserves the frozen page plan, and has no correction-model fallback.
 - The provider trace records the requested size, service-original dimensions and quality. The service image uses a dynamic centered 17:8 crop and uniform resize to 1904x896 without stretching.
 - Fixed title, original SVG logo, footer and page number are PPT layers and never Image2 body content.
 - V6 has no V4/V5 runtime fallback, exact overlay, or post-reconstruction visual repair.
