@@ -110,11 +110,12 @@ def _prepare_run(project: Path, reconstruction_request: dict[str, Any], page_num
         request_copy.write_bytes(encoded)
     page_request_path = page_dir / "page_request.json"
     page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
-    numeric_authority = reconstruction_request.get("numeric_authority")
-    if numeric_authority is None:
-        page_request.pop("numeric_authority", None)
-    else:
-        page_request["numeric_authority"] = numeric_authority
+    for authority in ("numeric_authority", "page_plan"):
+        value = reconstruction_request.get(authority)
+        if value is None:
+            page_request.pop(authority, None)
+        else:
+            page_request[authority] = value
     page_request_path.write_text(
         json.dumps(page_request, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

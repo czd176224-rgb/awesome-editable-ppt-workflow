@@ -30,6 +30,10 @@ from workflow_v6_materials import select_numeric_authority
 from workflow_v6_composition import load_composition_authority
 from workflow_v6_state import mutation_lock, save
 import workflow_v6_secure_io as secure_io
+from complex_page_experiment import (
+    open_live_page_workspace,
+    verify_signed_acceptance_receipt,
+)
 
 
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -214,7 +218,8 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
     if not accepted_receipt.is_file():
         raise ValueError("V6 accepted Image2 receipt is missing")
     receipt_bytes = secure_io.read_bytes(root, accepted_receipt.relative_to(root))
-    receipt = json.loads(receipt_bytes.decode("utf-8"))
+    workspace = open_live_page_workspace(root, page_number)
+    receipt = verify_signed_acceptance_receipt(workspace, receipt_bytes)
     if not isinstance(receipt, Mapping) or receipt.get("page_number") != page_number:
         raise ValueError("V6 accepted Image2 receipt identity is invalid")
     selected = receipt.get("candidate", receipt.get("selected"))
@@ -282,6 +287,7 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
         },
         "sealed_image_edits": [],
         "sealed_text_repairs": [dict(item) for item in repairs],
+        "page_plan": receipt["page_plan"],
         "geometry": geometry_contract(),
         "requirements": {
             "object_level_editable": True,
