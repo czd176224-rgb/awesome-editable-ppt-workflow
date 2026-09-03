@@ -487,8 +487,10 @@ def test_common_chinese_fact_does_not_corrupt_identifiers_or_longer_phrases() ->
         module.compile_consulting_six_part_prompt(value, material_view)
     )
     architecture = sections["Consulting Information Architecture"]
+    content_lines = sections["Core Proposition and Content"].splitlines()
 
-    assert f"[source fact {source_id} in section 2]\n{fact}" in sections["Core Proposition and Content"]
+    assert content_lines.count(fact) == 1
+    assert content_lines.count(f"[source fact {source_id} in section 2]") == 1
     assert "Page purpose: [source fact 项目-id in section 2]" in architecture
     assert '"node_id": "项目"' in architecture
     assert '"fact_ids": ["项目"]' in architecture
