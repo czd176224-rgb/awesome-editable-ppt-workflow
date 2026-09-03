@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v3-compact-page-plan",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "e3404b55be870d53f5b91496346f21b7977df0bfdc556ea7d635ca7c56570e6b",
+  "sourceManifestSha256": "3537ea973c30f599a409799741bef123d42e1a704b7497c9877d503c3986488c",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -1203,8 +1203,8 @@
     },
     {
       "path": "public-source-manifest.json",
-      "bytes": 44914,
-      "sha256": "e3404b55be870d53f5b91496346f21b7977df0bfdc556ea7d635ca7c56570e6b"
+      "bytes": 48581,
+      "sha256": "3537ea973c30f599a409799741bef123d42e1a704b7497c9877d503c3986488c"
     },
     {
       "path": "README.md",
