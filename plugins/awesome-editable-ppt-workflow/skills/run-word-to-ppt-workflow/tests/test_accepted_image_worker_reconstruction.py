@@ -32,6 +32,13 @@ from workflow_v6_reconstruction_worker import (  # noqa: E402
     reconstruct_accepted_page,
 )
 from workflow_v6_state import load, save  # noqa: E402
+from test_quantitative_chart_v123_e2e import (  # noqa: E402
+    _add_relationship_arrowheads,
+    _production_worker,
+    _qualitative_manifest,
+    _relationship_manifest,
+    _with_relationship,
+)
 
 
 def _accepted_outcome(project: Path, page_number: int = 1):
@@ -56,13 +63,26 @@ def _workspace(project: Path, page_number: int = 1):
 
 
 def _successful_worker(calls: list, text: str = "Editable worker output"):
+    def manifest(page_request):
+        value = _with_relationship(
+            _qualitative_manifest("flow", "timeline_roadmap"), page_request,
+        )
+        value["text_boxes"].append({
+            "object_id": "worker-output-text",
+            "name": "worker-output-text",
+            "box_px": [200, 300, 800, 100],
+            "text": text,
+            "font_size": 20,
+        })
+        return value
+
+    sealed_worker = _production_worker(
+        manifest, [], post_build=_add_relationship_arrowheads,
+    )
+
     def invoke(request):
         calls.append(request)
-        body = request.page_dir / "worker-body.pptx"
-        _body(body, text)
-        return PageWorkerResult(
-            status="completed", reconstructed_body=body, authority_mode="native_direct",
-        )
+        return sealed_worker(request)
 
     return invoke
 
@@ -148,25 +168,9 @@ def test_page_worker_request_copies_numeric_authority_before_whole_request_hash(
 
     def worker(request):
         calls.append(request)
-        completed = subprocess.run(
-            [
-                sys.executable,
-                str(EDITPPT_RUNTIME / "record_page_dispatch.py"),
-                str(request.run_dir),
-                "--page", "page_001",
-                "--agent-id", "test-worker",
-                "--prompt-file", str(request.prompt_file),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert completed.returncode == 0, completed.stderr
-        body = request.page_dir / "numeric-authority.pptx"
-        _body(body, "Numeric authority")
-        return PageWorkerResult(
-            status="completed", reconstructed_body=body, authority_mode="native_direct",
-        )
+        return _production_worker(
+            _relationship_manifest, [], post_build=_add_relationship_arrowheads,
+        )(request)
 
     reconstruct_accepted_page(
         _workspace(project), _accepted_outcome(project), page_worker=worker,
@@ -284,11 +288,7 @@ def test_unreadable_text_uses_paddle_once_then_same_page_worker(tmp_path: Path):
                 status="needs_paddle",
                 reason="accepted image text is too small to transcribe reliably",
             )
-        body = request.page_dir / "paddle-assisted.pptx"
-        _body(body, "Paddle assisted editable output")
-        return PageWorkerResult(
-            status="completed", reconstructed_body=body, authority_mode="native_direct",
-        )
+        return _successful_worker([], "Paddle assisted editable output")(request)
 
     def paddle(request):
         paddle_calls.append(request)

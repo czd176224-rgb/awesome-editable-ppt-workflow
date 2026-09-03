@@ -32,6 +32,12 @@ from complex_page_experiment.loop import signing_key  # noqa: E402
 
 
 def finalize_reconstructed_page(*args, **kwargs):
+    project = Path(args[0] if args else kwargs["project"])
+    page_number = kwargs["page_number"]
+    state = load(project)
+    state["pages"][page_number - 1]["selected_candidate"] = None
+    save(project, state)
+    (project / "04_v6" / "images" / f"page_{page_number:03d}.json").unlink(missing_ok=True)
     return _finalize_reconstructed_page(*args, authority_mode="native_direct", **kwargs)
 
 
@@ -398,7 +404,12 @@ def test_finalize_requires_exact_native_text_repair(tmp_path: Path):
     _body(wrong, "清出表现挂钩")
 
     with pytest.raises(ValueError, match="did not apply a sealed repair"):
-        finalize_reconstructed_page(project, page_number=1, reconstructed_body=wrong)
+        _finalize_reconstructed_page(
+            project,
+            page_number=1,
+            reconstructed_body=wrong,
+            authority_mode="native_direct",
+        )
 
     correct = tmp_path / "correct.pptx"
     _body(correct, "退出表现挂钩")

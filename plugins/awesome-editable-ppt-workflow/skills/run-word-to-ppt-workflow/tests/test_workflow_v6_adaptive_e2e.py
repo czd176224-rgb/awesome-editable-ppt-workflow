@@ -48,6 +48,12 @@ from fixed_region_contract import fixed_frame_execution  # noqa: E402
 
 
 def finalize_reconstructed_page(*args, **kwargs):
+    project = Path(args[0] if args else kwargs["project"])
+    page_number = kwargs["page_number"]
+    state = load(project)
+    state["pages"][page_number - 1]["selected_candidate"] = None
+    save(project, state)
+    (project / "04_v6" / "images" / f"page_{page_number:03d}.json").unlink(missing_ok=True)
     return _finalize_reconstructed_page(*args, authority_mode="native_direct", **kwargs)
 
 

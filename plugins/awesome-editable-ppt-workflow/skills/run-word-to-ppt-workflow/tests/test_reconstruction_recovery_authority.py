@@ -21,8 +21,52 @@ from test_quantitative_chart_v123_e2e import (  # noqa: E402
     _relationship_manifest,
     _relationship_project,
 )
-from test_workflow_v6_reconstruction import _write_signed_receipt  # noqa: E402
-from workflow_v6_reconstruction_worker import reconstruct_accepted_page  # noqa: E402
+from test_workflow_v6_reconstruction import _body, _project, _write_signed_receipt  # noqa: E402
+from workflow_v6_reconstruction import finalize_reconstructed_page  # noqa: E402
+from workflow_v6_reconstruction_worker import PageWorkerResult, reconstruct_accepted_page  # noqa: E402
+from workflow_v6_state import load, save  # noqa: E402
+
+
+def test_worker_adapter_cannot_downgrade_missing_sealed_authority(tmp_path: Path) -> None:
+    project = _project(tmp_path, 1)
+
+    def incomplete_worker(request):
+        body = request.page_dir / "incomplete-worker.pptx"
+        _body(body, "No sealed nodes, edges, or manifest")
+        return PageWorkerResult(status="completed", reconstructed_body=body)
+
+    with pytest.raises(ValueError, match="sealed reconstruction manifest is missing"):
+        reconstruct_accepted_page(
+            _workspace(project), _accepted_outcome(project), page_worker=incomplete_worker,
+        )
+
+
+def test_explicit_native_direct_requires_no_candidate_or_receipt(tmp_path: Path) -> None:
+    project = _project(tmp_path, 1)
+    body = tmp_path / "native-direct.pptx"
+    _body(body, "Native direct")
+    (project / "04_v6/images/page_001.json").unlink()
+
+    with pytest.raises(ValueError, match="selected candidate"):
+        finalize_reconstructed_page(
+            project,
+            page_number=1,
+            reconstructed_body=body,
+            authority_mode="native_direct",
+        )
+
+    state = load(project)
+    state["pages"][0]["selected_candidate"] = None
+    save(project, state)
+
+    report = finalize_reconstructed_page(
+        project,
+        page_number=1,
+        reconstructed_body=body,
+        authority_mode="native_direct",
+    )
+
+    assert report["fixed_frame"]["passed"] is True
 
 
 @pytest.mark.parametrize("defect", ["stale_binding", "replaced", "deleted"])

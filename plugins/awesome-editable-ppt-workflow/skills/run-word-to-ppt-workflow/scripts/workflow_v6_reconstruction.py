@@ -624,24 +624,15 @@ def _require_final_authority(
 ) -> Mapping[str, Any] | None:
     """Verify sealed worker authority before the host publishes the editable page."""
     if authority_mode == "native_direct":
+        page = _load_reconstruction_state(root)["pages"][page_number - 1]
+        if page.get("selected_candidate") is not None:
+            raise ValueError("V6 native-direct finalization cannot use a selected candidate")
         receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
-        if not receipt_path.is_file():
-            page = _load_reconstruction_state(root)["pages"][page_number - 1]
-            if page.get("state") not in {"accepted", "reconstructing", "page_complete"} or page.get(
-                "selected_candidate"
-            ) is not None:
-                raise ValueError("V6 native-direct acceptance authority is missing")
-            return None
-        receipt_bytes = secure_io.read_bytes(root, receipt_path.relative_to(root))
-        receipt = verify_signed_acceptance_receipt(
-            open_live_page_workspace(root, page_number), receipt_bytes,
-        )
-        if receipt.get("page_number") != page_number:
-            raise ValueError("V6 native-direct acceptance authority is invalid")
-        return {
-            "path": receipt_path.relative_to(root).as_posix(),
-            "sha256": hashlib.sha256(receipt_bytes).hexdigest(),
-        }
+        if receipt_path.exists():
+            raise ValueError("V6 native-direct finalization cannot use an acceptance receipt")
+        if page.get("state") not in {"accepted", "reconstructing", "page_complete"}:
+            raise ValueError("V6 native-direct acceptance authority is missing")
+        return None
     if authority_mode != "sealed_reconstruction":
         raise ValueError("V6 finalization authority mode is invalid")
     request_path = reconstructed_body.parent / "accepted_reconstruction_request.json"

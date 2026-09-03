@@ -44,7 +44,6 @@ class PageWorkerResult:
     status: Literal["completed", "needs_paddle", "failed"]
     reconstructed_body: Path | None = None
     reason: str | None = None
-    authority_mode: Literal["sealed_reconstruction", "native_direct"] = "sealed_reconstruction"
 
 
 PageWorker = Callable[[PageWorkerRequest], PageWorkerResult]
@@ -392,7 +391,7 @@ def reconstruct_accepted_page(
         project,
         page_number=page_number,
         reconstructed_body=body,
-        authority_mode=result.authority_mode,
+        authority_mode="sealed_reconstruction",
     )
     receipt = {
         "artifact_version": "accepted-image-worker-reconstruction-v1",
