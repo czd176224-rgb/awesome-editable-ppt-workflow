@@ -40,6 +40,7 @@ from workflow_v6_reconstruction import (  # noqa: E402
 )
 from workflow_v6_reconstruction_worker import PageWorkerResult, reconstruct_accepted_page  # noqa: E402
 from workflow_v6_state import create, load  # noqa: E402
+from test_quantitative_chart_v123_e2e import _connector_endpoints  # noqa: E402
 from test_workflow_v6_reconstruction import _write_signed_receipt  # noqa: E402
 
 
@@ -251,7 +252,7 @@ def _chart_fact(page_number: int, source_page: dict, source_text: str, grammar: 
     }
 
 
-def _manifest(source_page: int, grammar: str, labels: tuple[str, ...]) -> dict:
+def _manifest(source_page: int, labels: tuple[str, ...], page_plan: dict | None = None) -> dict:
     if source_page == 10:
         boxes = [(0.65 + column * 3.1, 1.35 + row * 1.65, 2.75, 1.1) for row in range(2) for column in range(3)]
     elif source_page == 20:
@@ -263,33 +264,47 @@ def _manifest(source_page: int, grammar: str, labels: tuple[str, ...]) -> dict:
     else:
         width = 8.4 / len(labels)
         boxes = [(0.8 + index * width, 1.75, width - 0.12, 1.5) for index in range(len(labels))]
+    relationship = page_plan["primary_relationship"] if page_plan else {"nodes": [], "edges": []}
+    if source_page == 20 and relationship["nodes"]:
+        relationship_boxes = [(4.175, 1.0, 1.65, 0.7), *[(0.55 + index * 1.8, 3.0, 1.45, 0.7) for index in range(5)]]
+    elif len(relationship["nodes"]) == len(boxes):
+        relationship_boxes = boxes
+    else:
+        width = 8.4 / max(1, len(relationship["nodes"]))
+        relationship_boxes = [(0.8 + index * width, 3.6, width - 0.12, 0.9) for index in range(len(relationship["nodes"]))]
+    node_boxes = {
+        node["node_id"]: box
+        for node, box in zip(relationship["nodes"], relationship_boxes, strict=True)
+    }
     connectors = []
-    if source_page == 20:
-        links = [(0, 1), (1, 2), (1, 3), (1, 4), (1, 5), (3, 6)]
-        for index, (start, end) in enumerate(links):
-            sx, sy, sw, sh = boxes[start]
-            ex, ey, ew, _eh = boxes[end]
-            connectors.append({
-                "object_id": f"page-20-hierarchy-connector-{index}",
-                "name": f"page-20-hierarchy-connector-{index}",
-                "type": "line",
-                "points_px": [*_point_px(sx + sw / 2, sy + sh), *_point_px(ex + ew / 2, ey)],
-                "stroke": "#6B7A90",
-            })
+    for edge in relationship["edges"]:
+        sx, sy, sw, sh = node_boxes[edge["from_node"]]
+        ex, ey, ew, eh = node_boxes[edge["to_node"]]
+        edge_id = f"edge:{edge['from_node']}->{edge['to_node']}"
+        connectors.append({
+            "object_id": edge_id,
+            "name": edge_id,
+            "type": "line",
+            "points_px": [*_point_px(sx + sw / 2, sy + sh / 2), *_point_px(ex + ew / 2, ey + eh / 2)],
+            "stroke": "#6B7A90",
+        })
     return {
         "workflow_contract_version": "fixed-canvas-cm-v2", "reconstruction_contract_version": "editable-image-v3",
         "slide": dict(SLIDE), "content_box": dict(CONTENT_BOX), "source": {"width_px": 1904, "height_px": 896},
         "text_inventory": [], "visual_inventory": [], "background_strategy": "native white body background",
         "quality_checks": {"font_size_calibrated": True, "visual_inventory_matched": True, "background_strategy_checked": True, "shape_corner_geometry_checked": True},
         "text_boxes": [
-            {"object_id": f"page-{source_page}-{grammar}-label-{index}", "name": f"page-{source_page}-{grammar}-label-{index}", "box_px": _box_px(x + 0.08, y + 0.15, w - 0.16, min(0.7, h - 0.2)), "text": label, "font_size": 12, "preview_font": PREVIEW_FONT, "align": "center"}
+            {"object_id": f"page-{source_page}-source-label-{index}", "name": f"page-{source_page}-source-label-{index}", "box_px": _box_px(x + 0.08, y + 0.15, w - 0.16, min(0.7, h - 0.2)), "text": label, "font_size": 12, "preview_font": PREVIEW_FONT, "align": "center"}
             for index, (label, (x, y, w, h)) in enumerate(zip(labels, boxes, strict=True))
         ],
         "tables": [],
-        "shapes": [
-            {"object_id": f"page-{source_page}-{grammar}-node-{index}", "name": f"page-{source_page}-{grammar}-node-{index}", "type": "rect", "box_px": _box_px(x, y, w, h), "fill": "#EAF2F8", "stroke": "#6B7A90"}
+        "shapes": ([
+            {"object_id": node["node_id"], "name": node["node_id"], "type": "rect", "box_px": _box_px(*node_boxes[node["node_id"]]), "fill": "#EAF2F8", "stroke": "#6B7A90"}
+            for node in relationship["nodes"]
+        ] if relationship["nodes"] else [
+            {"object_id": f"page-{source_page}-source-node-{index}", "name": f"page-{source_page}-source-node-{index}", "type": "rect", "box_px": _box_px(x, y, w, h), "fill": "#EAF2F8", "stroke": "#6B7A90"}
             for index, (x, y, w, h) in enumerate(boxes)
-        ] + connectors,
+        ]) + connectors,
         "images": [], "charts": [], "asset_provenance": [],
     }
 
@@ -360,6 +375,28 @@ def _preview_has_ink(image: Image.Image, shape, slide_width: int, slide_height: 
     return any(max(pixel) - min(pixel) > 12 or sum(pixel) < 690 for pixel in crop.get_flattened_data())
 
 
+def _assert_relationship_shapes(slide, page_plan: dict) -> None:
+    relationship = page_plan["primary_relationship"]
+    named = {shape.name: shape for shape in slide.shapes}
+    for node in relationship["nodes"]:
+        assert sum(shape.name == node["node_id"] for shape in slide.shapes) == 1
+
+    def inside(point: tuple[int, int], node) -> bool:
+        x, y = point
+        return node.left - 1 <= x <= node.left + node.width + 1 and node.top - 1 <= y <= node.top + node.height + 1
+
+    for edge in relationship["edges"]:
+        edge_name = f"edge:{edge['from_node']}->{edge['to_node']}"
+        connectors = [shape for shape in slide.shapes if shape.name == edge_name]
+        assert len(connectors) == 1
+        connector = connectors[0]
+        assert connector.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE
+        assert connector._element.spPr.prstGeom.get("prst") == "line"
+        x1, y1, x2, y2 = _connector_endpoints(connector)
+        assert inside((x1, y1), named[edge["from_node"]])
+        assert inside((x2, y2), named[edge["to_node"]])
+
+
 def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp_path: Path) -> None:
     if not WORD.is_file() or not LOGO.is_file():
         pytest.skip("user-supplied Huangshi acceptance files are not present")
@@ -426,9 +463,9 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
             else:
                 assert "numeric_authority" not in reconstruction_request
             assert reconstruction_request["page_plan"] == plan
-            manifest = _manifest(page_number, grammar, labels)
+            manifest = _manifest(page_number, labels, plan)
         else:
-            manifest = _manifest(page_number, "source_page", (source_page["blocks"][2].get("text", "Source page"),))
+            manifest = _manifest(page_number, (source_page["blocks"][2].get("text", "Source page"),))
         sealed_request = build_reconstruction_request(project, page_number=page_number)
         before = len(worker_calls)
         reconstruct_accepted_page(
@@ -453,34 +490,34 @@ def test_huangshi_controlled_acceptance_runs_real_production_path_without_ui(tmp
     assert all(not any(shape.has_chart for shape in slide.shapes) for slide in deck.slides)
     for source_number in SELECTED:
         slide = deck.slides[source_number - 1]
-        grammar, labels = PAGE_CONTRACTS[source_number]
+        _grammar, labels = PAGE_CONTRACTS[source_number]
         by_name = {shape.name: shape for shape in slide.shapes}
         names = set(by_name)
         assert "fixed-frame-logo" in names
-        assert any(grammar in name for name in names)
         assert not any(term in name.casefold() for name in names for term in ("axis", "gantt", "mekko", "target line", "difference arrow"))
         slide_text = "\n".join(shape.text for shape in slide.shapes if getattr(shape, "has_text_frame", False))
         assert all(label in slide_text for label in labels)
         assert by_name["fixed-frame-title"].text == source_pages[source_number]["blocks"][1]["text"]
         assert by_name["fixed-frame-page-number"].text == str(source_number)
-        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{grammar}-label-")]
-        nodes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{grammar}-node-")]
+        relationship = director_artifacts[source_number].page_plan["primary_relationship"]
+        _assert_relationship_shapes(slide, director_artifacts[source_number].page_plan)
+        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-source-label-")]
+        nodes = (
+            [by_name[node["node_id"]] for node in relationship["nodes"]]
+            if relationship["nodes"] else
+            [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-source-node-")]
+        )
         assert len(label_shapes) == len(labels)
         assert all(shape.has_text_frame for shape in label_shapes)
-        assert len(nodes) == len(label_shapes)
+        assert len(nodes) == len(relationship["nodes"] or label_shapes)
         if source_number == 14:
             assert len(nodes) == 7
             assert len({shape.width for shape in nodes}) == len({shape.top for shape in nodes}) == 1
         if source_number == 20:
-            connectors = [shape for name, shape in by_name.items() if name.startswith("page-20-hierarchy-connector-")]
-            assert len({shape.width for shape in nodes}) == 1
-            assert len(connectors) == 6
-            assert all(
-                shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE
-                and shape._element.spPr.prstGeom.get("prst") == "line"
-                for shape in connectors
-            )
-            assert len({shape.top for shape in nodes}) == 4
+            sealed_edges = {(edge["from_node"], edge["to_node"]) for edge in relationship["edges"]}
+            assert ("mother-fund", "subfunds") in sealed_edges
+            assert ("innovation", "subfunds") not in sealed_edges
+            assert len({shape.top for shape in nodes}) == 2
         if source_number == 21:
             assert nodes[0].width == nodes[1].width
             assert "没有完整披露" in slide_text
@@ -539,9 +576,8 @@ def test_huangshi_optional_assembled_powerpoint_preview(tmp_path: Path) -> None:
         preview_path.parent.mkdir(parents=True, exist_ok=True)
         preview.save(preview_path)
         by_name = {shape.name: shape for shape in slide.shapes}
-        grammar = PAGE_CONTRACTS[source_number][0]
         assert _preview_has_ink(preview, by_name["fixed-frame-title"], deck.slide_width, deck.slide_height)
         assert _preview_has_ink(preview, by_name["fixed-frame-logo"], deck.slide_width, deck.slide_height)
         assert _preview_has_ink(preview, by_name["fixed-frame-page-number"], deck.slide_width, deck.slide_height)
-        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-{grammar}-label-")]
+        label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-source-label-")]
         assert all(_preview_has_ink(preview, shape, deck.slide_width, deck.slide_height) for shape in label_shapes)
