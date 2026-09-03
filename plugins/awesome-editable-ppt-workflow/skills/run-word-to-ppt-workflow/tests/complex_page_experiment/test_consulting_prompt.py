@@ -88,41 +88,6 @@ def _load_compiler_module():
     return module
 
 
-def _director_value() -> dict[str, object]:
-    return {
-        "schema_version": "awesome-consulting-page-director-v2",
-        "page_number": 4,
-        "quality": "high",
-        "machine_record": {
-            "facts_and_sources": ["The proposition is supported by the Word body."],
-            "must_preserve_entities": ["Preserve every source-exact industry name."],
-            "core_content_and_comment_direction": ["Use a formal reporting expression."],
-            "material_use": [],
-            "selected_references": [],
-            "fixed_layer_exclusions": ["title", "logo", "footer", "page_number"],
-        },
-        "creative_direction": {
-            "business_proposition": "Three industry tasks require differentiated capital.",
-            "explanatory_lead": "Explain why one fund cannot cover every stage equally.",
-            "analytical_backbone": "Use one continuous three-lane portfolio map.",
-            "evidence_interpretation_conclusion": "Connect industries to capital needs and conclusion.",
-            "content_hierarchy": "Lead, analytical backbone, annotations, takeaway.",
-            "reading_path_and_density": "Read left to right with a dense but disciplined grid.",
-            "takeaway_statement": "Match capital tools to industry stages.",
-            "supporting_visual_policy": "Use restrained line icons only as navigation aids.",
-            "anti_ai_visual_policy": "Avoid cinematic scenes and decorative 3D objects.",
-        },
-        "prompt_sections": {
-            "task_and_canvas": "Create one coherent body-region consulting report image.",
-            "core_proposition_and_content": "Show the proposition, explanatory lead, evidence, and takeaway.",
-            "consulting_information_architecture": "Build one analytical backbone with a clear reading path.",
-            "visual_style_and_color": "Use a formal, restrained, grid-aligned consulting style.",
-            "text_and_typography": "Render accurate Simplified Chinese with presentation-scale hierarchy.",
-            "strict_prohibitions": "Avoid decorative hero scenes, miniature factories, neon, and 3D machinery.",
-        },
-    }
-
-
 def _material_view(*, font_accent_allowed: bool = True):
     return SimpleNamespace(
         value={
@@ -135,7 +100,7 @@ def _material_view(*, font_accent_allowed: bool = True):
     )
 
 
-def _compact_director_value() -> dict[str, object]:
+def _director_value() -> dict[str, object]:
     return {
         "schema_version": "awesome-consulting-page-director-v3",
         "page_number": 5,
@@ -216,6 +181,8 @@ def _compact_material_view():
                 "secondary_color": "#CD202A",
             },
             "body_frame": {"aspect_ratio": "17:8"},
+            "material_audit": "MATERIAL_AUDIT_SENTINEL",
+            "template_name": "TEMPLATE_NAME_SENTINEL",
         }
     )
 
@@ -224,7 +191,7 @@ def test_compiler_builds_the_six_sections_from_the_compact_page_plan(
     record_property,
 ) -> None:
     module = _load_compiler_module()
-    value = _compact_director_value()
+    value = _director_value()
     material_view = _compact_material_view()
 
     prompt = module.compile_consulting_six_part_prompt(
@@ -247,14 +214,39 @@ def test_compiler_builds_the_six_sections_from_the_compact_page_plan(
 
     plan = value["page_plan"]
     assert plan["page_purpose"] in prompt
-    assert plan["primary_relationship"]["description"] in prompt
-    assert plan["primary_relationship"]["visual_instruction"] in prompt
-    assert plan["core_exhibit"]["description"] in prompt
+    relationship = plan["primary_relationship"]
+    assert relationship["grammar"] in prompt
+    assert relationship["description"] in prompt
+    assert relationship["visual_instruction"] in prompt
+    for fact_id in relationship["fact_ids"]:
+        assert fact_id in prompt
+    for node in relationship["nodes"]:
+        assert node["node_id"] in prompt
+        assert node["label"] in prompt
+        for fact_id in node["fact_ids"]:
+            assert fact_id in prompt
+    for edge in relationship["edges"]:
+        assert edge["from_node"] in prompt
+        assert edge["to_node"] in prompt
+        assert edge["label"] in prompt
+        for fact_id in edge["fact_ids"]:
+            assert fact_id in prompt
+    core = plan["core_exhibit"]
+    assert core["grammar"] in prompt
+    assert core["description"] in prompt
+    for fact_id in core["fact_ids"]:
+        assert fact_id in prompt
     for group in plan["support_groups"]:
+        assert group["role"] in prompt
         assert group["label"] in prompt
+        for fact_id in group["fact_ids"]:
+            assert fact_id in prompt
     assert plan["reading_path"] in prompt
     for local_visual in plan["local_visuals"]:
+        assert local_visual["grammar"] in prompt
         assert local_visual["instruction"] in prompt
+        for fact_id in local_visual["fact_ids"]:
+            assert fact_id in prompt
 
     positive, prohibited = module._color_constraints(
         material_view, font_accent_allowed=True
@@ -273,6 +265,8 @@ def test_compiler_builds_the_six_sections_from_the_compact_page_plan(
         "investment-committee",
         "template_id",
         "template_version",
+        "MATERIAL_AUDIT_SENTINEL",
+        "TEMPLATE_NAME_SENTINEL",
     ):
         assert removed not in prompt
 

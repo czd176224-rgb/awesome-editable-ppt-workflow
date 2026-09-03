@@ -214,6 +214,7 @@ def test_director_output_schema_avoids_unsupported_unique_items() -> None:
 def _workspace(tmp_path: Path) -> ExperimentWorkspace:
     source = awesome_four_page_project_fixture.__wrapped__(tmp_path)
     _prepare_complete_page_one(source)
+    _prepare_compact_page_facts(source)
     from complex_page_experiment import create_experiment_copy
 
     workspace = create_experiment_copy(
@@ -227,6 +228,52 @@ def _workspace(tmp_path: Path) -> ExperimentWorkspace:
 
 def _material_view(workspace: ExperimentWorkspace) -> CompletePageMaterialView:
     return _TEST_VIEWS[workspace.project_copy]
+
+
+def _prepare_compact_page_facts(source: Path) -> None:
+    paginated_path = source / "02_v6" / "paginated_word_source.json"
+    paginated = json.loads(paginated_path.read_text(encoding="utf-8"))
+    page = paginated["pages"][0]
+    body = page["blocks"][1]
+    facts = [
+        {
+            **body,
+            "text": text,
+            "source_block_id": f"body-{index}",
+            "source_block_index": index,
+            "source_order": index + 1,
+        }
+        for index, text in enumerate(
+            (
+                "Authoritative body 1",
+                "Resources enter the fund platform.",
+                "Operations support the entry path.",
+                "The source does not quantify flow volume.",
+            ),
+            start=1,
+        )
+    ]
+    page["blocks"] = [page["blocks"][0], *facts]
+    paginated_path.write_text(
+        json.dumps(paginated, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    material_path = source / "02_v6" / "awesome_page_materials" / "page_001.json"
+    material = json.loads(material_path.read_text(encoding="utf-8"))
+    material["complete_word_content"] = facts
+    payload = (
+        json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    material_path.write_bytes(payload)
+    state_path = source / "workflow_v6.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["pages"][0]["material_receipt"]["digest"] = hashlib.sha256(payload).hexdigest()
+    state_path.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _workspace_without_viewable_materials(
@@ -372,50 +419,6 @@ def test_compile_prompt_deduplicates_owned_color_contract_without_deleting_facts
     assert prompt.count(source_fact) == 1
 
 
-def _director_value(view: CompletePageMaterialView) -> dict[str, object]:
-    return {
-        "schema_version": "awesome-consulting-page-director-v2",
-        "page_number": 1,
-        "quality": "high",
-        "machine_record": {
-            "facts_and_sources": ["The body statement comes from word-block:body-1."],
-            "must_preserve_entities": ["The named subject in word-image:word-photo."],
-            "core_content_and_comment_direction": ["Follow the original comment direction."],
-            "material_use": [
-                {
-                    "material_id": material_id,
-                    "status": "used_in_image" if "image" in material_id else "background_understanding",
-                    "reason": "Direct evidence or context.",
-                }
-                for material_id in view.material_ids
-            ],
-            "selected_references": [
-                {
-                    "material_id": "word-image:word-photo",
-                    "identity": "The supplied real subject photograph",
-                    "use": "Anchor identity",
-                    "preserve": "Recognizable identity",
-                    "allowed_changes": "Crop and tonal integration",
-                    "composition_relationship": "Primary left-side visual anchor",
-                }
-            ],
-            "fixed_layer_exclusions": ["title", "logo", "footer", "page_number"],
-        },
-        "creative_direction": {
-            "business_proposition": "Turn the dense source into one confident visual argument.",
-            "explanatory_lead": "Explain the source-supported decision context in two short lines.",
-            "analytical_backbone": "A continuous evidence chain that resolves into a single insight.",
-            "evidence_interpretation_conclusion": "Enter through the real subject, then move across evidence to the conclusion.",
-            "content_hierarchy": "Lead, analytical evidence, interpretation, and takeaway.",
-            "reading_path_and_density": "Wide editorial collage, quiet whitespace, tactile paper and glass.",
-            "takeaway_statement": "End with the source-supported decision implication.",
-            "supporting_visual_policy": "Use real references as evidence, not decoration.",
-            "anti_ai_visual_policy": "Avoid miniature scenes, neon, and decorative 3D machinery.",
-        },
-        "prompt_sections": _prompt_sections(),
-    }
-
-
 def _compact_material_view() -> CompletePageMaterialView:
     facts = tuple(
         {
@@ -453,10 +456,11 @@ def _compact_material_view() -> CompletePageMaterialView:
     )
 
 
-def _compact_director_value(
+def _director_value(
     view: CompletePageMaterialView | None = None,
 ) -> dict[str, object]:
-    material_view = view or _compact_material_view()
+    blocks = None if view is None else view.value.get("complete_word_content")
+    material_view = view if isinstance(blocks, list) and len(blocks) == 4 else _compact_material_view()
     fact_ids = [
         str(block["source_block_id"])
         for block in material_view.value["complete_word_content"]
@@ -465,7 +469,7 @@ def _compact_director_value(
     body_1, body_2, body_3, body_4 = fact_ids
     return {
         "schema_version": "awesome-consulting-page-director-v3",
-        "page_number": 5,
+        "page_number": int(material_view.value.get("page_number", 5)),
         "quality": "high",
         "page_plan": {
             "page_purpose": "Explain how regional resources enter the fund system.",
@@ -543,7 +547,7 @@ def _compact_artifact(value: dict[str, object]) -> DirectorArtifact:
 
 
 def test_compact_director_value_exposes_only_the_page_plan_contract() -> None:
-    value = _compact_director_value()
+    value = _director_value()
     artifact = _compact_artifact(value)
 
     assert "creative_direction" not in value
@@ -569,41 +573,61 @@ def _validate_compact_value(value: dict[str, object]) -> tuple[str, ...]:
     ids=("relationship", "node", "edge", "core", "support", "local-visual"),
 )
 def test_compact_director_rejects_unknown_fact_references(mutate) -> None:
-    value = copy.deepcopy(_compact_director_value())
+    value = copy.deepcopy(_director_value())
     mutate(value)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown fact|source_block_id"):
         _validate_compact_value(value)
 
 
 @pytest.mark.parametrize(
-    "mutate",
+    ("mutate", "message"),
     [
-        lambda value: value["page_plan"]["support_groups"].pop(),
-        lambda value: value["page_plan"]["support_groups"][0]["fact_ids"].append("body-1"),
-        lambda value: value["page_plan"].update({"primary_relationship": {}}),
-        lambda value: value["page_plan"].update(
-            {"core_exhibit": [value["page_plan"]["core_exhibit"]] * 2}
+        (
+            lambda value: value["page_plan"]["support_groups"].pop(),
+            "allocate every Word fact exactly once",
         ),
-        lambda value: value["page_plan"]["core_exhibit"].update(
-            {"grammar": "radial_orbit"}
+        (
+            lambda value: value["page_plan"]["support_groups"][0]["fact_ids"].append("body-1"),
+            "each Word fact must be allocated exactly once",
         ),
-        lambda value: value["page_plan"]["primary_relationship"]["edges"][0].update(
-            {"to_node": "missing-node"}
+        (
+            lambda value: value["page_plan"].update({"primary_relationship": {}}),
+            "primary_relationship|primary relationship",
+        ),
+        (
+            lambda value: value["page_plan"].update(
+                {"core_exhibit": [value["page_plan"]["core_exhibit"]] * 2}
+            ),
+            "core_exhibit|core exhibit",
+        ),
+        (
+            lambda value: value["page_plan"]["core_exhibit"].update(
+                {"grammar": "radial_orbit"}
+            ),
+            "grammar|radial_orbit",
+        ),
+        (
+            lambda value: value["page_plan"]["primary_relationship"]["edges"][0].update(
+                {"to_node": "missing-node"}
+            ),
+            "edge endpoint|declared node|missing-node",
         ),
     ],
     ids=("omitted", "duplicated", "empty-relationship", "multiple-core", "grammar", "edge-endpoint"),
 )
-def test_compact_director_rejects_invalid_fact_allocation_or_structure(mutate) -> None:
-    value = copy.deepcopy(_compact_director_value())
+def test_compact_director_rejects_invalid_fact_allocation_or_structure(
+    mutate, message: str
+) -> None:
+    value = copy.deepcopy(_director_value())
     mutate(value)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         _validate_compact_value(value)
 
 
 def test_compact_director_accepts_analytical_table_for_comparison() -> None:
-    value = copy.deepcopy(_compact_director_value())
+    value = copy.deepcopy(_director_value())
     relationship = value["page_plan"]["primary_relationship"]
     relationship.update(
         {
@@ -623,7 +647,7 @@ def test_compact_director_accepts_analytical_table_for_comparison() -> None:
 def test_structural_grammars_accept_source_bound_nodes_edges_and_instruction(
     grammar: str,
 ) -> None:
-    value = copy.deepcopy(_compact_director_value())
+    value = copy.deepcopy(_director_value())
     value["page_plan"]["primary_relationship"]["grammar"] = grammar
     value["page_plan"]["core_exhibit"]["grammar"] = grammar
 
@@ -632,23 +656,59 @@ def test_structural_grammars_accept_source_bound_nodes_edges_and_instruction(
 
 @pytest.mark.parametrize("grammar", ["flow", "hierarchy", "geography", "causality"])
 @pytest.mark.parametrize(
-    "mutate",
+    ("mutate", "message"),
     [
-        lambda relationship: relationship.update({"visual_instruction": "   "}),
-        lambda relationship: relationship.update({"nodes": []}),
-        lambda relationship: relationship.update({"edges": []}),
+        (
+            lambda relationship: relationship.update({"visual_instruction": "   "}),
+            "visual_instruction|visual instruction",
+        ),
+        (
+            lambda relationship: relationship.update({"nodes": []}),
+            "nodes|source-bound node",
+        ),
+        (
+            lambda relationship: relationship.update({"edges": []}),
+            "edges|at least one edge",
+        ),
     ],
     ids=("instruction", "nodes", "edges"),
 )
 def test_structural_grammars_require_nodes_edges_and_visual_instruction(
-    grammar: str, mutate
+    grammar: str, mutate, message: str
 ) -> None:
-    value = copy.deepcopy(_compact_director_value())
+    value = copy.deepcopy(_director_value())
     relationship = value["page_plan"]["primary_relationship"]
     relationship["grammar"] = grammar
     mutate(relationship)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
+        _validate_compact_value(value)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda relationship: relationship["nodes"][0].pop("fact_ids"),
+        lambda relationship: relationship["nodes"][0].update({"fact_ids": []}),
+        lambda relationship: relationship["nodes"][1].pop("fact_ids"),
+        lambda relationship: relationship["nodes"][1].update({"fact_ids": []}),
+        lambda relationship: relationship["edges"][0].pop("fact_ids"),
+        lambda relationship: relationship["edges"][0].update({"fact_ids": []}),
+    ],
+    ids=(
+        "first-node-missing",
+        "first-node-empty",
+        "second-node-missing",
+        "second-node-empty",
+        "edge-missing",
+        "edge-empty",
+    ),
+)
+def test_relationship_nodes_and_edges_require_non_empty_fact_ids(mutate) -> None:
+    value = copy.deepcopy(_director_value())
+    mutate(value["page_plan"]["primary_relationship"])
+
+    with pytest.raises(ValueError, match="fact_ids|required|non-empty|at least one"):
         _validate_compact_value(value)
 
 
