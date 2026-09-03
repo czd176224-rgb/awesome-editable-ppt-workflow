@@ -267,11 +267,11 @@ def _canonical_text(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _source_fact_fragments(material_view: object) -> list[tuple[str, str]]:
+def _source_fact_references(material_view: object) -> dict[str, str]:
     blocks = _material_value(material_view).get("complete_word_content")
     if not isinstance(blocks, list):
         raise ValueError("complete material view Word content is missing")
-    fragments: list[tuple[str, str]] = []
+    references: dict[str, str] = {}
     for block in blocks:
         if not isinstance(block, Mapping):
             raise ValueError("complete Word content block must be a mapping")
@@ -280,24 +280,40 @@ def _source_fact_fragments(material_view: object) -> list[tuple[str, str]]:
             rows = block.get("rows")
             if not isinstance(rows, list):
                 raise ValueError("complete Word table rows are missing")
-            fragments.extend(
-                (cell, source_id)
+            for cell in (
+                cell
                 for row in rows
                 if isinstance(row, list)
                 for cell in row
                 if isinstance(cell, str) and cell
-            )
+            ):
+                references.setdefault(cell, source_id)
         else:
             text = block.get("text")
             if isinstance(text, str) and text:
-                fragments.append((text, source_id))
-    return sorted(fragments, key=lambda item: len(item[0]), reverse=True)
+                references.setdefault(text, source_id)
+    return references
 
 
-def _without_source_fact_repetition(text: str, material_view: object) -> str:
-    for fact, source_id in _source_fact_fragments(material_view):
-        text = text.replace(fact, f"[source fact {source_id} in section 2]")
-    return text
+def _source_id_only_plan(value: object, references: Mapping[str, str]) -> object:
+    if isinstance(value, Mapping):
+        natural_language_fields = {
+            "page_purpose", "description", "label", "visual_instruction",
+            "reading_path", "instruction",
+        }
+        return {
+            key: (
+                f"[source fact {references[child]} in section 2]"
+                if key in natural_language_fields
+                and isinstance(child, str)
+                and child in references
+                else _source_id_only_plan(child, references)
+            )
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_source_id_only_plan(child, references) for child in value]
+    return value
 
 
 def _page_plan_architecture(
@@ -306,7 +322,10 @@ def _page_plan_architecture(
     plan = value.get("page_plan")
     if not isinstance(plan, Mapping):
         raise ValueError("consulting page plan is missing")
-    lines = [f"Page purpose: {plan.get('page_purpose', '')}"]
+    references = _source_fact_references(material_view)
+    normalized = _source_id_only_plan(plan, references)
+    assert isinstance(normalized, Mapping)
+    lines = [f"Page purpose: {normalized.get('page_purpose', '')}"]
     for label, key in (
         ("Primary relationship", "primary_relationship"),
         ("Core exhibit", "core_exhibit"),
@@ -314,23 +333,23 @@ def _page_plan_architecture(
         ("Reading path", "reading_path"),
         ("Local visuals", "local_visuals"),
     ):
-        lines.append(f"{label}: {_canonical_text(plan.get(key))}")
-    plan_text = _without_source_fact_repetition("\n".join(lines), material_view)
+        lines.append(f"{label}: {_canonical_text(normalized.get(key))}")
     selected = value.get("selected_references")
     if not isinstance(selected, list):
         raise ValueError("selected references are missing")
-    reference_lines = [
-        f"Reference {reference['material_id']}: use: {reference['use']}; preserve: {reference['preserve']}"
-        for reference in selected
-        if isinstance(reference, Mapping)
-    ]
-    if any(
-        fact in line
-        for fact, _source_id in _source_fact_fragments(material_view)
-        for line in reference_lines
-    ):
-        raise ValueError("selected reference instructions must not repeat complete Word facts")
-    return "\n".join((plan_text, *reference_lines))
+    reference_lines: list[str] = []
+    for reference in selected:
+        if not isinstance(reference, Mapping):
+            raise ValueError("selected reference must be a mapping")
+        instructions = (reference.get("use"), reference.get("preserve"))
+        if any(not isinstance(instruction, str) for instruction in instructions):
+            raise ValueError("selected reference use and preserve must be text")
+        if any(instruction in references for instruction in instructions):
+            raise ValueError("selected reference instructions must not repeat complete Word facts")
+        reference_lines.append(
+            f"Reference {reference['material_id']}: use: {reference['use']}; preserve: {reference['preserve']}"
+        )
+    return "\n".join(("\n".join(lines), *reference_lines))
 
 
 def _without_compiler_owned_clauses(text: str, *, task_section: bool) -> str:

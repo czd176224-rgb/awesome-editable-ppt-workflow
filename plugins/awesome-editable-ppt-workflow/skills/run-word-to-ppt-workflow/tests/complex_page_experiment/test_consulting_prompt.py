@@ -456,6 +456,96 @@ def test_page_purpose_repeating_a_complete_fact_uses_only_its_source_id() -> Non
     assert "[source fact body-1 in section 2]" in sections["Consulting Information Architecture"]
 
 
+def test_short_table_fact_does_not_corrupt_ids_or_unrelated_language() -> None:
+    module = _load_compiler_module()
+    material_view = _material_view()
+    material_view.value["complete_word_content"] = [{
+        "type": "table", "rows": [["1"]], "source_block_id": "table-1", "source_order": 1,
+    }]
+    value = _director_value()
+    value["page_plan"]["page_purpose"] = "1"
+    relationship = value["page_plan"]["primary_relationship"]
+    relationship["description"] = "Phase 1 overview"
+    relationship["nodes"][0]["node_id"] = "1"
+    relationship["nodes"][0]["fact_ids"] = ["1"]
+    relationship["edges"][0]["from_node"] = "1"
+
+    architecture = _compiled_sections(
+        module.compile_consulting_six_part_prompt(value, material_view)
+    )["Consulting Information Architecture"]
+
+    assert "Page purpose: [source fact table-1 in section 2]" in architecture
+    assert '"node_id": "1"' in architecture
+    assert '"fact_ids": ["1"]' in architecture
+    assert '"from_node": "1"' in architecture
+    assert "Phase 1 overview" in architecture
+
+
+def test_common_chinese_fact_does_not_corrupt_identifiers_or_longer_phrases() -> None:
+    module = _load_compiler_module()
+    material_view = _material_view()
+    material_view.value["complete_word_content"] = [{
+        "type": "paragraph", "text": "项目", "source_block_id": "项目-id", "source_order": 1,
+    }]
+    value = _director_value()
+    value["page_plan"]["page_purpose"] = "项目"
+    relationship = value["page_plan"]["primary_relationship"]
+    relationship["description"] = "项目负责人统筹推进"
+    relationship["nodes"][0]["node_id"] = "项目"
+    relationship["nodes"][0]["fact_ids"] = ["项目"]
+    relationship["edges"][0]["from_node"] = "项目"
+    relationship["nodes"][0]["label"] = "项目组"
+
+    architecture = _compiled_sections(
+        module.compile_consulting_six_part_prompt(value, material_view)
+    )["Consulting Information Architecture"]
+
+    assert "Page purpose: [source fact 项目-id in section 2]" in architecture
+    assert '"node_id": "项目"' in architecture
+    assert '"fact_ids": ["项目"]' in architecture
+    assert '"from_node": "项目"' in architecture
+    assert '"label": "项目组"' in architecture
+    assert "项目负责人统筹推进" in architecture
+
+
+def test_quoted_fact_is_normalized_before_json_serialization() -> None:
+    module = _load_compiler_module()
+    material_view = _material_view()
+    fact = 'He said "go".'
+    material_view.value["complete_word_content"] = [{
+        "type": "paragraph", "text": fact, "source_block_id": "quote-1", "source_order": 1,
+    }]
+    value = _director_value()
+    value["page_plan"]["primary_relationship"]["description"] = fact
+
+    prompt = module.compile_consulting_six_part_prompt(value, material_view)
+    sections = _compiled_sections(prompt)
+
+    assert prompt.count(fact) == 1
+    assert fact in sections["Core Proposition and Content"]
+    assert 'He said \\"go\\".' not in sections["Consulting Information Architecture"]
+    assert "[source fact quote-1 in section 2]" in sections["Consulting Information Architecture"]
+
+
+def test_selected_reference_check_ignores_fixed_use_label_collision() -> None:
+    module = _load_compiler_module()
+    material_view = _material_view()
+    material_view.value["complete_word_content"] = [{
+        "type": "paragraph", "text": "use:", "source_block_id": "body-use", "source_order": 1,
+    }]
+    value = _director_value()
+    value["selected_references"] = [{
+        "material_id": "word-image:source-photo",
+        "use": "Anchor the source photo.",
+        "preserve": "Keep its identity.",
+    }]
+
+    prompt = module.compile_consulting_six_part_prompt(value, material_view)
+
+    assert prompt.count("Anchor the source photo.") == 1
+    assert prompt.count("Keep its identity.") == 1
+
+
 @pytest.mark.parametrize("content,relationships", [
     (
         "研究组负责需求分析；工程组负责试制；两组同属项目部。研究组向工程组移交规格，质量组独立复核试制结果。",
