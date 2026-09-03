@@ -465,7 +465,7 @@ def test_short_table_fact_does_not_corrupt_ids_or_unrelated_language() -> None:
     value = _director_value()
     value["page_plan"]["page_purpose"] = "1"
     relationship = value["page_plan"]["primary_relationship"]
-    relationship["description"] = "Phase 1 overview"
+    relationship["description"] = "Phase 2021 overview"
     relationship["nodes"][0]["node_id"] = "1"
     relationship["nodes"][0]["fact_ids"] = ["1"]
     relationship["edges"][0]["from_node"] = "1"
@@ -478,7 +478,7 @@ def test_short_table_fact_does_not_corrupt_ids_or_unrelated_language() -> None:
     assert '"node_id": "1"' in architecture
     assert '"fact_ids": ["1"]' in architecture
     assert '"from_node": "1"' in architecture
-    assert "Phase 1 overview" in architecture
+    assert "Phase 2021 overview" in architecture
 
 
 def test_common_chinese_fact_does_not_corrupt_identifiers_or_longer_phrases() -> None:
@@ -525,6 +525,45 @@ def test_quoted_fact_is_normalized_before_json_serialization() -> None:
     assert fact in sections["Core Proposition and Content"]
     assert 'He said \\"go\\".' not in sections["Consulting Information Architecture"]
     assert "[source fact quote-1 in section 2]" in sections["Consulting Information Architecture"]
+
+
+def test_embedded_complete_fact_is_normalized_at_text_boundaries() -> None:
+    module = _load_compiler_module()
+    material_view = _material_view()
+    fact = "Regional resources enter the verified fund platform."
+    material_view.value["complete_word_content"] = [{
+        "type": "paragraph", "text": fact, "source_block_id": "embedded-1", "source_order": 1,
+    }]
+    value = _director_value()
+    value["page_plan"]["page_purpose"] = f"Purpose: {fact}"
+    value["page_plan"]["primary_relationship"]["visual_instruction"] = (
+        f"Crop around evidence: {fact}"
+    )
+
+    prompt = module.compile_consulting_six_part_prompt(value, material_view)
+    architecture = _compiled_sections(prompt)["Consulting Information Architecture"]
+
+    assert prompt.count(fact) == 1
+    assert "Purpose: [source fact embedded-1 in section 2]" in architecture
+    assert "Crop around evidence: [source fact embedded-1 in section 2]" in architecture
+
+
+def test_embedded_complete_fact_in_reference_instruction_is_rejected() -> None:
+    module = _load_compiler_module()
+    material_view = _material_view()
+    fact = "Regional resources enter the verified fund platform."
+    material_view.value["complete_word_content"] = [{
+        "type": "paragraph", "text": fact, "source_block_id": "embedded-1", "source_order": 1,
+    }]
+    value = _director_value()
+    value["selected_references"] = [{
+        "material_id": "word-image:source-photo",
+        "use": f"Crop around evidence: {fact}",
+        "preserve": "Keep its identity.",
+    }]
+
+    with pytest.raises(ValueError, match="must not repeat complete Word facts"):
+        module.compile_consulting_six_part_prompt(value, material_view)
 
 
 def test_selected_reference_check_ignores_fixed_use_label_collision() -> None:

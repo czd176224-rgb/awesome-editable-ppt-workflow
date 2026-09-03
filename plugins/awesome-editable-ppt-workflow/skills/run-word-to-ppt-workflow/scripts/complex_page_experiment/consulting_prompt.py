@@ -295,6 +295,54 @@ def _source_fact_references(material_view: object) -> dict[str, str]:
     return references
 
 
+def _source_fact_matches(
+    text: str, references: Mapping[str, str],
+) -> list[tuple[int, int, str]]:
+    def token_character(character: str) -> bool:
+        return character.isalnum() or character in "_-"
+
+    candidates: list[tuple[int, int, str]] = []
+    for fact, source_id in references.items():
+        start = text.find(fact)
+        while start >= 0:
+            end = start + len(fact)
+            left_bound = (
+                not token_character(fact[0])
+                or start == 0
+                or not token_character(text[start - 1])
+            )
+            right_bound = (
+                not token_character(fact[-1])
+                or end == len(text)
+                or not token_character(text[end])
+            )
+            if left_bound and right_bound:
+                candidates.append((start, end, source_id))
+            start = text.find(fact, start + 1)
+    matches: list[tuple[int, int, str]] = []
+    cursor = 0
+    for start, end, source_id in sorted(
+        candidates, key=lambda item: (item[0], -(item[1] - item[0]))
+    ):
+        if start >= cursor:
+            matches.append((start, end, source_id))
+            cursor = end
+    return matches
+
+
+def _source_id_only_text(text: str, references: Mapping[str, str]) -> str:
+    matches = _source_fact_matches(text, references)
+    if not matches:
+        return text
+    parts: list[str] = []
+    cursor = 0
+    for start, end, source_id in matches:
+        parts.extend((text[cursor:start], f"[source fact {source_id} in section 2]"))
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def _source_id_only_plan(value: object, references: Mapping[str, str]) -> object:
     if isinstance(value, Mapping):
         natural_language_fields = {
@@ -303,10 +351,9 @@ def _source_id_only_plan(value: object, references: Mapping[str, str]) -> object
         }
         return {
             key: (
-                f"[source fact {references[child]} in section 2]"
+                _source_id_only_text(child, references)
                 if key in natural_language_fields
                 and isinstance(child, str)
-                and child in references
                 else _source_id_only_plan(child, references)
             )
             for key, child in value.items()
@@ -344,7 +391,7 @@ def _page_plan_architecture(
         instructions = (reference.get("use"), reference.get("preserve"))
         if any(not isinstance(instruction, str) for instruction in instructions):
             raise ValueError("selected reference use and preserve must be text")
-        if any(instruction in references for instruction in instructions):
+        if any(_source_fact_matches(instruction, references) for instruction in instructions):
             raise ValueError("selected reference instructions must not repeat complete Word facts")
         reference_lines.append(
             f"Reference {reference['material_id']}: use: {reference['use']}; preserve: {reference['preserve']}"
