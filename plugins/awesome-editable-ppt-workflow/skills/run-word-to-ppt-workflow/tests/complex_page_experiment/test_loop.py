@@ -189,6 +189,10 @@ def test_first_valid_candidate_accepts_without_default_extra_candidates(
     assert outcome.correction_count == 0
     assert outcome.accepted is not None and outcome.accepted.candidate.attempt == 1
     assert load_accepted_image_seal(workspace).candidate.path == outcome.attempts[0].path
+    assert (
+        load(workspace.project_copy)["pages"][0]["selected_candidate"]["operation"]
+        == outcome.attempts[0].operation
+    )
     summary = recorder.finalize()
     assert summary["call_totals"]["image2"] == 1
     assert summary["call_totals"]["visual_review"] == 1

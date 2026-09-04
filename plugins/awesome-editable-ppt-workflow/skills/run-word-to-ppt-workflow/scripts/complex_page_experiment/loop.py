@@ -378,7 +378,8 @@ def load_accepted_image_seal(workspace: ExperimentWorkspace) -> AcceptedImageSea
         raise ValueError("copied workflow identity does not match the accepted-image seal")
     state_candidate = {
         "path": candidate_value["path"], "sha256": candidate_value["sha256"],
-        "attempt": candidate_value["attempt"], "receipt_path": canonical_receipt.as_posix(),
+        "attempt": candidate_value["attempt"], "operation": candidate_value["operation"],
+        "receipt_path": canonical_receipt.as_posix(),
     }
     if page.get("state") != "accepted":
         _transition_copied_page(workspace, state_candidate, cast(int, candidate_value["attempt"]))
@@ -513,7 +514,11 @@ def seal_accepted_image(workspace: ExperimentWorkspace, *, material_view: Comple
     verify_signed_acceptance_receipt(workspace, read_bytes(workspace.project_copy, experiment_relative))
     verify_signed_acceptance_receipt(workspace, read_bytes(workspace.project_copy, canonical_receipt))
     candidate_value = cast(Mapping[str, object], value["candidate"])
-    state_candidate = {"path": candidate_value["path"], "sha256": candidate_value["sha256"], "attempt": candidate_value["attempt"], "receipt_path": canonical_receipt.as_posix()}
+    state_candidate = {
+        "path": candidate_value["path"], "sha256": candidate_value["sha256"],
+        "attempt": candidate_value["attempt"], "operation": candidate_value["operation"],
+        "receipt_path": canonical_receipt.as_posix(),
+    }
     _transition_copied_page(workspace, state_candidate, len(attempts))
     loaded = load_accepted_image_seal(workspace)
     assert loaded is not None
