@@ -199,6 +199,44 @@ def test_first_valid_candidate_accepts_without_default_extra_candidates(
     assert summary["call_totals"]["correction_decision"] == 0
 
 
+def test_loader_migrates_only_legacy_selected_candidate_missing_operation(
+    provider_fixture, monkeypatch,
+):
+    workspace, _view, _recorder, outcome = _run(
+        provider_fixture, monkeypatch, [_review_result("accept")]
+    )
+    assert outcome.accepted is not None
+    state = load(workspace.project_copy)
+    state["pages"][0]["selected_candidate"].pop("operation")
+    save(workspace.project_copy, state)
+
+    recovered = load_accepted_image_seal(workspace)
+
+    assert recovered is not None
+    assert (
+        load(workspace.project_copy)["pages"][0]["selected_candidate"]["operation"]
+        == outcome.attempts[0].operation
+    )
+
+
+def test_loader_rejects_existing_selected_candidate_with_wrong_operation(
+    provider_fixture, monkeypatch,
+):
+    workspace, _view, _recorder, outcome = _run(
+        provider_fixture, monkeypatch, [_review_result("accept")]
+    )
+    assert outcome.accepted is not None
+    state = load(workspace.project_copy)
+    actual = outcome.attempts[0].operation
+    state["pages"][0]["selected_candidate"]["operation"] = (
+        "generate" if actual == "edit" else "edit"
+    )
+    save(workspace.project_copy, state)
+
+    with pytest.raises(ValueError, match="accepted state does not match"):
+        load_accepted_image_seal(workspace)
+
+
 @pytest.mark.parametrize(
     "path,replacement",
     [
