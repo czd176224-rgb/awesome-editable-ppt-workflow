@@ -89,15 +89,18 @@ def _word_facts() -> list[dict[str, object]]:
     ]
 
 
-def _material_view(*, font_accent_allowed: bool = True):
+def _material_view(*, font_accent_allowed: bool = True, highlight_color: str | None = None):
+    visual_contract = {
+        "background_color": "#F7F7F7",
+        "primary_color": "#161616",
+        "secondary_color": "#CD202A",
+    }
+    if highlight_color is not None:
+        visual_contract["highlight_color"] = highlight_color
     return SimpleNamespace(
         value={
             "complete_word_content": _word_facts(),
-            "visual_contract": {
-                "background_color": "#F7F7F7",
-                "primary_color": "#161616",
-                "secondary_color": "#CD202A",
-            }
+            "visual_contract": visual_contract,
         }
     )
 
@@ -403,6 +406,48 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
         "Preservation and Fixed Exclusions",
     ):
         assert legacy_name not in prompt
+
+
+def test_optional_highlight_color_adds_consulting_color_roles_only_to_visual_section() -> None:
+    module = _load_compiler_module()
+
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(),
+        _material_view(highlight_color="#D3A62C"),
+        font_accent_allowed=False,
+    )
+    sections = _compiled_sections(prompt)
+
+    assert [line[3:] for line in prompt.splitlines() if line.startswith("## ")] == [
+        "Task and Canvas",
+        "Core Proposition and Content",
+        "Consulting Information Architecture",
+        "Visual Style and Color",
+        "Text and Typography",
+        "Strict Prohibitions",
+    ]
+    visual = sections["Visual Style and Color"]
+    assert prompt.count("#D3A62C") == 1
+    assert "primary color #161616 for long body text, ordinary labels, and deep headings" in visual
+    assert "secondary color #CD202A for the core exhibit, main path, and main data series" in visual
+    assert "Short structural labels on ordinary pages may use the secondary color sparingly" in visual
+    assert "highlight color #D3A62C only for source-supported targets, differences, key numbers, and final nodes" in visual
+    assert "Use light or neutral treatments for supporting evidence" in visual
+    assert "Risk red or positive green is allowed only when the source explicitly assigns that business meaning" in visual
+    assert "Long body text remains primary or neutral" in visual
+    for heading, section in sections.items():
+        if heading != "Visual Style and Color":
+            assert "#D3A62C" not in section
+
+
+@pytest.mark.parametrize("invalid", ["", "   ", 123])
+def test_optional_highlight_color_must_be_nonempty_text(invalid: object) -> None:
+    module = _load_compiler_module()
+    material_view = _material_view()
+    material_view.value["visual_contract"]["highlight_color"] = invalid
+
+    with pytest.raises(ValueError, match="highlight color is missing"):
+        module.compile_consulting_six_part_prompt(_director_value(), material_view)
 
 
 def test_specific_page_relations_survive_in_six_part_prompt() -> None:

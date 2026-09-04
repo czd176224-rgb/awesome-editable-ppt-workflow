@@ -106,6 +106,11 @@ def _visual_contract_colors(material_view: object) -> dict[str, str]:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"complete material view {label} color is missing")
         colors[key] = value.strip()
+    highlight = contract.get("highlight_color")
+    if highlight is not None:
+        if not isinstance(highlight, str) or not highlight.strip():
+            raise ValueError("complete material view highlight color is missing")
+        colors["highlight_color"] = highlight.strip()
     return colors
 
 
@@ -129,6 +134,27 @@ def _color_constraints(
     support = _mix_hex(secondary, (255, 255, 255), 0.40)
     soft = _mix_hex(secondary, (255, 255, 255), 0.70)
     wash = _mix_hex(secondary, (255, 255, 255), 0.88)
+    highlight = colors.get("highlight_color")
+    if highlight is not None:
+        positive = (
+            "Treat the confirmed background color as the canvas base; "
+            f"use primary color {colors['primary_color']} for long body text, ordinary labels, and deep headings. "
+            f"Use secondary color {secondary} for the core exhibit, main path, and main data series. "
+            "Short structural labels on ordinary pages may use the secondary color sparingly, while "
+            "Long body text remains primary or neutral. "
+            f"Use highlight color {highlight} only for source-supported targets, differences, key numbers, and final nodes. "
+            f"Use light or neutral treatments for supporting evidence; available secondary-family support tones are "
+            f"support {support}, soft {soft}, and wash {wash}. "
+            "Risk red or positive green is allowed only when the source explicitly assigns that business meaning. "
+            "Color supports labels, legends, numbering, and spatial structure; it must not invent a classification, "
+            "conclusion, order, magnitude, risk, status, rating, or positive/negative meaning."
+        )
+        if font_accent_allowed is True:
+            positive += (
+                " This is a user-confirmed emphasis page: important short text may use the secondary or highlight "
+                "color more strongly, while long body text remains primary or neutral."
+            )
+        return positive, ""
     positive = (
         "Treat the confirmed background color as the canvas base; "
         f"use primary color {colors['primary_color']} for primary text and neutral structure. "
