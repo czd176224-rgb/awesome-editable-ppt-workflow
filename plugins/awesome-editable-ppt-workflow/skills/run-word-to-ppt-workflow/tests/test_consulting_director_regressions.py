@@ -117,6 +117,12 @@ def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None
     material_view = _material_view(case)
 
     prompt = compile_consulting_six_part_prompt(value, material_view)
+    architecture = prompt.split("## Consulting Information Architecture\n", 1)[1].split(
+        "\n\n## Visual Style and Color", 1
+    )[0]
+    visual = prompt.split("## Visual Style and Color\n", 1)[1].split(
+        "\n\n## Text and Typography", 1
+    )[0]
 
     headings = tuple(f"## {heading}" for heading, _key in SECTION_SPECS)
     assert tuple(prompt.index(heading) for heading in headings) == tuple(
@@ -139,9 +145,11 @@ def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None
     assert "one source-supported main message in a coherent reading path" in prompt
     assert "no invented takeaway" in prompt
     assert "Do not generate title, logo, footer, or page number" in prompt
-    assert "This is not a user-confirmed emphasis page" in prompt
-    assert "Do not use any secondary-color-family shade for any text object" in prompt
-    assert "remain allowed for text-box fills, shapes, borders, nodes, and connectors" in prompt
+    assert "sole executable color contract is the compiler-owned contract" in architecture
+    assert "This is not a user-confirmed emphasis page" in visual
+    assert "text objects may not use secondary-family or highlight-family colors" in visual
+    assert "Those colors remain allowed for non-text structural marks" in visual
+    assert "text objects may not use secondary-family or highlight-family colors" not in architecture
     assert not any(term in prompt for term in LEGACY_TERMS)
 
 
