@@ -21,7 +21,7 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from workflow_v6_contract import new_page, new_project  # noqa: E402
+from workflow_v6_contract import canonical_sha256, new_page, new_project  # noqa: E402
 from workflow_v6_reconstruction import (  # noqa: E402
     assemble_v6_deck,
     build_reconstruction_request,
@@ -37,6 +37,10 @@ def finalize_reconstructed_page(*args, **kwargs):
     project = Path(args[0] if args else kwargs["project"])
     page_number = kwargs["page_number"]
     state = load(project)
+    state["word_source"]["authority_mode"] = "legacy_non_word"
+    state["source_identity"] = canonical_sha256({
+        "word_source": state["word_source"], "logo_source": state["logo_source"],
+    })
     state["pages"][page_number - 1]["selected_candidate"] = None
     save(project, state)
     (project / "04_v6" / "images" / f"page_{page_number:03d}.json").unlink(missing_ok=True)
@@ -410,7 +414,6 @@ def test_finalize_requires_exact_native_text_repair(tmp_path: Path):
             project,
             page_number=1,
             reconstructed_body=wrong,
-            authority_mode="native_direct",
         )
 
     correct = tmp_path / "correct.pptx"

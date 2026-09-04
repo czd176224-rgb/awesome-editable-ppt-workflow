@@ -125,6 +125,21 @@ def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_cal
     assert str(EDITPPT_RUNTIME / "main.py") in prompt
     assert "do not rely on a separately installed CLI" in prompt
     assert load(project)["pages"][0]["state"] == "page_complete"
+    page_request = json.loads((worker_calls[0].page_dir / "page_request.json").read_text(encoding="utf-8"))
+    accepted_request = json.loads(
+        (worker_calls[0].page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8")
+    )
+    final = json.loads((project / "06_v6/pages/page_001/page.json").read_text(encoding="utf-8"))
+    reconstruction = json.loads(
+        (project / "05_v6/reconstruction_runs/page_001/reconstruction.json").read_text(encoding="utf-8")
+    )
+    assert page_request["accepted_source_body"] == accepted_request["source_body"]
+    assert page_request["worker_source_body"]["normalized_pixel_sha256"] == (
+        accepted_request["source_body"]["normalized_pixel_sha256"]
+    )
+    assert final["accepted_source_body"] == accepted_request["source_body"]
+    assert reconstruction["accepted_source_body"] == accepted_request["source_body"]
+    assert reconstruction["worker_source_body"] == page_request["worker_source_body"]
 
 
 def test_page_worker_prompt_enforces_sealed_text_repairs(tmp_path: Path):
@@ -552,6 +567,9 @@ def test_codex_process_failure_reports_transport_error_before_missing_validation
     source = page_dir / "source.png"
     prompt.write_text("reconstruct", encoding="utf-8")
     Image.new("RGB", (1904, 896), "white").save(source)
+    (page_dir / "validation.json").write_text('{"passed":true}', encoding="utf-8")
+    (page_dir / "manifest.json").write_text('{"text_boxes":[]}', encoding="utf-8")
+    _body(page_dir / "page.pptx", "stale passed body")
     monkeypatch.setattr(worker_module, "_codex_executable", lambda: "codex")
     monkeypatch.setattr(
         worker_module.subprocess,
@@ -575,3 +593,27 @@ def test_codex_process_failure_reports_transport_error_before_missing_validation
 
     assert result.status == "failed"
     assert result.reason == "remote worker transport failed"
+    assert not (page_dir / "validation.json").exists()
+    assert not (page_dir / "manifest.json").exists()
+    assert not (page_dir / "page.pptx").exists()
+
+
+def test_formal_reconstruction_commits_state_after_all_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    project = _project(tmp_path, 1)
+    calls: list = []
+    original_write = worker_module._atomic_json
+
+    def fail_reconstruction_receipt(root, path, value):
+        if Path(path).name == "reconstruction.json":
+            raise RuntimeError("simulated reconstruction receipt failure")
+        return original_write(root, path, value)
+
+    monkeypatch.setattr(worker_module, "_atomic_json", fail_reconstruction_receipt)
+    with pytest.raises(RuntimeError, match="receipt failure"):
+        reconstruct_accepted_page(
+            _workspace(project), _accepted_outcome(project), page_worker=_successful_worker(calls),
+        )
+
+    assert load(project)["pages"][0]["state"] != "page_complete"
+    assert not (project / "06_v6/pages/page_001/page.pptx").exists()
+    assert not (project / "06_v6/pages/page_001/page.json").exists()

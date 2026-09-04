@@ -52,10 +52,17 @@ def test_reconstruction_request_builds_and_recovers_after_transient_inputs_are_r
         "path": "04_v6/images/page_001.json",
         "sha256": receipt_digest,
     }
+    with Image.open(accepted_image) as image:
+        normalized_pixels = hashlib.sha256(
+            f"RGBA8\0{image.width}x{image.height}\0".encode("ascii")
+            + image.convert("RGBA").tobytes()
+        ).hexdigest()
     assert first["source_body"] == {
         "path": receipt["candidate"]["path"],
         "sha256": accepted_digest,
         "pixels": {"width": 1904, "height": 896},
+        "normalized_pixel_format": "RGBA8",
+        "normalized_pixel_sha256": normalized_pixels,
     }
     assert first["sealed_image_edits"] == []
     assert "effective_page" not in first

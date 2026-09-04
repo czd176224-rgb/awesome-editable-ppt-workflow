@@ -24,6 +24,7 @@ from test_workflow_v6_reconstruction import _body, _project, _write_signed_recei
 from workflow_v6_reconstruction import finalize_reconstructed_page  # noqa: E402
 from workflow_v6_reconstruction_worker import PageWorkerResult, reconstruct_accepted_page  # noqa: E402
 from workflow_v6_state import load, save  # noqa: E402
+from workflow_v6_contract import canonical_sha256  # noqa: E402
 
 
 def test_worker_adapter_cannot_downgrade_missing_sealed_authority(tmp_path: Path) -> None:
@@ -45,6 +46,21 @@ def test_explicit_native_direct_requires_no_candidate_or_receipt(tmp_path: Path)
     body = tmp_path / "native-direct.pptx"
     _body(body, "Native direct")
     (project / "04_v6/images/page_001.json").unlink()
+
+    with pytest.raises(ValueError, match="formal Word"):
+        finalize_reconstructed_page(
+            project,
+            page_number=1,
+            reconstructed_body=body,
+            authority_mode="native_direct",
+        )
+
+    state = load(project)
+    state["word_source"]["authority_mode"] = "legacy_non_word"
+    state["source_identity"] = canonical_sha256({
+        "word_source": state["word_source"], "logo_source": state["logo_source"],
+    })
+    save(project, state)
 
     with pytest.raises(ValueError, match="selected candidate"):
         finalize_reconstructed_page(
@@ -68,7 +84,7 @@ def test_explicit_native_direct_requires_no_candidate_or_receipt(tmp_path: Path)
     assert report["fixed_frame"]["passed"] is True
 
 
-@pytest.mark.parametrize("defect", ["stale_binding", "replaced", "deleted"])
+@pytest.mark.parametrize("defect", ["stale_binding", "pixel_binding", "replaced", "deleted"])
 def test_completed_recovery_rejects_stale_replaced_or_deleted_acceptance_receipt(
     tmp_path: Path, defect: str,
 ) -> None:
@@ -85,16 +101,21 @@ def test_completed_recovery_rejects_stale_replaced_or_deleted_acceptance_receipt
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         receipt["page_plan"]["page_purpose"] = "Replaced after reconstruction."
         _write_signed_receipt(project, 1, receipt)
-    else:
+    elif defect == "stale_binding":
         reconstruction_path = project / "05_v6/reconstruction_runs/page_001/reconstruction.json"
         reconstruction = json.loads(reconstruction_path.read_text(encoding="utf-8"))
         reconstruction["accepted_receipt"]["sha256"] = "0" * 64
+        reconstruction_path.write_text(json.dumps(reconstruction), encoding="utf-8")
+    else:
+        reconstruction_path = project / "05_v6/reconstruction_runs/page_001/reconstruction.json"
+        reconstruction = json.loads(reconstruction_path.read_text(encoding="utf-8"))
+        reconstruction["accepted_source_body"]["normalized_pixel_sha256"] = "0" * 64
         reconstruction_path.write_text(json.dumps(reconstruction), encoding="utf-8")
 
     outcome = _accepted_outcome(project) if receipt_path.is_file() else SimpleNamespace(
         status="accepted", accepted=SimpleNamespace(candidate=SimpleNamespace(path="unused")),
     )
-    with pytest.raises(RuntimeError, match="acceptance receipt"):
+    with pytest.raises(RuntimeError, match="acceptance receipt|accepted image pixels"):
         reconstruct_accepted_page(
             _workspace(project),
             outcome,

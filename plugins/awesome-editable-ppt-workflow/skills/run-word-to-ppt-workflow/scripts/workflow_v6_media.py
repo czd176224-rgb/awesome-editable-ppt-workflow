@@ -476,6 +476,18 @@ def validated_raster_bytes(data: bytes) -> tuple[Image.Image, str]:
     return _open_raster(data)
 
 
+def normalized_raster_pixel_seal(data: bytes) -> dict[str, object]:
+    """Return a stable digest of decoded RGBA8 pixels, independent of PNG encoding."""
+    image, _mime_type = _open_raster(data)
+    normalized = image.convert("RGBA")
+    prefix = f"RGBA8\0{normalized.width}x{normalized.height}\0".encode("ascii")
+    return {
+        "pixels": {"width": normalized.width, "height": normalized.height},
+        "normalized_pixel_format": "RGBA8",
+        "normalized_pixel_sha256": hashlib.sha256(prefix + normalized.tobytes()).hexdigest(),
+    }
+
+
 def _read_file_limited(project: Path, path: Path) -> bytes:
     flags = os.O_RDONLY
     if hasattr(os, "O_BINARY"):
