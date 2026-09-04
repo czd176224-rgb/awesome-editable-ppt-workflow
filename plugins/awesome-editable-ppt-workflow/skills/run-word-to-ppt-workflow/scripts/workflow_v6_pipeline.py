@@ -104,10 +104,11 @@ class PipelineReport:
     page_outcomes: dict[int, Any]
     stage_peaks: dict[str, int]
     scheduler_concurrency: int
+    assembly: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the stable public CLI summary without creative artifacts."""
-        return {
+        result = {
             "completed_pages": list(self.completed_pages),
             "failed_pages": dict(sorted(self.failed_pages.items())),
             "page_outcomes": {
@@ -117,6 +118,18 @@ class PipelineReport:
             "scheduler_concurrency": self.scheduler_concurrency,
             "stage_peaks": dict(sorted(self.stage_peaks.items())),
         }
+        if self.assembly is not None:
+            result["assembly"] = dict(self.assembly)
+        return result
+
+
+def _assembly_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {"status": "failed", "reason": "assembly returned no status"}
+    result = dict(value)
+    if result.get("status") not in {"complete", "deferred", "failed"}:
+        return {"status": "failed", "reason": "assembly returned an invalid status"}
+    return result
 
 
 def _outcome_summary(outcome: Any) -> dict[str, Any]:
@@ -315,7 +328,7 @@ def run_pages(
     root = Path(project).resolve(strict=True)
     pages = _page_numbers(page_numbers)
     if not pages:
-        return PipelineReport((), {}, {}, {name: 0 for name in ("director", "image2", "review", "reconstruction", "assembly")}, 0)
+        return PipelineReport((), {}, {}, {name: 0 for name in ("director", "image2", "review", "reconstruction", "assembly")}, 0, {"status": "not_run"})
 
     limits = _StageLimits(configuration)
     scheduler = AdaptiveScheduler(
@@ -476,6 +489,7 @@ def run_pages(
                 provider_success_generations,
             )
 
+    assembly = {"status": "not_run"}
     if dependencies.assemble_project is not None:
         accepted_outcomes = {
             page_number: outcome
@@ -485,8 +499,13 @@ def run_pages(
                 or getattr(outcome, "status", None) == "page_complete"
             )
         }
-        with limits.bounded("assembly"):
-            dependencies.assemble_project(root, accepted_outcomes)
+        try:
+            with limits.bounded("assembly"):
+                assembly = _assembly_summary(
+                    dependencies.assemble_project(root, accepted_outcomes)
+                )
+        except Exception as exc:
+            assembly = {"status": "failed", "reason": f"{type(exc).__name__}: {exc}"}
 
     return PipelineReport(
         completed_pages=tuple(sorted(completed)),
@@ -494,6 +513,7 @@ def run_pages(
         page_outcomes=dict(sorted(completed.items())),
         stage_peaks=limits.peaks,
         scheduler_concurrency=scheduler.active_concurrency,
+        assembly=assembly,
     )
 
 

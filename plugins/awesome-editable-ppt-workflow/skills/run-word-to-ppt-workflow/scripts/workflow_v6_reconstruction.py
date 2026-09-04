@@ -796,6 +796,99 @@ def _require_final_authority(
     }
 
 
+def verify_completed_page_authority(project: Path, page_number: int) -> dict[str, Any]:
+    """Revalidate the published page and every sealed input used to create it."""
+    root = Path(project).resolve()
+    state = _load_reconstruction_state(root)
+    page = state["pages"][page_number - 1]
+    if page.get("state") != "page_complete":
+        raise RuntimeError("completed reconstruction authority is not complete")
+    package_dir = root / "06_v6" / "pages" / f"page_{page_number:03d}"
+    final_path = package_dir / "page.json"
+    if not final_path.is_file():
+        raise RuntimeError("completed reconstruction authority is incomplete")
+    final = _read_json(final_path)
+    artifact_version = final.get("artifact_version")
+    expected_page = package_dir / "page.pptx"
+    expected_relative = expected_page.relative_to(root).as_posix()
+    if (
+        artifact_version not in {"final-page-v6", "special-page-v6"}
+        or final.get("page_pptx") != expected_relative
+    ):
+        raise RuntimeError("completed page receipt authority is invalid")
+    page_pptx = expected_page
+    if (
+        final.get("page_number") != page_number
+        or not page_pptx.is_file()
+        or _sha256(page_pptx) != final.get("sha256")
+    ):
+        raise RuntimeError("completed reconstructed page changed")
+    if artifact_version == "final-page-v6":
+        style = state["style_confirmation"]["contract"]
+        fixed = final.get("fixed_frame")
+        current_fixed = inspect_fixed_frame(
+            page_pptx,
+            expected_title=page["title"],
+            expected_page_number=page_number,
+            style_execution=_fixed_frame_style(style),
+            logo_svg=root / state["logo_source"]["path"],
+        )
+        if (
+            not isinstance(fixed, Mapping)
+            or fixed.get("passed") is not True
+            or current_fixed.get("passed") is not True
+        ):
+            raise RuntimeError("completed page fixed-frame authority is invalid")
+
+    run_dir = root / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
+    reconstruction_path = run_dir / "reconstruction.json"
+    sealed = (
+        page.get("selected_candidate") is not None
+        or final.get("accepted_receipt") is not None
+        or (root / "04_v6" / "images" / f"page_{page_number:03d}.json").is_file()
+    )
+    if not sealed:
+        if (
+            artifact_version == "final-page-v6"
+            and state.get("word_source", {}).get("authority_mode") != "legacy_non_word"
+        ):
+            raise RuntimeError("native-direct page requires legacy_non_word authority")
+        return {"status": "verified", "authority_mode": "native_direct"}
+    if not reconstruction_path.is_file():
+        raise RuntimeError("completed reconstruction authority is incomplete")
+    reconstruction = _read_json(reconstruction_path)
+    worker_body = run_dir / "pages" / "page_001" / "page.pptx"
+    if not worker_body.is_file():
+        raise RuntimeError("completed reconstruction worker output is missing")
+    sealed_authority = _require_final_authority(
+        root, page_number, worker_body, Presentation(worker_body), "sealed_reconstruction",
+    )
+    accepted = reconstruction.get("accepted_receipt")
+    accepted_source = sealed_authority.get("accepted_source_body")
+    if (
+        reconstruction.get("artifact_version") != "accepted-image-worker-reconstruction-v1"
+        or reconstruction.get("page_number") != page_number
+        or not isinstance(accepted, Mapping)
+        or accepted != final.get("accepted_receipt")
+        or accepted != sealed_authority.get("accepted_receipt")
+        or not isinstance(accepted_source, Mapping)
+        or reconstruction.get("accepted_image_sha256") != accepted_source.get("sha256")
+        or reconstruction.get("accepted_image_pixel_sha256") != accepted_source.get("normalized_pixel_sha256")
+        or reconstruction.get("accepted_source_body") != accepted_source
+        or reconstruction.get("worker_source_body") != sealed_authority.get("worker_source_body")
+        or final.get("accepted_source_body") != accepted_source
+        or final.get("worker_source_body") != sealed_authority.get("worker_source_body")
+        or reconstruction.get("final_page") != final.get("page_pptx")
+        or reconstruction.get("final_page_sha256") != final.get("sha256")
+    ):
+        raise RuntimeError("reconstruction receipt does not match the sealed page authority")
+    return {
+        "status": "verified",
+        "authority_mode": "sealed_reconstruction",
+        "reconstruction_receipt": reconstruction,
+    }
+
+
 def commit_reconstructed_page(project: Path, *, page_number: int) -> None:
     root = Path(project).resolve()
     page = _load_reconstruction_state(root)["pages"][page_number - 1]
@@ -971,7 +1064,14 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
     if any(not path.is_file() for path in pages):
         raise ValueError("a V6 finalized page package is missing")
     chart_manifests = []
+    page_authority = []
     for page_number, page in enumerate(state["pages"], start=1):
+        verified = verify_completed_page_authority(root, page_number)
+        page_authority.append({
+            "page_number": page_number,
+            "status": verified["status"],
+            "authority_mode": verified["authority_mode"],
+        })
         manifest_path = (
             root / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
             / "pages" / "page_001" / "manifest.json"
@@ -1049,6 +1149,7 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
         "page_order": [page["page_number"] for page in state["pages"]],
         "output": output.relative_to(root).as_posix(),
         "sha256": _sha256(output),
+        "page_authority": page_authority,
         "mechanical_validation": {
             "openxml_package": True,
             "slide_count": True,

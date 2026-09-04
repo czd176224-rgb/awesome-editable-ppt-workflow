@@ -31,6 +31,7 @@ from workflow_v6_reconstruction_worker import (  # noqa: E402
     PageWorkerResult,
     reconstruct_accepted_page,
 )
+from workflow_v6_reconstruction import assemble_v6_deck  # noqa: E402
 from workflow_v6_state import load, save  # noqa: E402
 from test_quantitative_chart_v123_e2e import (  # noqa: E402
     _production_worker,
@@ -116,6 +117,7 @@ def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_cal
         page_worker=lambda request: pytest.fail("recovery called the page worker"),
         paddle_runner=lambda request: pytest.fail("recovery called Paddle"),
     )
+    assembly = assemble_v6_deck(project)
 
     assert first["reconstruction_mode"] == "codex_direct_reconstruction"
     assert recovered["recovered"] is True
@@ -140,6 +142,99 @@ def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_cal
     assert final["accepted_source_body"] == accepted_request["source_body"]
     assert reconstruction["accepted_source_body"] == accepted_request["source_body"]
     assert reconstruction["worker_source_body"] == page_request["worker_source_body"]
+    assert assembly["page_authority"] == [{
+        "page_number": 1, "status": "verified", "authority_mode": "sealed_reconstruction",
+    }]
+    assert assembly["sha256"] == hashlib.sha256(
+        (project / assembly["output"]).read_bytes()
+    ).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "target,mutate",
+    [
+        (
+            "accepted_reconstruction_request.json",
+            lambda value: value["page_plan"].update({"page_purpose": "tampered"}),
+        ),
+        (
+            "page_request.json",
+            lambda value: value["page_plan"].update({"page_purpose": "tampered"}),
+        ),
+        (
+            "page_jobs.json",
+            lambda value: value["pages"][0]["dispatch"].update(
+                {"page_request_sha256": "0" * 64}
+            ),
+        ),
+        (
+            "manifest.json",
+            lambda value: value.update({"shapes": []}),
+        ),
+        (
+            "reconstruction.json",
+            lambda value: value.update({"final_page_sha256": "0" * 64}),
+        ),
+        (
+            "acceptance_receipt",
+            lambda value: value["page_plan"].update({"page_purpose": "tampered"}),
+        ),
+        (
+            "final_page_receipt",
+            lambda value: value.update({"artifact_version": "tampered"}),
+        ),
+        (
+            "final_page_receipt",
+            lambda value: value.update({"page_pptx": "06_v6/pages/page_999/page.pptx"}),
+        ),
+        (
+            "final_page_receipt",
+            lambda value: value["fixed_frame"].update({"passed": False}),
+        ),
+    ],
+)
+def test_assembly_revalidates_the_complete_sealed_page_authority_chain(
+    tmp_path: Path, target: str, mutate,
+):
+    project = _project(tmp_path, 1)
+    calls: list = []
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker(calls),
+    )
+    run_dir = project / "05_v6/reconstruction_runs/page_001"
+    path = {
+        "acceptance_receipt": project / "04_v6/images/page_001.json",
+        "final_page_receipt": project / "06_v6/pages/page_001/page.json",
+        "reconstruction.json": run_dir / "reconstruction.json",
+        "page_jobs.json": run_dir / "page_jobs.json",
+    }.get(target, run_dir / "pages/page_001" / target)
+    value = json.loads(path.read_text(encoding="utf-8"))
+    mutate(value)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        (RuntimeError, ValueError),
+        match="authority|receipt|request|relationship|edge|signature|artifact",
+    ):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
+
+
+def test_assembly_rejects_changed_final_page_bytes(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    page = project / "06_v6/pages/page_001/page.pptx"
+    page.write_bytes(page.read_bytes() + b"tampered")
+
+    with pytest.raises(RuntimeError, match="completed reconstructed page changed"):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
 
 
 def test_page_worker_prompt_enforces_sealed_text_repairs(tmp_path: Path):

@@ -464,6 +464,24 @@ def test_assembly_allows_manifestless_genuine_native_direct_page(tmp_path: Path)
     assert (project / report["output"]).is_file()
 
 
+def test_formal_word_page_cannot_downgrade_to_native_direct_by_deleting_seals(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "native-direct-body.pptx"
+    _body(body, "native-direct editable body")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+    state = load(project)
+    state["word_source"].pop("authority_mode", None)
+    state["source_identity"] = canonical_sha256({
+        "word_source": state["word_source"], "logo_source": state["logo_source"],
+    })
+    save(project, state)
+
+    with pytest.raises(RuntimeError, match="native-direct.*legacy"):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
+
+
 def test_assembly_rejects_manifestless_page_2_native_chart_before_output(tmp_path: Path):
     project = _project(tmp_path, 2)
     for page_number in (1, 2):
@@ -482,6 +500,10 @@ def test_assembly_rejects_manifestless_page_2_native_chart_before_output(tmp_pat
         chart_data,
     )
     page_deck.save(page_path)
+    final_report_path = project / "06_v6/pages/page_002/page.json"
+    final_report = json.loads(final_report_path.read_text(encoding="utf-8"))
+    final_report["sha256"] = hashlib.sha256(page_path.read_bytes()).hexdigest()
+    final_report_path.write_text(json.dumps(final_report), encoding="utf-8")
 
     with pytest.raises(ValueError, match="manifestless native-direct page contains an undeclared native chart"):
         assemble_v6_deck(project)
@@ -522,6 +544,7 @@ def test_assembly_rejects_sealed_page_when_manifest_is_missing(tmp_path: Path):
         "path": receipt_path.relative_to(project).as_posix(),
         "sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
     }
+    final_report["sha256"] = hashlib.sha256(page_path.read_bytes()).hexdigest()
     final_report_path.write_text(json.dumps(final_report), encoding="utf-8")
     manifest_path = (
         project / "05_v6/reconstruction_runs/page_002/pages/page_001/manifest.json"
@@ -529,7 +552,7 @@ def test_assembly_rejects_sealed_page_when_manifest_is_missing(tmp_path: Path):
     assert not manifest_path.exists()
     assert receipt["status"] == "accepted"
 
-    with pytest.raises(ValueError, match="sealed reconstruction manifest is missing"):
+    with pytest.raises(RuntimeError, match="authority is incomplete"):
         assemble_v6_deck(project)
 
     assert not (project / "08_final/deck.pptx").exists()
@@ -641,7 +664,7 @@ def test_non_emphasis_replacement_uses_theme_fill_for_contrast(tmp_path: Path):
     assert str(run.font.color.rgb) == "000000"
 
 
-def test_assembly_reapplies_background_and_non_emphasis_text_guard(tmp_path: Path):
+def test_assembly_rejects_page_changed_after_finalization(tmp_path: Path):
     project = _project(tmp_path, 1)
     body = tmp_path / "body.pptx"
     _body(body, "最终校验")
@@ -654,11 +677,10 @@ def test_assembly_reapplies_background_and_non_emphasis_text_guard(tmp_path: Pat
     slide.shapes[0].text_frame.paragraphs[0].runs[0].font.color.rgb = RGBColor.from_string("C7352B")
     page_deck.save(page_path)
 
-    report = assemble_v6_deck(project)
-    final = Presentation(project / report["output"])
-    slide = final.slides[0]
-    assert str(slide.background.fill.fore_color.rgb) == "E7F1FA"
-    assert str(slide.shapes[0].text_frame.paragraphs[0].runs[0].font.color.rgb) == "17365D"
+    with pytest.raises(RuntimeError, match="completed reconstructed page changed"):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
 
 
 def test_current_confirmed_project_missing_composition_fails_closed_at_assembly(tmp_path: Path):

@@ -84,6 +84,74 @@ def test_native_special_page_bypasses_creative_stages_and_assembles_with_content
     assert set(assembled[0]) == {1, 2}
 
 
+@pytest.mark.parametrize(
+    "assembler,expected",
+    [
+        (
+            lambda _root, _outcomes: {
+                "status": "complete", "output": "08_final/deck.pptx", "sha256": "a" * 64,
+            },
+            {"status": "complete", "output": "08_final/deck.pptx", "sha256": "a" * 64},
+        ),
+        (
+            lambda _root, _outcomes: {"status": "deferred", "reason": "pages incomplete"},
+            {"status": "deferred", "reason": "pages incomplete"},
+        ),
+        (None, {"status": "not_run"}),
+    ],
+)
+def test_pipeline_report_preserves_real_assembly_status_without_inventing_a_digest(
+    tmp_path: Path, assembler, expected: dict[str, str],
+) -> None:
+    from workflow_v6_pipeline import PipelineConfiguration, PipelineDependencies, run_pages
+
+    project = _project(tmp_path, pages=1)
+    report = run_pages(
+        project, [1],
+        dependencies=PipelineDependencies(
+            open_workspace=lambda root, page: {"page": page},
+            evidence_recorder=lambda workspace: object(),
+            candidate_loop=lambda workspace, **kwargs: {"accepted": workspace["page"]},
+            assemble_project=assembler,
+        ),
+        configuration=PipelineConfiguration(
+            page_workers=1, initial_page_concurrency=1, maximum_page_concurrency=1,
+        ),
+    )
+
+    assert report.assembly == expected
+    assert report.to_dict()["assembly"] == expected
+    if expected["status"] != "complete":
+        assert "sha256" not in report.assembly
+
+
+def test_pipeline_report_marks_assembly_exception_failed_without_fabricating_digest(
+    tmp_path: Path,
+) -> None:
+    from workflow_v6_pipeline import PipelineConfiguration, PipelineDependencies, run_pages
+
+    project = _project(tmp_path, pages=1)
+
+    def fail(_root, _outcomes):
+        raise RuntimeError("assembly stopped")
+
+    report = run_pages(
+        project, [1],
+        dependencies=PipelineDependencies(
+            open_workspace=lambda root, page: {"page": page},
+            evidence_recorder=lambda workspace: object(),
+            candidate_loop=lambda workspace, **kwargs: {"accepted": workspace["page"]},
+            assemble_project=fail,
+        ),
+        configuration=PipelineConfiguration(
+            page_workers=1, initial_page_concurrency=1, maximum_page_concurrency=1,
+        ),
+    )
+
+    assert report.assembly == {"status": "failed", "reason": "RuntimeError: assembly stopped"}
+    assert "sha256" not in report.assembly
+
+
 def test_pipeline_dispatch_reads_composition_through_secure_project_io(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
