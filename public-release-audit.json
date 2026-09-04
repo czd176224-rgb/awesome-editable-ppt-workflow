@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v3-compact-page-plan",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "09ca3d5712d15d0a6d3d73fbff233c6a184b658c7d3531bd2ae83d306db5b5db",
+  "sourceManifestSha256": "e2c7aca7c1b9a3d23eabc6245ccab63445a0fdcff1064fc16b059c4a1e1358f2",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -1204,7 +1204,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 48581,
-      "sha256": "09ca3d5712d15d0a6d3d73fbff233c6a184b658c7d3531bd2ae83d306db5b5db"
+      "sha256": "e2c7aca7c1b9a3d23eabc6245ccab63445a0fdcff1064fc16b059c4a1e1358f2"
     },
     {
       "path": "README.md",
@@ -1238,8 +1238,8 @@
     },
     {
       "path": "scripts/release_gate.ps1",
-      "bytes": 5992,
-      "sha256": "570271c4a69be2bbb0dc1b0eea72bcc75efad73257fd5c1b51b35b728a318439"
+      "bytes": 6093,
+      "sha256": "03b179337baa074dbf7c48f39563c4d469bfa0384d077702e4043a4510112d51"
     },
     {
       "path": "SECURITY.md",

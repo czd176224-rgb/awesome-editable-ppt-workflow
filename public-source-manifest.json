@@ -6,7 +6,7 @@
     "workflowContractVersion":  "awesome-word-ppt-workflow-v1",
     "promptContractVersion":  "consulting-page-director-v3-compact-page-plan",
     "pageImagePolicy":  "generate-without-refs-edit-with-confirmed-refs",
-    "indexTreeSha256":  "8d1bbcc84caaae2037f90e25fb2f742b8141ec75b1bade7ea36b979ca74b86e7",
+    "indexTreeSha256":  "4ebce6441ecfbecee5878ab81357e75e20603723382cb68f3bf421194dd4c66a",
     "files":  {
                   ".agents/plugins/marketplace.json":  "a9ff9f849c8d3f256967f637d91560a479d766ed8b141dbf7689cea0e2689328",
                   ".gitattributes":  "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
@@ -252,7 +252,7 @@
                   "scripts/check_python_syntax.py":  "f3348a162ab67df7391a8a0c61a01b2252b811cbefa684a393cca3ffd28387d5",
                   "scripts/export_public_release.ps1":  "bf8582d8be5e23e14434766e0a54eaf8ba72552ac5a7669b259199b5b00de66e",
                   "scripts/package_release.ps1":  "ef97b55213642e280b9bb6b5780109d4ebe1480d3f44ed6061080661b93fe4d7",
-                  "scripts/release_gate.ps1":  "570271c4a69be2bbb0dc1b0eea72bcc75efad73257fd5c1b51b35b728a318439",
+                  "scripts/release_gate.ps1":  "03b179337baa074dbf7c48f39563c4d469bfa0384d077702e4043a4510112d51",
                   "SECURITY.md":  "7022374d01cef689dd1bbd041cfec37ba125079de8284065cbb7e163c38fad96",
                   "setup.cmd":  "c68237ab30e42c93e1858eede32c0cf4d2990cadd78f42586fef4eecefc302c1",
                   "tests/test_awesome_plugin_identity.py":  "f837f548ba0e400a4251f1c44525051ea827f430fd8911eb8c480280de07f996",
