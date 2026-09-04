@@ -51,6 +51,9 @@ from test_quantitative_chart_v123_e2e import (  # noqa: E402
 from test_workflow_v6_reconstruction import _write_signed_receipt  # noqa: E402
 
 
+pytestmark = pytest.mark.huangshi_release
+
+
 DESKTOP = Path.home() / "Desktop"
 WORD = DESKTOP / "黄石市产业创新与母基金专业化管理合作建议_PPT生成专用Word副本_V3.docx"
 LOGO = DESKTOP / "尚融logo.png"
