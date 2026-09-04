@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from complex_page_experiment.workspace import create_experiment_copy
 from test_director import _director_value, _result
 from test_loop import _review_result
 from test_materials import _prepare_complete_page_one
-from test_provider import _real_worker_runner
+from test_provider import _real_worker_runner, _replace_fixture_images
 
 
 def _page_director_invoke(view, page_number: int):
@@ -53,6 +54,7 @@ def test_page_two_runs_the_existing_vertical_loop_and_recovers_without_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _prepare_complete_page_one(awesome_four_page_project)
+    _replace_fixture_images(awesome_four_page_project)
     asset_manifest = awesome_four_page_project / "02_v6" / "source_assets.json"
     assets = json.loads(asset_manifest.read_text(encoding="utf-8"))
     for asset in assets["assets"]:
@@ -83,8 +85,6 @@ def test_page_two_runs_the_existing_vertical_loop_and_recovers_without_provider(
     page_material_path.write_bytes(page_material_bytes)
     state_path = awesome_four_page_project / "workflow_v6.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    import hashlib
-
     state["pages"][1]["material_receipt"]["digest"] = hashlib.sha256(
         page_material_bytes
     ).hexdigest()
@@ -128,6 +128,18 @@ def test_page_two_runs_the_existing_vertical_loop_and_recovers_without_provider(
         workspace.project_copy / "04_v6" / "images" / "page_002.json"
     ).is_file()
     assert len(provider_calls) == 1
+    command = provider_calls[0]
+    images = [
+        Path(command[index + 1])
+        for index, value in enumerate(command)
+        if value == "--image"
+    ]
+    digests = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "--image-sha256"
+    ]
+    assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in images] == digests
     recorder.finalize()
 
     events = [
