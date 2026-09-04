@@ -31,7 +31,7 @@ EXPECTED_DIRECTOR_TEMPLATE_IDS = [
     "investment-project-bp",
 ]
 
-VISUAL_FIELDS = {
+REQUIRED_VISUAL_FIELDS = {
     "primary_color",
     "secondary_color",
     "background_color",
@@ -41,8 +41,11 @@ VISUAL_FIELDS = {
     "body_size_pt",
     "caption_size_pt",
 }
+OPTIONAL_VISUAL_FIELDS = {"highlight_color"}
+VISUAL_FIELDS = REQUIRED_VISUAL_FIELDS | OPTIONAL_VISUAL_FIELDS
 IDENTITY_FIELDS = {"submission_id", "revision"}
 ALL_FIELDS = VISUAL_FIELDS | IDENTITY_FIELDS
+REQUIRED_FIELDS = REQUIRED_VISUAL_FIELDS | IDENTITY_FIELDS
 FORBIDDEN_FIELDS = {
     "template_id",
     "template_selection",
@@ -201,8 +204,8 @@ def test_director_taskbook_rejects_invalid_fields(mutation: str):
         module.validate_taskbook(value)
 
 
-def valid_contract(*, revision: int = 1) -> dict:
-    return {
+def valid_contract(*, revision: int = 1, highlight_color: str | None = None) -> dict:
+    result = {
         "submission_id": "submission-0001",
         "revision": revision,
         "primary_color": "#17365D",
@@ -214,10 +217,13 @@ def valid_contract(*, revision: int = 1) -> dict:
         "body_size_pt": 12,
         "caption_size_pt": 9,
     }
+    if highlight_color is not None:
+        result["highlight_color"] = highlight_color
+    return result
 
 
 def visual_contract(payload: dict) -> dict:
-    return {field: payload[field] for field in VISUAL_FIELDS}
+    return {field: payload[field] for field in VISUAL_FIELDS if field in payload}
 
 
 def confirmed_page(
@@ -460,7 +466,22 @@ def test_v6_confirmation_persists_director_and_uses_automatic_composition(tmp_pa
     assert result["director_confirmation"]["template_version"] == "1.0"
     assert len(result["director_confirmation"]["taskbook_digest"]) == 64
     assert state["director_confirmation"] == result["director_confirmation"]
-    assert set(result["global_visual_contract"]) == VISUAL_FIELDS
+    assert set(result["global_visual_contract"]) == REQUIRED_VISUAL_FIELDS
+
+
+def test_v6_confirmation_preserves_optional_highlight_color(tmp_path: Path):
+    project = make_v6_project(tmp_path, page_count=1)
+    write_composition(project, roles=["content"])
+    write_preconfirmation_files(project, page_count=1)
+    payload = valid_contract(revision=0, highlight_color="#D3A62C")
+    payload.update({
+        "selected_director_template_id": "corporate-planning",
+        "director_taskbook": valid_taskbook(),
+    })
+
+    result = load_server()._save_visual_contract(project, payload)
+
+    assert result["global_visual_contract"]["highlight_color"] == "#D3A62C"
 
 
 def test_v6_confirmation_rejects_browser_supplied_taskbook_digest(tmp_path: Path):
@@ -522,15 +543,17 @@ def make_awesome_project(tmp_path: Path, name: str = "awesome-project") -> Path:
     return project
 
 
-def test_confirmed_visual_contract_schema_allows_only_eight_visual_fields_and_identity():
+def test_confirmed_visual_contract_schema_keeps_highlight_optional_and_rejects_invalid_values():
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["title"] == "ConfirmedVisualContractV1"
     assert schema["additionalProperties"] is False
     assert set(schema["properties"]) == ALL_FIELDS
-    assert set(schema["required"]) == ALL_FIELDS
+    assert set(schema["required"]) == REQUIRED_FIELDS
 
     validator = Draft202012Validator(schema)
     assert list(validator.iter_errors(valid_contract())) == []
+    assert list(validator.iter_errors(valid_contract(highlight_color="#D3A62C"))) == []
+    assert list(validator.iter_errors(valid_contract(highlight_color="gold")))
     for forbidden in sorted(FORBIDDEN_FIELDS):
         payload = valid_contract()
         payload[forbidden] = [] if forbidden.endswith("s") else "forbidden"
@@ -554,6 +577,7 @@ def test_static_document_has_exactly_three_steps_and_no_page_editor_fields():
     parser.feed(html)
     assert [step["data-step"] for step in parser.steps] == ["1", "2", "3"]
     assert "整页 PPT 背景色" in html
+    assert '<input name="highlight_color" type="color" required>' in html
     assert '<textarea name="emphasis" maxlength="2000" rows="3"></textarea>' in html
     for forbidden in (
         "confirmed_pages", "page_role", "composition-warnings", "page-review",
@@ -569,6 +593,7 @@ const ui = require(process.argv[1]);
 const templates = [
   {id: 'calm', defaults: {
     primary_color:'#17365D', secondary_color:'#C7352B', background_color:'#FFFFFF',
+    highlight_color:'#C7352B',
     cjk_font:'Microsoft YaHei', latin_font:'Arial', title_size_pt:28, body_size_pt:12,
     caption_size_pt:9}, director_taskbook:{
       use_scenario:'公司推介', presenter:'公司团队', primary_audience:'合作伙伴',
@@ -576,13 +601,14 @@ const templates = [
       emphasis:'业务价值', deemphasis:'内部细节'}},
   {id: 'bold', defaults: {
     primary_color:'#111111', secondary_color:'#FF2C00', background_color:'#F1F0EE',
+    highlight_color:'#FF2C00',
     cjk_font:'Source Han Sans SC', latin_font:'Aptos', title_size_pt:34, body_size_pt:15,
     caption_size_pt:10}, director_taskbook:{
       use_scenario:'投决会', presenter:'投资团队', primary_audience:'投委会',
       audience_prior_knowledge:'已了解项目', desired_outcome:'形成投资决定',
       emphasis:'回报与风险', deemphasis:'重复背景'}}
 ];
-assert.strictEqual(ui.VISUAL_FIELDS.length, 8);
+assert.strictEqual(ui.VISUAL_FIELDS.length, 9);
 assert.strictEqual(ui.TASKBOOK_FIELDS.length, 7);
 let state = ui.createState(templates, 'calm', 0, templates[0].director_taskbook, '推荐理由', 'high');
 assert.strictEqual(state.step, 1);
@@ -594,6 +620,7 @@ state = ui.goNext(state);
 assert.strictEqual(state.step, 2);
 const edits = {
   primary_color:'#222222', secondary_color:'#CC3300', background_color:'#FAFAFA',
+  highlight_color:'#D3A62C',
   cjk_font:'Noto Sans CJK SC', latin_font:'Georgia', title_size_pt:32, body_size_pt:14,
   caption_size_pt:10
 };
@@ -1122,13 +1149,28 @@ def test_server_templates_are_ephemeral_defaults_and_confirmation_is_exact(tmp_p
     assert [item["id"] for item in recommendation["templates"]] == EXPECTED_DIRECTOR_TEMPLATE_IDS
     for template in recommendation["templates"]:
         assert set(template["defaults"]) == VISUAL_FIELDS
+    corporate = next(item for item in recommendation["templates"] if item["id"] == "corporate-planning")
+    assert corporate["defaults"] == {
+        "primary_color": "#17212B",
+        "secondary_color": "#176B67",
+        "highlight_color": "#D3A62C",
+        "background_color": "#F7F6F2",
+        "cjk_font": "Microsoft YaHei",
+        "latin_font": "Arial",
+        "title_size_pt": 30,
+        "body_size_pt": 14,
+        "caption_size_pt": 9,
+    }
+    catalogs = json.loads((STATIC_DIR / "catalogs.json").read_text(encoding="utf-8"))
+    static_corporate = next(item for item in catalogs["template_presets"] if item["id"] == "corporate-planning")
+    assert static_corporate["defaults"] == corporate["defaults"]
 
     payload = valid_contract()
     response = client.post("/api/confirm", json=payload)
     assert response.status_code == 200
     stored = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))
     assert stored == payload
-    assert set(stored) == ALL_FIELDS
+    assert set(stored) == REQUIRED_FIELDS
     assert not FORBIDDEN_FIELDS.intersection(stored)
 
 
@@ -1167,7 +1209,7 @@ def test_concurrent_same_revision_submissions_publish_only_one_contract(tmp_path
     assert sorted(statuses) == [200, 409]
     stored = json.loads((project / "confirm_ui" / "result.json").read_text(encoding="utf-8"))
     assert stored["submission_id"] in {"submission-0001", "submission-0002"}
-    assert set(stored) == ALL_FIELDS
+    assert set(stored) == REQUIRED_FIELDS
 
 
 def test_first_final_post_is_immutable_even_before_wait_seals_workflow_state(tmp_path: Path):
@@ -1236,7 +1278,7 @@ def test_wait_seals_only_visual_fields_into_v6_state(tmp_path: Path):
     assert state["geometry"] == geometry_before
     assert state["style_confirmation"] == {
         "status": "confirmed",
-        "contract": {field: payload[field] for field in VISUAL_FIELDS},
+        "contract": {field: payload[field] for field in VISUAL_FIELDS if field in payload},
     }
 
 

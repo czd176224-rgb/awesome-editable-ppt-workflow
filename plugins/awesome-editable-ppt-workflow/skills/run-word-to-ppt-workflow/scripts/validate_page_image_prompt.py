@@ -20,6 +20,7 @@ BOUNDARIES = (
     "Do not generate the footer.", "Do not generate the page number.",
 )
 VISUAL_KEYS = {"primary_color", "secondary_color", "background_color", "cjk_font", "latin_font", "title_size_pt", "body_size_pt", "caption_size_pt"}
+OPTIONAL_VISUAL_KEYS = {"highlight_color"}
 LEGACY_VISUAL_KEYS = {"regional_characteristics", "visual_description"}
 KNOWN_BODY_FRAME = {"geometry_version": "fixed-canvas-cm-v2", "body_bounds_cm": {"x": 0.81, "y": 2.3, "w": 23.78, "h": 11.18}, "body_pixels": {"width": 1904, "height": 896}, "fixed_layers": ["title", "logo", "footer", "page_number"]}
 COMMENT_ACTIONS = ("emphasize", "de-emphasize", "restructure", "abstract-to-model", "preserve-exact", "use-reference", "prohibit-promotional", "change-reading-order")
@@ -99,12 +100,17 @@ def _validate_materials(materials: Mapping[str, Any]) -> None:
     if (
         not isinstance(visual, Mapping)
         or not VISUAL_KEYS.issubset(visual)
-        or not set(visual).issubset(VISUAL_KEYS | LEGACY_VISUAL_KEYS)
+        or not set(visual).issubset(VISUAL_KEYS | OPTIONAL_VISUAL_KEYS | LEGACY_VISUAL_KEYS)
     ):
         raise ValueError("visual contract must contain the eight confirmed visual fields")
     for key in ("primary_color", "secondary_color", "background_color"):
         if not isinstance(visual[key], str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", visual[key]):
             raise ValueError(f"{key} must be a hex color")
+    if "highlight_color" in visual and (
+        not isinstance(visual["highlight_color"], str)
+        or not re.fullmatch(r"#[0-9A-Fa-f]{6}", visual["highlight_color"])
+    ):
+        raise ValueError("highlight_color must be a hex color")
     for key in ("cjk_font", "latin_font", *sorted(LEGACY_VISUAL_KEYS.intersection(visual))):
         if not isinstance(visual[key], str):
             raise ValueError(f"{key} must be a string")

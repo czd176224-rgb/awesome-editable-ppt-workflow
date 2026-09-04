@@ -239,6 +239,13 @@ def test_visual_contract_accepts_new_eight_field_confirmation():
     _module().validate_page_image_prompt(m, _result(m))
 
 
+def test_visual_contract_accepts_optional_highlight_color():
+    m = _materials()
+    m["visual_contract"]["highlight_color"] = "#D3A62C"
+
+    _module().validate_page_image_prompt(m, _result(m))
+
+
 def test_visual_contract_cannot_add_jointly_forged_field():
     m = _materials(); m["visual_contract"]["template"] = "forged"
     with pytest.raises(ValueError):
