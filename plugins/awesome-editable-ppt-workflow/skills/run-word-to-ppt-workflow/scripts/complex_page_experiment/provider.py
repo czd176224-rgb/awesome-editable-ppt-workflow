@@ -28,7 +28,7 @@ from .workspace import ExperimentWorkspace
 
 Operation = Literal["generate", "edit"]
 Quality = Literal["medium", "high"]
-Strategy = Literal["initial", "edit_previous", "regenerate_from_materials"]
+Strategy = Literal["initial", "edit_previous"]
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _MAX_INPUTS = 16
 
@@ -210,7 +210,7 @@ def build_experiment_image_request(
         raise ValueError("prompt must be nonempty exact text without outer whitespace")
     if quality not in {"medium", "high"}:
         raise ValueError("quality must be medium or high")
-    if strategy not in {"initial", "edit_previous", "regenerate_from_materials"}:
+    if strategy not in {"initial", "edit_previous"}:
         raise ValueError("strategy is invalid")
     if strategy == "initial" and attempt != 1:
         raise ValueError("initial strategy is valid only for attempt 1")
@@ -220,8 +220,6 @@ def build_experiment_image_request(
         raise ValueError("correction strategy requires attempt 2 or 3")
     if strategy == "edit_previous" and previous_candidate is None:
         raise ValueError("edit_previous requires the immediately preceding candidate")
-    if strategy == "regenerate_from_materials" and previous_candidate is None:
-        raise ValueError("regenerate correction requires the immediately preceding candidate authority")
     if len(selected_reference_ids) + (1 if strategy == "edit_previous" else 0) > _MAX_INPUTS:
         raise ValueError("Image2 accepts at most 16 total image inputs")
 
@@ -234,9 +232,6 @@ def build_experiment_image_request(
     roles = list(material_roles)
     digests = list(material_digests)
     transport_ids = list(selected_material_ids)
-    if strategy == "regenerate_from_materials":
-        assert previous_candidate is not None
-        _validated_previous_candidate(workspace, previous_candidate, attempt=attempt)
     if strategy == "edit_previous":
         assert previous_candidate is not None
         candidate_path, candidate_digest, candidate_id = _validated_previous_candidate(
@@ -587,7 +582,7 @@ def _load_request_seal(
     predecessor = value.get("immediate_predecessor_authority")
     if (
         (attempt == 1 and strategy != "initial")
-        or (attempt > 1 and strategy not in {"edit_previous", "regenerate_from_materials"})
+        or (attempt > 1 and strategy != "edit_previous")
         or (strategy == "edit_previous") != (candidate is not None)
         or (attempt == 1) != (predecessor is None)
     ):

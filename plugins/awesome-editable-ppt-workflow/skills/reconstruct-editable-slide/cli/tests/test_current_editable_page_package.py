@@ -26,7 +26,11 @@ def _load_prompt_builder():
     return module
 
 
-def _worker_prompt(tmp_path: Path, numeric_authority: dict[str, object] | None) -> str:
+def _worker_prompt(
+    tmp_path: Path,
+    numeric_authority: dict[str, object] | None,
+    page_plan: dict[str, object] | None = None,
+) -> str:
     module = _load_prompt_builder()
     run_dir = tmp_path / "run"
     page_dir = run_dir / "pages" / "page_001"
@@ -34,6 +38,8 @@ def _worker_prompt(tmp_path: Path, numeric_authority: dict[str, object] | None) 
     request: dict[str, object] = {"source_image": str(page_dir / "source.png")}
     if numeric_authority is not None:
         request["numeric_authority"] = numeric_authority
+    if page_plan is not None:
+        request["page_plan"] = page_plan
     (page_dir / "page_request.json").write_text(
         json.dumps(request, ensure_ascii=False), encoding="utf-8"
     )
@@ -190,3 +196,42 @@ def test_page_worker_prompt_without_numeric_authority_forbids_quantitative_geome
         "difference magnitude",
     ):
         assert forbidden_geometry in prompt
+
+
+def test_page_worker_prompt_contains_sealed_relationship_nodes_edges_and_direction(tmp_path):
+    page_plan = {
+        "page_purpose": "Explain the accepted relationship.",
+        "primary_relationship": {
+            "nodes": [
+                {"node_id": "regional-resources", "label": "Regional resources"},
+                {"node_id": "fund-platform", "label": "Fund platform"},
+            ],
+            "edges": [{
+                "from_node": "regional-resources",
+                "to_node": "fund-platform",
+                "label": "enter",
+            }],
+        },
+    }
+
+    prompt = _worker_prompt(tmp_path, None, page_plan)
+
+    assert "SEALED PAGE PLAN RELATIONSHIP AUTHORITY" in prompt
+    assert '"node_id": "regional-resources"' in prompt
+    assert '"from_node": "regional-resources"' in prompt
+    assert '"to_node": "fund-platform"' in prompt
+    assert "regional-resources -> fund-platform" in prompt
+    assert (
+        'Required node object_id values (verbatim, one object each): '
+        '["regional-resources", "fund-platform"]'
+    ) in prompt
+    assert (
+        'Required connector object_id values (verbatim, one connector each): '
+        '["edge:regional-resources->fund-platform"]'
+    ) in prompt
+    assert "Do not alias, rename, prefix, suffix, or split any required ID" in prompt
+    assert (
+        "Before reporting success, verify each required ID appears exactly once in "
+        "manifest.json as object_id and exactly once in page.pptx cNvPr descr as "
+        "object_id:<ID>."
+    ) in prompt

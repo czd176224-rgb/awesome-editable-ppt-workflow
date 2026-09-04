@@ -79,16 +79,11 @@ class VisualReview:
 @dataclass(frozen=True)
 class ReviewProblem:
     category: Literal[
-        "technical_output",
-        "fixed_layer_violation",
-        "clear_subject_departure",
-        "misleading_fabrication",
-        "severe_identity_distortion",
-        "core_comment_absent",
-        "unusable_17_8_composition",
-        "consulting_argument_failure",
-        "ai_heavy_reporting_style",
-        "semantic_color_misuse",
+        "fact_integrity",
+        "primary_relationship",
+        "core_exhibit_prominence",
+        "quantitative_truth",
+        "severe_usability",
     ]
     detail: str
 
@@ -537,42 +532,29 @@ def _review_prompt(
     return (
         "You are the fresh independent visual reviewer and the only semantic QA after image generation. "
         "Review the actual candidate, not the director's intentions. Default to accept reasonable Image2 randomness. "
-        "Return correct on ONLY these ten serious grounds: (1) damaged output or wrong size/aspect; "
-        "(2) generated fixed title, fixed logo, footer, or page number; (3) clear departure from this page's subject; "
-        "(4) clearly misleading fabrication; (5) severe distortion of a must-preserve real identity; "
-        "(6) the core original comment direction is entirely absent; (7) the composition is plainly unusable "
-        "in the 17:8 body region; (8) the page fails as one coherent body image and argument: it lacks a clear "
-        "business proposition, analytical backbone, explanatory copy, evidence → interpretation → conclusion flow, "
-        "or explicit takeaway, including disconnected module grids; (9) AI-heavy spectacle unsuitable for a formal "
-        "report dominates the body, including decorative hero scenes, 3D machinery, miniature factories or parks, "
-        "neon, cyberpunk, glowing tracks, or toy-model aesthetics; or (10) visible colors contradict the confirmed "
-        "semantic color meaning in the page authority. Every visible word or label absent from complete_word_content "
-        "is a hard misleading_fabrication error, even when it sounds plausible or merely explanatory. When "
-        "quantitative marks or labels contradict source values, change the subject, unit, period, or basis, "
-        "calculate a new metric, or imply values the source does not supply, classify the defect as "
-        "misleading_fabrication. Apply the eight relationship rules only when complete_word_content explicitly "
-        "contains that relationship. A page containing none of them must not introduce a chart or named qualitative "
-        "substitute and must not be rejected for omitting one. When a source-explicit relationship has incomplete numeric dimensions, the candidate must use the named "
-        "qualitative substitute: driver bridge, timeline/roadmap, source-labelled qualitative quadrant or table, "
-        "uniform nodes, equal-width hierarchy, roadmap/milestones, comparison table, or goal-current-gap. Such "
-        "a substitute must make the relationship visible but must not use numeric axes, proportional geometry, "
-        "bubble-size ranking, target-line magnitude, or difference magnitude; violations are "
-        "consulting_argument_failure or misleading_fabrication as applicable. When "
-        "complete_word_content contains source-explicit process, hierarchy, parallelism, membership, comparison, or "
-        "causality, isolated text blocks without a dominant visual backbone are a hard consulting_argument_failure. "
-        "The candidate must use color, space, shape, connectors, or hierarchy to expose that source relationship. "
-        "When the prompt gives color a structural duty, the candidate must visibly use derived shades of the confirmed UI "
-        "secondary color, with at least two visibly distinct tones across the analytical backbone; do not accept a monochrome, "
-        "single-accent-line, colored-text-only, or unrelated-hue substitute. Color may clarify source relationships but "
-        "must not invent them. Every "
-        "correction problem must name the visible defect and a concrete repair. Harmless rendering variance and possible polish "
-        "must be accepted. For a comment that specifically requests a real logo, person, product, project, or factual "
-        "image, judge availability against all mapped Context-Images, not merely the selected references. After the "
-        "completed project material search/import stage, if no corresponding mapped Context-Image exists, accept the "
-        "source-exact formal-name fallback and do not classify core_comment_absent solely because that unavailable real "
-        "asset is missing. Still return correct for fake, synthesized, mismatched, or severely distorted identity assets, "
-        "and evaluate every other visible defect normally. Do not use numerical grading, material-by-material completeness "
-        "thresholds, or a check matrix.\n\n"
+        "Return correct only for the one most severe visible defect, using exactly one of these five hard-error "
+        "categories and giving one concrete repair: "
+        "fact_integrity when a distinct source fact, qualifier, or required visible expression is missing, changed, "
+        "fabricated, or assigned the wrong scope; "
+        "primary_relationship when the primary source-supported relationship is missing, unreadable, or points the wrong way; "
+        "core_exhibit_prominence when the sealed prompt's core exhibit is absent or cannot be distinguished from supporting content; "
+        "quantitative_truth for false quantitative encoding, including wrong values, subjects, units, periods, bases, "
+        "calculated metrics, or visual magnitude that implies measurements the source does not supply; "
+        "severe_usability when damage, wrong size/aspect, fixed-layer intrusion, severe illegibility, subject departure, "
+        "or must-preserve identity distortion makes the body unusable. "
+        "Preserve truth boundaries in both directions: faithful rewording and source-supported graphical expression are valid, "
+        "but every visible claim and implied relationship needs source support. "
+        "Accept a professional analytical table used for comparison; a valid local diagram without a named metaphor; "
+        "minor connector endpoint drift when the relationship still points correctly; ordinary aesthetic differences; "
+        "and color or card-count differences that do not change facts or relationships. "
+        "Table versus diagram form and general aesthetics are not hard errors. The reviewer checks the candidate against "
+        "the sealed evidence and prompt and does not redesign the page. For a comment that requests a real logo, person, "
+        "product, project, or factual image, judge availability against all mapped Context-Images, not merely the selected "
+        "references. After the completed project material search/import stage, accept the source-exact formal-name fallback "
+        "when no corresponding image exists and do not classify fact_integrity solely because that unavailable real asset is "
+        "missing. Fake, synthesized, mismatched, or severely distorted identity assets remain hard errors. "
+        "Do not use numerical grading, completeness "
+        "thresholds, a check matrix, or more than one problem.\n\n"
         "IMAGE INPUT ORDER\n"
         "Candidate-1 = actual candidate under review\n"
         + "\n".join(context_lines)

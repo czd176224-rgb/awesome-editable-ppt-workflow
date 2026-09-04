@@ -9,6 +9,8 @@ from complex_page_experiment.consulting_prompt import (
     SECTION_SPECS,
     compile_consulting_six_part_prompt,
 )
+from complex_page_experiment.director import _validate_director_value
+from complex_page_experiment.materials import CompletePageMaterialView
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "consulting_director_cases.json"
@@ -33,31 +35,86 @@ LEGACY_TERMS = (
 
 def _cases() -> list[dict[str, object]]:
     value = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    assert value["schema_version"] == "awesome-consulting-director-regressions-v1"
+    assert value["schema_version"] == "awesome-consulting-director-regressions-v2"
     return value["cases"]
+
+
+def _director_value(case: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": "awesome-consulting-page-director-v3",
+        "page_number": 1,
+        "quality": "high",
+        "page_plan": case["page_plan"],
+        "selected_references": [],
+    }
+
+
+def _material_view(case: dict[str, object]) -> CompletePageMaterialView:
+    facts = [case["proposition"], case["explanatory_lead"], case["takeaway"]]
+    return CompletePageMaterialView(
+        value={
+            "page_number": 1,
+            "complete_word_content": [
+                {
+                    "type": "paragraph",
+                    "text": text,
+                    "source_block_id": f"body-{index}",
+                    "source_order": index,
+                }
+                for index, text in enumerate(facts, start=1)
+            ],
+            "visual_contract": {
+                "background_color": case["colors"]["background"],
+                "primary_color": case["colors"]["primary"],
+                "secondary_color": case["colors"]["secondary"],
+            },
+        },
+        multimodal_images=(),
+        material_ids=(),
+        sha256="public-director-fixture",
+    )
 
 
 def test_public_regression_fixture_covers_the_four_consulting_body_patterns() -> None:
     cases = _cases()
+    by_id = {case["id"]: case for case in cases}
 
     assert tuple(case["id"] for case in cases) == EXPECTED_CASES
-    assert len({case["analytical_backbone"] for case in cases}) == 4
+    assert len({case["page_plan"]["primary_relationship"]["description"] for case in cases}) == 4
     assert all(case["explanatory_lead"] and case["takeaway"] for case in cases)
+    loop = by_id["five-stage-capital-loop"]["page_plan"]["primary_relationship"]
+    assert [node["node_id"] for node in loop["nodes"]] == [
+        "sourcing", "screening", "investment", "value-creation", "realization",
+    ]
+    assert [(edge["from_node"], edge["to_node"]) for edge in loop["edges"]] == [
+        ("sourcing", "screening"),
+        ("screening", "investment"),
+        ("investment", "value-creation"),
+        ("value-creation", "realization"),
+        ("realization", "sourcing"),
+    ]
+    chain = by_id["four-capability-transformation-chain"]["page_plan"][
+        "primary_relationship"
+    ]
+    assert [node["node_id"] for node in chain["nodes"]] == [
+        "data-foundation", "decision-intelligence", "operating-adoption", "measurable-outcome",
+    ]
+    assert [(edge["from_node"], edge["to_node"]) for edge in chain["edges"]] == [
+        ("data-foundation", "decision-intelligence"),
+        ("decision-intelligence", "operating-adoption"),
+        ("operating-adoption", "measurable-outcome"),
+    ]
+
+
+@pytest.mark.parametrize("case", _cases(), ids=lambda case: str(case["id"]))
+def test_each_public_case_is_a_v3_director_fixture(case) -> None:
+    assert _validate_director_value(_director_value(case), _material_view(case)) == ()
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda case: str(case["id"]))
 def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None:
-    value = {
-        "schema_version": "awesome-consulting-page-director-v2",
-        "prompt_sections": case["prompt_sections"],
-    }
-    material_view = {
-        "visual_contract": {
-            "background_color": case["colors"]["background"],
-            "primary_color": case["colors"]["primary"],
-            "secondary_color": case["colors"]["secondary"],
-        }
-    }
+    value = _director_value(case)
+    material_view = _material_view(case)
 
     prompt = compile_consulting_six_part_prompt(value, material_view)
 
@@ -66,13 +123,21 @@ def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None
         sorted(prompt.index(heading) for heading in headings)
     )
     assert case["proposition"] in prompt
-    assert case["analytical_backbone"] in prompt
+    assert case["page_plan"]["primary_relationship"]["description"] in prompt
+    assert case["page_plan"]["primary_relationship"]["visual_instruction"] in prompt
     assert case["explanatory_lead"] in prompt
     assert case["takeaway"] in prompt
     assert case["colors"]["background"] in prompt
     assert case["colors"]["primary"] in prompt
     assert case["colors"]["secondary"] in prompt
-    assert "evidence, interpretation, and conclusion" in prompt
+    # Prompt size remains diagnostic only; correctness is content and boundary preservation.
+    assert len(prompt) > sum(
+        len(block["text"])
+        for block in material_view.value["complete_word_content"]
+    )
+    assert "Communicate one source-supported main message" in prompt
+    assert "one source-supported main message in a coherent reading path" in prompt
+    assert "no invented takeaway" in prompt
     assert "Do not generate title, logo, footer, or page number" in prompt
     assert "This is not a user-confirmed emphasis page" in prompt
     assert "Do not use any secondary-color-family shade for any text object" in prompt
@@ -101,7 +166,7 @@ def test_director_template_context_uses_one_taskbook_helper_without_reviewing_di
     director = (scripts / "complex_page_experiment/director.py").read_text(encoding="utf-8")
     review = (scripts / "complex_page_experiment/review.py").read_text(encoding="utf-8")
 
-    assert director.count("confirmed_taskbook_prompt(") == 2
+    assert director.count("confirmed_taskbook_prompt(") == 1
     assert review.count("confirmed_taskbook_prompt(") == 1
     assert "CONFIRMED PRESENTATION TASKBOOK" in director
     assert "CONFIRMED PRESENTATION TASKBOOK" in review

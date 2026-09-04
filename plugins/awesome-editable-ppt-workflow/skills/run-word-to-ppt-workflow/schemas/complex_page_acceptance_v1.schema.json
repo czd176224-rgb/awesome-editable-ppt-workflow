@@ -7,7 +7,7 @@
   "required": [
     "schema_version", "status", "experiment_id", "page_number",
     "source_snapshot_sha256", "source_identity", "ui_revision", "ui_digest",
-    "material_view_sha256", "candidate", "candidate_history_sha256",
+    "material_view_sha256", "page_plan", "candidate", "candidate_history_sha256",
     "prompt_history_sha256", "selected_real_reference_ids", "accepted_review",
     "provider_authority", "fixed_frame", "evidence_checkpoint", "key_id",
     "hmac_sha256"
@@ -22,6 +22,7 @@
     "ui_revision": {"type": "integer", "minimum": 1},
     "ui_digest": {"$ref": "#/$defs/sha"},
     "material_view_sha256": {"$ref": "#/$defs/sha"},
+    "page_plan": {"type": "object"},
     "candidate": {
       "type": "object", "additionalProperties": false,
       "required": ["attempt", "path", "sha256", "byte_size", "width", "height",
@@ -60,10 +61,8 @@
         "properties": {
           "category": {
             "enum": [
-              "technical_output", "fixed_layer_violation", "clear_subject_departure",
-              "misleading_fabrication", "severe_identity_distortion", "core_comment_absent",
-              "unusable_17_8_composition", "consulting_argument_failure",
-              "ai_heavy_reporting_style", "semantic_color_misuse"
+              "fact_integrity", "primary_relationship", "core_exhibit_prominence",
+              "quantitative_truth", "severe_usability"
             ]
           },
           "detail": {"type": "string", "minLength": 1},

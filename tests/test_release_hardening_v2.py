@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -23,12 +24,28 @@ def require_export_checkout() -> None:
         pytest.skip("public export requires the private reviewed Git checkout")
 
 
-def test_release_identity_is_immutable_v2_tag():
+def test_committed_public_manifest_hashes_match_head_bytes():
+    require_export_checkout()
+
+    def head_bytes(relative: str) -> bytes:
+        return subprocess.run(
+            ["git", "show", f"HEAD:{relative}"], cwd=ROOT, check=True, capture_output=True,
+        ).stdout
+
+    manifest_bytes = head_bytes("public-source-manifest.json")
+    manifest = json.loads(manifest_bytes.decode("utf-8-sig"))
+    for relative, expected in manifest["files"].items():
+        assert hashlib.sha256(head_bytes(relative)).hexdigest() == expected, relative
+    audit = json.loads(head_bytes("public-release-audit.json").decode("utf-8-sig"))
+    assert audit["sourceManifestSha256"] == hashlib.sha256(manifest_bytes).hexdigest()
+
+
+def test_release_identity_is_immutable_v123_tag():
     package = json.loads(text("package-info.json"))
-    assert package["pluginVersion"] == "1.2.2"
-    assert package["releaseTag"] == "v1.2.2"
+    assert package["pluginVersion"] == "1.2.3"
+    assert package["releaseTag"] == "v1.2.3"
     assert package["workflowContractVersion"] == "awesome-word-ppt-workflow-v1"
-    assert package["promptContractVersion"] == "consulting-page-director-v2-source-text-custody"
+    assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
     assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     installer = text("install.ps1")
     assert "--ref $ReleaseTag" in installer
@@ -103,7 +120,7 @@ def test_export_rejects_untracked_allowlisted_descendants(tmp_path: Path):
         assert poison.relative_to(ROOT).as_posix() not in source_manifest["files"]
         assert "sourceCommit" not in source_manifest
         assert source_manifest["authority"] == "tracked-public-source"
-        assert source_manifest["releaseTag"] == "v1.2.2"
+        assert source_manifest["releaseTag"] == "v1.2.3"
         assert len(source_manifest["indexTreeSha256"]) == 64
     finally:
         poison.unlink(missing_ok=True)
@@ -179,7 +196,7 @@ def test_export_scan_report_package_chain_has_non_circular_authorities(tmp_path:
     assert audited.returncode == 0, audited.stdout + audited.stderr
     audit = json.loads((output / "public-release-audit.json").read_text(encoding="utf-8-sig"))
     assert audit["schemaVersion"] == "public-release-audit-v1"
-    assert audit["releaseTag"] == "v1.2.2"
+    assert audit["releaseTag"] == "v1.2.3"
     packaged = subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
          str(output / "scripts/package_release.ps1"), "-SourceRoot", str(output),
@@ -217,7 +234,7 @@ def test_git_archive_uses_head_bytes_not_dirty_manifest_or_untracked_files(tmp_p
          "-OutputDirectory", str(dist)], cwd=output, capture_output=True, text=True, timeout=90,
     )
     assert packaged.returncode == 0, packaged.stdout + packaged.stderr
-    with zipfile.ZipFile(dist / "awesome-editable-ppt-workflow-1.2.2-windows.zip") as bundle:
+    with zipfile.ZipFile(dist / "awesome-editable-ppt-workflow-1.2.3-windows.zip") as bundle:
         assert "INJECTED.txt" not in bundle.namelist()
         assert bundle.read("public-source-manifest.json") == committed_manifest
 
@@ -286,11 +303,18 @@ def test_editppt_runtime_supports_installed_package_import_boundary():
         timeout=30,
     )
     assert probe.returncode == 0, probe.stdout + probe.stderr
+    reconstruction = text(
+        "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/"
+        "workflow_v6_reconstruction.py"
+    )
+    assert "from editppt.runtime.validate_pptx import" in reconstruction
+    assert "except ImportError" not in reconstruction
+    assert "from validate_pptx import" not in reconstruction
 
 
 def test_readme_and_quickstart_install_verified_exact_release_zip():
     docs = text("README.md") + text("docs/QUICKSTART.zh-CN.md")
-    assert "releases/download/v1.2.2/awesome-editable-ppt-workflow-1.2.2-windows.zip" in docs
+    assert "releases/download/v1.2.3/awesome-editable-ppt-workflow-1.2.3-windows.zip" in docs
     assert "SHA256SUMS.txt" in docs
     assert "Get-FileHash" in docs
     assert "raw.githubusercontent.com" not in docs
@@ -323,6 +347,12 @@ def test_hosted_workflows_prepare_secure_root_and_skip_only_office_bound_tests()
     for workflow in (ci, release):
         assert 'Join-Path $HOME ".codex"' in workflow
         assert "-SkipOfficeTests" in workflow
+
+
+def test_release_gate_runs_huangshi_acceptance_after_authority_suites():
+    gate = text("scripts/release_gate.ps1")
+    assert gate.index('foreach ($suite in @(') < gate.index('$HuangshiAcceptanceTest -q')
+    assert "Post-authority Huangshi acceptance failed." in gate
 
 
 def test_release_gate_validates_export_from_clean_public_development_checkout(tmp_path: Path):
@@ -359,6 +389,7 @@ def test_release_gate_validates_export_from_clean_public_development_checkout(tm
         cwd=checkout,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=600,
         env={**os.environ, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"},
     )
@@ -413,7 +444,7 @@ def test_package_release_exports_clean_public_source_from_git_checkout(tmp_path:
     assert all(result.returncode == 0 for result in results), "\n".join(
         result.stdout + result.stderr for result in results
     )
-    zip_name = "awesome-editable-ppt-workflow-1.2.2-windows.zip"
+    zip_name = "awesome-editable-ppt-workflow-1.2.3-windows.zip"
     assert (dist_a / zip_name).read_bytes() == (dist_b / zip_name).read_bytes()
     with zipfile.ZipFile(dist_a / zip_name) as bundle:
         names = set(bundle.namelist())

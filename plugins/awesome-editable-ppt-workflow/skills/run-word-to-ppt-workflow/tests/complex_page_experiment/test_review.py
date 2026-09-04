@@ -307,27 +307,19 @@ def test_review_taskbook_is_independent_authority_without_template_or_director_m
         assert forbidden not in prompt
 
 
-def test_review_allows_only_actionable_serious_correction_prompt_classes(
+def test_review_allows_only_five_hard_error_categories_and_one_problem(
     review_fixture,
 ):
-    problems = [
-        {"category": "technical_output", "detail": "The PNG is visibly damaged; regenerate a clean native PNG."},
-        {"category": "fixed_layer_violation", "detail": "A fixed page title appears in the body; remove it."},
-        {"category": "clear_subject_departure", "detail": "The image depicts an unrelated subject; return to this page's theme."},
-        {"category": "misleading_fabrication", "detail": "An invented institution attribution is misleading; remove it."},
-        {"category": "severe_identity_distortion", "detail": "The must-preserve real person's identity is severely distorted; restore it."},
-        {"category": "core_comment_absent", "detail": "The core original comment direction is entirely absent; express it directly."},
-        {"category": "unusable_17_8_composition", "detail": "The composition is unusable in the 17:8 body area; rebuild the hierarchy."},
-        {"category": "consulting_argument_failure", "detail": "The body is a disconnected module grid without an evidence-to-conclusion argument; rebuild one coherent analytical story."},
-        {"category": "ai_heavy_reporting_style", "detail": "A decorative neon 3D miniature factory dominates the body; replace it with restrained report-grade visual evidence."},
-        {"category": "semantic_color_misuse", "detail": "Red and green contradict the confirmed business semantics; restore the confirmed color meaning."},
-    ]
+    problem = {
+        "category": "quantitative_truth",
+        "detail": "Bar lengths imply values absent from the source; use equal-length marks.",
+    }
     workspace, view, director, candidate, recorder = review_fixture
     captured: list[str] = []
 
     def invoke(_project: Path, **kwargs):
         captured.append(str(kwargs["prompt"]))
-        return _review_result(decision="correct", problems=problems)
+        return _review_result(decision="correct", problems=[problem])
 
     result = review_candidate_once(
         workspace,
@@ -341,49 +333,79 @@ def test_review_allows_only_actionable_serious_correction_prompt_classes(
     )
 
     assert result.decision == "correct"
-    assert result.problems == tuple(problem["detail"] for problem in problems)
-    assert tuple(problem.category for problem in result.problem_records) == tuple(
-        problem["category"] for problem in problems
+    assert result.problems == (problem["detail"],)
+    assert tuple(item.category for item in result.problem_records) == ("quantitative_truth",)
+    prompt = captured[0]
+    for category in (
+        "fact_integrity",
+        "primary_relationship",
+        "core_exhibit_prominence",
+        "quantitative_truth",
+        "severe_usability",
+    ):
+        assert category in prompt
+    assert "one most severe visible defect" in prompt
+    assert "one concrete repair" in prompt
+    assert "does not redesign the page" in prompt
+    assert "false quantitative encoding" in prompt
+
+
+@pytest.mark.parametrize(
+    "acceptable_variance",
+    [
+        "professional analytical table used for comparison",
+        "valid local diagram without a named metaphor",
+        "minor connector endpoint drift when the relationship still points correctly",
+        "ordinary aesthetic differences",
+        "color or card-count differences that do not change facts or relationships",
+    ],
+)
+def test_review_prompt_requires_acceptance_of_non_hard_error_variance(
+    review_fixture, acceptable_variance: str
+):
+    workspace, view, director, candidate, recorder = review_fixture
+    captured: list[str] = []
+
+    def invoke(_project: Path, **kwargs):
+        captured.append(str(kwargs["prompt"]))
+        return _review_result()
+
+    result = review_candidate_once(
+        workspace,
+        view,
+        director,
+        candidate,
+        preflight_candidate(candidate),
+        timeout=30,
+        recorder=recorder,
+        invoke=invoke,
     )
-    assert "ONLY these ten serious grounds" in captured[0]
-    assert "one coherent body image and argument" in captured[0]
-    assert "evidence → interpretation → conclusion" in captured[0]
-    assert "explicit takeaway" in captured[0]
-    assert "disconnected module grids" in captured[0]
-    assert "miniature factories or parks" in captured[0]
-    assert "neon, cyberpunk" in captured[0]
-    assert "confirmed semantic color meaning" in captured[0]
-    assert "Every visible word or label absent from complete_word_content" in captured[0]
-    assert "isolated text blocks without a dominant visual backbone" in captured[0]
-    assert "source-explicit process, hierarchy, parallelism, membership, comparison, or causality" in captured[0]
-    assert "derived shades of the confirmed UI secondary color" in captured[0]
-    assert "at least two visibly distinct tones" in captured[0]
-    assert "Harmless rendering variance" in captured[0]
-    assert "possible polish" in captured[0]
-    assert "quantitative marks or labels contradict source values" in captured[0]
-    assert "subject, unit, period, or basis" in captured[0]
-    assert "named qualitative substitute" in captured[0]
-    assert "A page containing none of them must not introduce a chart" in captured[0]
-    assert "must not be rejected for omitting one" in captured[0]
-    for substitute in (
-        "driver bridge",
-        "timeline/roadmap",
-        "source-labelled qualitative quadrant or table",
-        "uniform nodes",
-        "equal-width hierarchy",
-        "roadmap/milestones",
-        "comparison table",
-        "goal-current-gap",
-    ):
-        assert substitute in captured[0]
-    for forbidden_geometry in (
-        "numeric axes",
-        "proportional geometry",
-        "bubble-size ranking",
-        "target-line magnitude",
-        "difference magnitude",
-    ):
-        assert forbidden_geometry in captured[0]
+
+    assert result.decision == "accept"
+    assert acceptable_variance in captured[0]
+
+
+def test_review_and_signed_schemas_share_five_hard_error_categories() -> None:
+    schema_dir = Path(__file__).resolve().parents[2] / "schemas"
+    review = json.loads((schema_dir / "complex_page_review_v1.schema.json").read_text(encoding="utf-8"))
+    authority = json.loads((schema_dir / "complex_page_review_authority_v1.schema.json").read_text(encoding="utf-8"))
+    acceptance = json.loads((schema_dir / "complex_page_acceptance_v1.schema.json").read_text(encoding="utf-8"))
+    expected = [
+        "fact_integrity",
+        "primary_relationship",
+        "core_exhibit_prominence",
+        "quantitative_truth",
+        "severe_usability",
+    ]
+
+    review_problems = review["properties"]["problems"]
+    authority_problems = authority["properties"]["problems"]
+    repair_problems = acceptance["properties"]["reconstruction_repairs"]
+    assert review_problems["maxItems"] == 1
+    assert authority_problems["maxItems"] == 1
+    assert review_problems["items"]["properties"]["category"]["enum"] == expected
+    assert authority_problems["items"]["properties"]["category"]["enum"] == expected
+    assert repair_problems["items"]["properties"]["category"]["enum"] == expected
 
 
 def test_review_does_not_spend_correction_for_authoritatively_unavailable_real_asset(
@@ -411,17 +433,19 @@ def test_review_does_not_spend_correction_for_authoritatively_unavailable_real_a
     assert len(captured) == 1
     prompt = captured[0]
     assert "completed project material search/import stage" in prompt
-    assert "do not classify core_comment_absent solely because that unavailable real asset is missing" in prompt
+    assert "do not classify fact_integrity solely because that unavailable real asset is" in prompt
     assert "all mapped Context-Images, not merely the selected references" in prompt
-    assert "fake, synthesized, mismatched, or severely distorted identity assets" in prompt
+    assert "Fake, synthesized, mismatched, or severely distorted identity assets" in prompt
 
 
 @pytest.mark.parametrize(
     "value",
     [
-        {"schema_version": "awesome-independent-visual-review-v1", "decision": "accept", "problems": [{"category": "technical_output", "detail": "fix it"}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "accept", "problems": [{"category": "fact_integrity", "detail": "fix it"}]},
         {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": []},
-        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "technical_output", "detail": "  "}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "fact_integrity", "detail": "  "}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "fact_integrity", "detail": "First."}, {"category": "severe_usability", "detail": "Second."}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "technical_output", "detail": "Legacy category."}]},
         {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "polish", "detail": "Make the colors nicer."}]},
         {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "color", "detail": "Change the palette."}]},
         {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "score", "detail": "The score is too low."}]},
@@ -481,10 +505,14 @@ def test_review_rejects_forged_material_or_director_before_codex(review_fixture)
     assert called is False
 
     forged_value = json.loads(json.dumps(director.value))
-    forged_value["creative_direction"]["analytical_backbone"] = "A different but schema-valid visual concept."
+    forged_value["page_plan"]["primary_relationship"]["description"] = (
+        "A different but schema-valid visual concept."
+    )
     from complex_page_experiment.director import compile_consulting_six_part_prompt
 
-    forged_value["prompt_sections"]["task_and_canvas"] = "A different but valid calm luminous field."
+    forged_value["page_plan"]["page_purpose"] = (
+        "A different but valid source-bound purpose."
+    )
     forged_director = replace(
         director,
         value=forged_value,

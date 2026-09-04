@@ -21,7 +21,7 @@ from provider_keyring import signing_key, verification_key
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 from director_taskbook import confirmed_taskbook_prompt, project_emphasis_pages
 
-from .consulting_prompt import compile_consulting_six_part_prompt
+from .consulting_prompt import _color_constraints, compile_consulting_six_part_prompt
 
 from .materials import (
     CompletePageMaterialView,
@@ -33,19 +33,11 @@ from .workspace import ExperimentWorkspace
 SCHEMA = (
     Path(__file__).resolve().parents[2]
     / "schemas"
-    / "consulting_page_director_v2.schema.json"
+    / "consulting_page_director_v3.schema.json"
 )
 VISUAL_DIRECTOR_REFERENCE = (
     Path(__file__).resolve().parent / "references" / "visual_director.md"
 )
-_CENTER_17_8_SAFE_REGION = (
-    "Regardless of the provider's eventual canvas aspect ratio, place all body text, charts, "
-    "people, real references, connections, and key decoration inside the central largest 17:8 "
-    "content region; leave a visibly empty perimeter on all four sides, and outside the safe "
-    "region use only discardable background, texture, or whitespace."
-)
-
-
 @dataclass(frozen=True)
 class DirectorArtifact:
     value: Mapping[str, object]
@@ -62,28 +54,10 @@ class DirectorArtifact:
     turn_id: str
 
     @property
-    def creative_direction(self) -> Mapping[str, object]:
-        value = self.value["creative_direction"]
+    def page_plan(self) -> Mapping[str, object]:
+        value = self.value["page_plan"]
         assert isinstance(value, Mapping)
         return value
-
-
-@dataclass(frozen=True)
-class CorrectionDecision:
-    strategy: Literal["edit_previous", "regenerate_from_materials"]
-    actual_prompt: str
-    selected_reference_ids: tuple[str, ...]
-    problem_addressed: tuple[str, ...]
-    preserve: tuple[str, ...]
-    model: str
-    effort: str | None
-    duration_seconds: float
-    model_provider: str
-    usage: Mapping[str, Any]
-    runtime_trace: Mapping[str, Any]
-    thread_id: str
-    turn_id: str
-    value: Mapping[str, object]
 
 
 def _load_schema() -> dict[str, Any]:
@@ -306,54 +280,48 @@ def _visual_director_reference() -> str:
     return text
 
 
-def _complete_material_use(
-    value: Mapping[str, object], material_view: CompletePageMaterialView
-) -> Mapping[str, object]:
-    machine = value.get("machine_record")
-    if not isinstance(machine, Mapping):
-        return value
-    material_use = machine.get("material_use")
-    selected = machine.get("selected_references")
-    if not isinstance(material_use, list) or not isinstance(selected, list):
-        return value
-
-    expected = set(material_view.material_ids)
-    selected_ids = {
-        str(item.get("material_id"))
-        for item in selected
-        if isinstance(item, Mapping)
+def _validate_fact_allocation(
+    page_plan: Mapping[str, object], material_view: CompletePageMaterialView
+) -> None:
+    expected = {
+        str(block["source_block_id"])
+        for block in material_view.value["complete_word_content"]
     }
-    records: dict[str, dict[str, object]] = {}
-    for item in material_use:
-        if not isinstance(item, Mapping):
-            continue
-        material_id = str(item.get("material_id"))
-        if material_id not in expected:
-            raise ValueError("material_use contains a material outside this page")
-        records.setdefault(material_id, dict(item))
+    core = page_plan["core_exhibit"]
+    groups = page_plan["support_groups"]
+    allocated = [str(item) for item in core["fact_ids"]]
+    allocated.extend(
+        str(item)
+        for group in groups
+        for item in group["fact_ids"]
+    )
+    def fact_ids(value: object):
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if key == "fact_ids":
+                    yield from child
+                else:
+                    yield from fact_ids(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from fact_ids(child)
 
-    for material_id in material_view.material_ids:
-        if material_id not in records:
-            selected_for_image = material_id in selected_ids
-            records[material_id] = {
-                "material_id": material_id,
-                "status": "used_in_image" if selected_for_image else "background_understanding",
-                "reason": (
-                    "Selected by the page director as an Image2 reference."
-                    if selected_for_image
-                    else "Provided to the page director for context but not selected as an Image2 reference."
-                ),
-            }
-        elif material_id in selected_ids:
-            records[material_id]["status"] = "used_in_image"
+    if any(str(item) not in expected for item in fact_ids(page_plan)):
+        raise ValueError("page plan contains an unknown fact source_block_id")
+    if len(allocated) != len(set(allocated)):
+        raise ValueError("each Word fact must be allocated exactly once")
+    if set(allocated) != expected:
+        raise ValueError("page plan must allocate every Word fact exactly once")
 
-    normalized_machine = dict(machine)
-    normalized_machine["material_use"] = [
-        records[material_id] for material_id in material_view.material_ids
-    ]
-    normalized = dict(value)
-    normalized["machine_record"] = normalized_machine
-    return normalized
+    relationship = page_plan["primary_relationship"]
+    nodes = relationship["nodes"]
+    node_ids = [str(node["node_id"]) for node in nodes]
+    if len(node_ids) != len(set(node_ids)):
+        raise ValueError("primary relationship node IDs must be unique")
+    declared = set(node_ids)
+    for edge in relationship["edges"]:
+        if str(edge["from_node"]) not in declared or str(edge["to_node"]) not in declared:
+            raise ValueError("each edge endpoint must name a declared node")
 
 
 def _validate_director_value(
@@ -361,75 +329,63 @@ def _validate_director_value(
     font_accent_allowed: bool = False,
 ) -> tuple[str, ...]:
     schema = _load_schema()
+    validated_value = json.loads(json.dumps(value))
+    page_plan = validated_value.get("page_plan")
+    if isinstance(page_plan, dict):
+        relationship = page_plan.get("primary_relationship")
+        if isinstance(relationship, dict):
+            edges = relationship.get("edges")
+            if isinstance(edges, list):
+                for edge in edges:
+                    if isinstance(edge, dict):
+                        edge.setdefault("label", None)
     errors = sorted(
-        Draft202012Validator(schema).iter_errors(dict(value)),
+        Draft202012Validator(schema).iter_errors(validated_value),
         key=lambda error: list(error.absolute_path),
     )
     if errors:
         path = "/".join(str(part) for part in errors[0].absolute_path) or "<root>"
         raise ValueError(f"director schema rejected {path}: {errors[0].message}")
 
-    machine = value["machine_record"]
-    assert isinstance(machine, Mapping)
-    for field in (
-        "facts_and_sources",
-        "must_preserve_entities",
-        "core_content_and_comment_direction",
-    ):
-        strings = machine[field]
-        assert isinstance(strings, list)
-        if any(not isinstance(item, str) or not item.strip() for item in strings):
-            raise ValueError(f"{field} entries must contain non-whitespace facts")
-    creative = value["creative_direction"]
-    assert isinstance(creative, Mapping)
-    for field in (
-        "business_proposition",
-        "explanatory_lead",
-        "analytical_backbone",
-        "evidence_interpretation_conclusion",
-        "content_hierarchy",
-        "reading_path_and_density",
-        "takeaway_statement",
-        "supporting_visual_policy",
-        "anti_ai_visual_policy",
-    ):
-        if not str(creative[field]).strip():
-            raise ValueError(
-                f"creative_direction {field} must contain non-whitespace text"
-            )
-    material_use = machine["material_use"]
-    assert isinstance(material_use, list)
-    if any(not str(item["reason"]).strip() for item in material_use):
-        raise ValueError("material_use reason must contain non-whitespace text")
-    observed = [str(item["material_id"]) for item in material_use]
-    expected = list(material_view.material_ids)
-    if len(observed) != len(set(observed)) or set(observed) != set(expected):
-        raise ValueError("material_use must name every material ID exactly once")
-
-    allowed_references = set(_image_material_ids(material_view))
-    selected = machine["selected_references"]
+    page_plan = value["page_plan"]
+    assert isinstance(page_plan, Mapping)
+    if value["page_number"] != material_view.value["page_number"]:
+        raise ValueError("director page_number must match the material page")
+    if not str(page_plan["page_purpose"]).strip():
+        raise ValueError("page_purpose must contain non-whitespace text")
+    relationship = page_plan["primary_relationship"]
+    assert isinstance(relationship, Mapping)
+    nodes = relationship["nodes"]
+    edges = relationship["edges"]
+    assert isinstance(nodes, list) and isinstance(edges, list)
+    for node in nodes:
+        if not str(node["node_id"]).strip() or not str(node["label"]).strip():
+            raise ValueError("relationship node_id and label must contain non-whitespace text")
+    for edge in edges:
+        if edge.get("label") is not None and not str(edge["label"]).strip():
+            raise ValueError("relationship edge label must contain non-whitespace text")
+    if relationship["grammar"] in {"flow", "hierarchy", "geography", "causality"}:
+        if not str(relationship["visual_instruction"]).strip():
+            raise ValueError("structural visual_instruction must contain non-whitespace text")
+        if not nodes:
+            raise ValueError("structural primary relationship requires source-bound nodes")
+        if not edges:
+            raise ValueError("structural primary relationship requires at least one edge")
+    _validate_fact_allocation(page_plan, material_view)
+    selected = value["selected_references"]
     assert isinstance(selected, list)
-    selected_text_fields = (
-        "identity",
-        "use",
-        "preserve",
-        "allowed_changes",
-        "composition_relationship",
-    )
     for reference in selected:
-        for field in selected_text_fields:
+        for field in ("use", "preserve"):
             if not str(reference[field]).strip():
                 raise ValueError(
                     f"selected reference {field} must contain non-whitespace text"
                 )
     selected_ids = tuple(str(item["material_id"]) for item in selected)
+    allowed_references = set(_image_material_ids(material_view)) if selected_ids else set()
     if len(selected_ids) != len(set(selected_ids)) or any(
         item not in allowed_references for item in selected_ids
     ):
         raise ValueError("selected reference must be a unique viewable project-owned material ID")
-    compile_consulting_six_part_prompt(
-        value, material_view, font_accent_allowed=font_accent_allowed
-    )
     return selected_ids
 
 
@@ -453,57 +409,33 @@ def direct_page(
     )
     visual_reference = _visual_director_reference()
     taskbook = confirmed_taskbook_prompt(workspace.project_copy)
+    color_contract = " ".join(_color_constraints(material_view, font_accent_allowed=font_accent_allowed))
     prompt = (
         "WORD BODY AND MATERIAL AUTHORITY\n"
-        "Word body text is the primary authority for page facts, theme, and narrative. "
-        "Original comments guide the direction of expression but must not replace or rewrite "
-        "Word facts. Word images, tables, charts, and attachments may supplement evidence, "
-        "preserve identity, and support visual expression; unless a comment explicitly requires "
-        "it, they must not replace the core conclusion of the Word body. Visual creativity may "
-        "change presentation but must not alter, invent, or omit the core meaning.\n\n"
-        "HARD BOUNDARIES\n"
-        "Use only source-supported facts and explicitly mapped page-owned images. The generated "
-        f"body must exclude the fixed title, logo, footer, and page number. {_CENTER_17_8_SAFE_REGION}\n\n"
+        "Word body text is the primary authority for page facts, theme, and narrative. Comments "
+        "guide expression, not facts. Images and attachments supplement evidence and identity; "
+        "they do not replace the core Word conclusion unless a comment explicitly requires it.\n\n"
         "GENERAL VISUAL DIRECTOR PRINCIPLES\n"
         f"{visual_reference}\n\n"
         "CONFIRMED PRESENTATION TASKBOOK\n"
         f"{taskbook}\n\n"
+        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING\n"
+        f"{color_contract}\n"
+        "Use these existing roles only to plan visual hierarchy; do not restate or override them.\n\n"
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES\n"
         "IMAGE INPUT MAP (input order is authoritative)\n"
         f"{_mapping_text(image_ids)}\n\n"
         "COMPLETE PAGE MATERIAL VIEW\n"
         f"{_canonical_text(material_view.value)}\n\n"
         "STRUCTURED OUTPUT REQUIREMENTS\n"
-        "Act as the consulting-report page director and produce the machine audit plus the v2 "
-        "creative direction and six prompt sections. Audit statuses do not impose a coverage "
-        "score or retry gate. Define one source-supported business proposition, a short "
-        "explanatory lead, one content-driven analytical backbone, the evidence-to-interpretation-"
-        "to-conclusion path, content hierarchy, reading path, explicit takeaway, supporting-visual "
-        "policy, and anti-AI-spectacle policy. Those creative-direction fields are planning "
-        "instructions, never visible copy unless their wording is copied exactly from the Word "
-        "body. In core_proposition_and_content, preserve the minimum source-exact explanatory "
-        "sentences, names, dates, numbers, labels, relationships, and conclusions that a reader "
-        "needs to understand the page; the visible content must not collapse into a keyword "
-        "list. Do not copy unnecessary source prose or authorize facts that the Word body does "
-        "not support. When the source forms a table, matrix, staged process, responsibility "
-        "structure, comparison dimensions, or an object-action-result list, the creative "
-        "direction must preserve that source structure instead of converting it into an "
-        "illustrative scene merely for visual continuity. Use visual hierarchy, relationships, "
-        "grouping, and concise source-exact explanation for dense material. Use only the mapped "
-        "images as selectable references. If, after material completion, a specifically requested "
-        "real asset is still absent from the mapped images, continue using only its source-exact "
-        "formal name from the Word body. Never generate or imply a fake logo, fake person, or fake "
-        "factual image, and do not claim the original comment has been fully implemented. When a "
-        "page does not need a scene, use task_and_canvas only to describe a two-dimensional "
-        "information canvas, shared alignment system, and spatial arrangement; do not invent an "
-        "industrial park, track, mechanical hub, panorama, or other thematic environment merely "
-        "to fill the field. When a source-appropriate foreground environment is needed, keep it "
-        "subordinate to the page's evidence and explanation. Do not specify "
-        "the canvas background, background color, grid, texture, gradient, or glow in any "
-        "prompt_sections field. The compiler owns canvas geometry, fixed-layer exclusions, the "
-        "confirmed color roles, and the central safe region; do not restate or override those "
-        "constraints. Return exactly "
-        "the consulting director v2 structured-output shape."
+        "Return only selected references and these compact v3 page-plan fields: page_purpose, "
+        "primary_relationship, core_exhibit, support_groups, reading_path, and local_visuals. Allocate every Word "
+        "source_block_id exactly once across the core exhibit and support groups; bind every other "
+        "fact reference to those source IDs. Choose only analytical_table, flow, hierarchy, geography, "
+        "causality, quantitative_chart, or composition_architecture. Use analytical_table for a "
+        "comparison when it is the clearest core exhibit. For flow, hierarchy, geography, or causality, "
+        "provide source-bound nodes, directed from_node -> to_node edges, and a non-empty visual "
+        "instruction. Select only mapped image material IDs and state their use and what to preserve."
     )
     result = invoke(
         workspace.project_copy,
@@ -513,7 +445,7 @@ def direct_page(
         output_schema=_load_schema(),
         timeout=timeout,
     )
-    director_value = _complete_material_use(result.value, material_view)
+    director_value = result.value
     selected_ids = _validate_director_value(
         director_value, material_view, font_accent_allowed=font_accent_allowed
     )
@@ -537,188 +469,3 @@ def direct_page(
     )
     _publish_director_authority(workspace, material_view, artifact)
     return artifact
-
-
-def _correction_schema(page_number: int = 1) -> dict[str, object]:
-    prompt_sections = _load_schema()["$defs"]["promptSections"]
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": False,
-        "required": [
-            "schema_version",
-            "page_number",
-            "strategy",
-            "problem_addressed",
-            "preserve",
-            "selected_reference_ids",
-            "prompt_sections",
-        ],
-        "properties": {
-            "schema_version": {"type": "string", "const": "awesome-page-correction-v2"},
-            "page_number": {"type": "integer", "const": page_number},
-            "strategy": {
-                "type": "string",
-                "enum": ["edit_previous", "regenerate_from_materials"],
-            },
-            "problem_addressed": {
-                "type": "array",
-                "minItems": 1,
-                "items": {"type": "string", "minLength": 1},
-            },
-            "preserve": {
-                "type": "array",
-                "minItems": 1,
-                "items": {"type": "string", "minLength": 1},
-            },
-            "selected_reference_ids": {
-                "type": "array",
-                "items": {"type": "string", "minLength": 1},
-            },
-            "prompt_sections": prompt_sections,
-        },
-    }
-
-
-def _candidate_under_project(workspace: ExperimentWorkspace, candidate: Path) -> Path:
-    project = workspace.project_copy.resolve(strict=True)
-    resolved = Path(candidate).resolve(strict=True)
-    try:
-        resolved.relative_to(project)
-    except ValueError as exc:
-        raise ValueError("previous candidate must be project-owned") from exc
-    if not resolved.is_file():
-        raise ValueError("previous candidate must be a file")
-    return resolved
-
-
-def decide_correction(
-    workspace: ExperimentWorkspace,
-    material_view: CompletePageMaterialView,
-    director: DirectorArtifact,
-    *,
-    previous_candidate: Path,
-    problems: Sequence[str],
-    timeout: float,
-    invoke: Callable[..., CodexStructuredResult] = invoke_structured,
-    previous_decision: CorrectionDecision | None = None,
-    previous_request_candidate: Path | None = None,
-) -> CorrectionDecision:
-    """Let Codex directly choose edit_previous or regenerate_from_materials for stated problems."""
-    if not problems or any(not isinstance(problem, str) or not problem.strip() for problem in problems):
-        raise ValueError("correction requires explicit review problems")
-    candidate = _candidate_under_project(workspace, previous_candidate)
-    image_ids = _validate_material_view(workspace, material_view)
-    font_accent_allowed = workspace.page_number in project_emphasis_pages(
-        workspace.project_copy
-    )
-    taskbook = confirmed_taskbook_prompt(workspace.project_copy)
-    prior_candidate: Path | None = None
-    if (previous_decision is None) != (previous_request_candidate is None):
-        raise ValueError(
-            "previous decision and previous request candidate must be provided together"
-        )
-    if previous_request_candidate is not None:
-        prior_candidate = _candidate_under_project(workspace, previous_request_candidate)
-    candidate_number = len(image_ids) + 1
-    problem_list = tuple(problem.strip() for problem in problems)
-    correction_schema = _correction_schema(workspace.page_number)
-    problem_items = correction_schema["properties"]["problem_addressed"]["items"]
-    assert isinstance(problem_items, dict)
-    problem_items["enum"] = list(problem_list)
-    selected_references = correction_schema["properties"]["selected_reference_ids"]
-    assert isinstance(selected_references, dict)
-    selected_references["maxItems"] = len(image_ids)
-    selected_reference_items = selected_references["items"]
-    assert isinstance(selected_reference_items, dict)
-    if image_ids:
-        selected_reference_items["enum"] = list(image_ids)
-    prompt = (
-        "Correct only the explicit independent-review problems below. Directly choose either "
-        "edit_previous or regenerate_from_materials; there is no classifier or routing table. "
-        "Copy each addressed problem verbatim from the supplied list, state what changes and "
-        "what must be preserved, and return a materially changed prompt "
-        "or source-reference input tuple. The previous candidate is not source material. "
-        "selected_reference_ids may contain only exact IDs from IMAGE INPUT MAP. If IMAGE INPUT "
-        "MAP has no source image, return an empty list. Never invent, search for, or mint a "
-        "reference ID for an unavailable identity asset; instead make the source-safe fallback "
-        "visually primary and keep its exact name only as a small identity caption.\n\n"
-        "EXPLICIT REVIEW PROBLEMS\n"
-        f"{_canonical_text(problem_list)}\n\n"
-        "CONFIRMED PRESENTATION TASKBOOK\n"
-        f"{taskbook}\n\n"
-        "IMAGE INPUT MAP\n"
-        f"{_mapping_text(image_ids)}\n"
-        f"Image-{candidate_number} = previous-candidate (not a source material ID)\n\n"
-        "COMPLETE PAGE MATERIAL VIEW\n"
-        f"{_canonical_text(material_view.value)}\n\n"
-        "PRIOR DIRECTOR ARTIFACT\n"
-        f"{_canonical_text(director.value)}"
-    )
-    result = invoke(
-        workspace.project_copy,
-        role="awesome-page-correction",
-        prompt=prompt,
-        images=(*material_view.multimodal_images, candidate),
-        output_schema=correction_schema,
-        timeout=timeout,
-    )
-    errors = sorted(
-        Draft202012Validator(correction_schema).iter_errors(dict(result.value)),
-        key=lambda error: list(error.absolute_path),
-    )
-    if errors:
-        path = "/".join(str(part) for part in errors[0].absolute_path) or "<root>"
-        raise ValueError(f"correction schema rejected {path}: {errors[0].message}")
-
-    addressed = tuple(str(item).strip() for item in result.value["problem_addressed"])
-    if any(item not in problem_list for item in addressed):
-        raise ValueError("correction problem must be one of the stated review problems")
-    allowed_references = set(image_ids)
-    selected_ids = tuple(str(item) for item in result.value["selected_reference_ids"])
-    if len(selected_ids) != len(set(selected_ids)):
-        raise ValueError("correction contains a duplicate selected reference")
-    if any(item not in allowed_references for item in selected_ids):
-        raise ValueError("selected reference must be a viewable source material ID")
-    actual_prompt = compile_consulting_six_part_prompt(
-        result.value, material_view, font_accent_allowed=font_accent_allowed
-    )
-    if actual_prompt == director.actual_prompt and selected_ids == director.selected_reference_ids:
-        raise ValueError("correction cannot reproduce the unchanged prior prompt and input request")
-    strategy = result.value["strategy"]
-    assert strategy in {"edit_previous", "regenerate_from_materials"}
-    if previous_decision is not None:
-        assert prior_candidate is not None
-        previous_signature = (
-            previous_decision.strategy,
-            previous_decision.actual_prompt,
-            previous_decision.selected_reference_ids,
-            hashlib.sha256(prior_candidate.read_bytes()).hexdigest(),
-        )
-        current_signature = (
-            strategy,
-            actual_prompt,
-            selected_ids,
-            hashlib.sha256(candidate.read_bytes()).hexdigest(),
-        )
-        if previous_signature == current_signature:
-            raise ValueError("consecutive correction cannot repeat the unchanged request")
-    preserve = tuple(str(item).strip() for item in result.value["preserve"])
-    if not preserve or any(not item for item in preserve):
-        raise ValueError("correction preserve must contain non-whitespace text")
-    return CorrectionDecision(
-        strategy=strategy,
-        actual_prompt=actual_prompt,
-        selected_reference_ids=selected_ids,
-        problem_addressed=addressed,
-        preserve=preserve,
-        model=result.model,
-        effort=result.effort,
-        duration_seconds=_duration(result),
-        model_provider=result.model_provider,
-        usage=dict(result.usage),
-        runtime_trace=dict(result.safe_trace),
-        thread_id=result.thread_id,
-        turn_id=result.turn_id,
-        value=result.value,
-    )

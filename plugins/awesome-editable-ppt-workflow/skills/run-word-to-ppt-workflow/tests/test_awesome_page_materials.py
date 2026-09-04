@@ -298,6 +298,8 @@ def test_schema_accepts_collected_materials(tmp_path: Path):
     materials["visual_contract"].pop("regional_characteristics")
     materials["visual_contract"].pop("visual_description")
     Draft202012Validator(schema).validate(materials)
+    materials["visual_contract"]["highlight_color"] = "#D3A62C"
+    Draft202012Validator(schema).validate(materials)
 
 
 def test_cli_publishes_canonical_utf8_atomically_and_truthfully_advances_state(

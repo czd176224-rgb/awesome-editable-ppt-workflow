@@ -17,7 +17,8 @@ Push-Location $RepoRoot
 try {
     $IsGitWorkTree = Test-Path -LiteralPath (Join-Path $RepoRoot ".git")
     if (-not $PublicSnapshotOnly) {
-        $wordTests = @(Get-ChildItem "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests" -Filter "test_*.py" -File | Sort-Object Name)
+        $HuangshiAcceptanceTest = Join-Path $RepoRoot "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_huangshi_v123_acceptance.py"
+        $wordTests = @(Get-ChildItem "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests" -Filter "test_*.py" -File | Where-Object { $_.FullName -ne $HuangshiAcceptanceTest } | Sort-Object Name)
         if ($SkipOfficeTests) {
             $wordTests = @($wordTests | Where-Object { $_.Name -ne "test_awesome_attachment_render.py" })
         }
@@ -35,6 +36,8 @@ try {
             & python -m pytest -p no:cacheprovider $suite -q
             if ($LASTEXITCODE -ne 0) { throw "Release test suite failed: $suite" }
         }
+        & python -m pytest -p no:cacheprovider $HuangshiAcceptanceTest -q
+        if ($LASTEXITCODE -ne 0) { throw "Post-authority Huangshi acceptance failed." }
 
         & python scripts/check_python_syntax.py
         if ($LASTEXITCODE -ne 0) { throw "Python compilation failed." }
@@ -51,7 +54,8 @@ try {
     $parseErrors = @()
     Get-ChildItem -Recurse -Filter *.ps1 -File | ForEach-Object {
         $tokens = $null; $errors = $null
-        [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+        $source = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8)
+        [void][System.Management.Automation.Language.Parser]::ParseInput($source, $_.FullName, [ref]$tokens, [ref]$errors)
         $parseErrors += $errors
     }
     if ($parseErrors.Count) { $parseErrors | Format-List; throw "PowerShell parsing failed." }

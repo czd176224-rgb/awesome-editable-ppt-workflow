@@ -653,7 +653,7 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
                         category_shape = named.get(f"{expected['name']} Category {point_index}")
                         value_shape = named.get(f"{expected['name']} Value {point_index}")
                         add(f"{prefix}.series[{series_index}].categories[{point_index - 1}]", category, category_shape.text if category_shape is not None else None)
-                        add(f"{prefix}.series[{series_index}].values[{point_index - 1}]", str(value), value_shape.text if value_shape is not None else None)
+                        add(f"{prefix}.series[{series_index}].values[{point_index - 1}]", _number_text(value), value_shape.text if value_shape is not None else None)
                         point_index += 1
             else:
                 if not root.has_chart:
@@ -690,21 +690,12 @@ def quantitative_chart_readback_violations(pptx_path, manifests):
                     add(f"{prefix}.{role.lower()}", value, shape.text if shape is not None else None)
                 mark_geometry = _chart_mark_geometry(expected)
                 validate_mark(
-                    named,
-                    expected,
-                    "Target Line",
-                    f"{prefix}.target_line",
-                    "connector",
+                    named, expected, "Target Line", f"{prefix}.target_line", "connector",
                     mark_geometry["Target Line"],
                 )
                 validate_mark(
-                    named,
-                    expected,
-                    "Difference Arrow",
-                    f"{prefix}.difference_arrow",
-                    "connector",
-                    mark_geometry["Difference Arrow"],
-                    {"headEnd": "triangle", "tailEnd": "triangle"},
+                    named, expected, "Difference Arrow", f"{prefix}.difference_arrow", "connector",
+                    mark_geometry["Difference Arrow"], {"headEnd": "triangle", "tailEnd": "triangle"},
                 )
     return violations
 

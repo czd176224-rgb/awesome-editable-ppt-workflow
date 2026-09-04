@@ -13,9 +13,9 @@ from awesome_page_materials import collect_page_materials
 from codex_subscription_runtime import CodexStructuredResult
 from complex_page_experiment.consulting_prompt import _color_constraints
 from complex_page_experiment.director import (
-    _correction_schema,
+    DirectorArtifact,
+    _validate_director_value,
     compile_consulting_six_part_prompt,
-    decide_correction,
     direct_page,
 )
 from complex_page_experiment.materials import (
@@ -45,7 +45,7 @@ VISUAL_DIRECTOR_REFERENCE = (
 DIRECTOR_SCHEMA = (
     Path(__file__).resolve().parents[2]
     / "schemas"
-    / "consulting_page_director_v2.schema.json"
+    / "consulting_page_director_v3.schema.json"
 )
 TASKBOOK_VALUES = (
     "董事会追加投资审议",
@@ -58,8 +58,10 @@ TASKBOOK_VALUES = (
 )
 TASKBOOK_BOUNDARY = (
     "This taskbook is a user-confirmed presentation constraint, not factual source material. "
-    "It may change emphasis, hierarchy, reading path, evidence framing, and takeaway selection "
-    "only; it must not add, omit, rewrite, or move Word content."
+    "It may guide only how Word information maps to the compact page plan. Lossless within-page "
+    "rewording and regrouping are "
+    "allowed; the taskbook cannot authorize new facts, omitted information, altered meaning, "
+    "or moving content between pages."
 )
 
 
@@ -69,9 +71,9 @@ _TEST_VIEWS: dict[Path, CompletePageMaterialView] = {}
 def _top_level_prompt_sections(prompt: str) -> dict[str, str]:
     headings = (
         "WORD BODY AND MATERIAL AUTHORITY",
-        "HARD BOUNDARIES",
         "GENERAL VISUAL DIRECTOR PRINCIPLES",
         "CONFIRMED PRESENTATION TASKBOOK",
+        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING",
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
         "STRUCTURED OUTPUT REQUIREMENTS",
     )
@@ -102,11 +104,15 @@ def _captured_director_request(tmp_path: Path) -> tuple[dict[str, object], dict[
     view = _material_view(workspace)
     calls: list[dict[str, object]] = []
 
+    class CapturedRequest(Exception):
+        pass
+
     def invoke(project: Path, **kwargs):
         calls.append({"project": project, **kwargs})
-        return _result(_director_value(view))
+        raise CapturedRequest
 
-    direct_page(workspace, view, timeout=60, invoke=invoke)
+    with pytest.raises(CapturedRequest):
+        direct_page(workspace, view, timeout=60, invoke=invoke)
     assert len(calls) == 1
     prompt = str(calls[0]["prompt"])
     return calls[0], _top_level_prompt_sections(prompt)
@@ -139,15 +145,11 @@ def _unsupported_structured_output_paths(schema: object) -> list[str]:
     return unsupported
 
 
-def test_correction_output_schema_uses_supported_structured_output_subset() -> None:
-    assert _unsupported_structured_output_paths(_correction_schema()) == []
-
-
 def test_director_output_schema_types_every_const_and_enum() -> None:
     schema_path = (
         Path(__file__).resolve().parents[2]
         / "schemas"
-        / "consulting_page_director_v2.schema.json"
+        / "consulting_page_director_v3.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     missing: list[str] = []
@@ -170,7 +172,7 @@ def test_director_output_schema_uses_only_scalar_constants() -> None:
     schema_path = (
         Path(__file__).resolve().parents[2]
         / "schemas"
-        / "consulting_page_director_v2.schema.json"
+        / "consulting_page_director_v3.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     non_scalar: list[str] = []
@@ -193,7 +195,7 @@ def test_director_output_schema_avoids_unsupported_unique_items() -> None:
     schema_path = (
         Path(__file__).resolve().parents[2]
         / "schemas"
-        / "consulting_page_director_v2.schema.json"
+        / "consulting_page_director_v3.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
@@ -207,11 +209,14 @@ def test_director_output_schema_avoids_unsupported_unique_items() -> None:
         return False
 
     assert not contains_unique_items(schema)
+    serialized = json.dumps(schema)
+    assert all(f'"{keyword}"' not in serialized for keyword in ("allOf", "if", "then"))
 
 
 def _workspace(tmp_path: Path) -> ExperimentWorkspace:
     source = awesome_four_page_project_fixture.__wrapped__(tmp_path)
     _prepare_complete_page_one(source)
+    _prepare_compact_page_facts(source)
     from complex_page_experiment import create_experiment_copy
 
     workspace = create_experiment_copy(
@@ -225,6 +230,52 @@ def _workspace(tmp_path: Path) -> ExperimentWorkspace:
 
 def _material_view(workspace: ExperimentWorkspace) -> CompletePageMaterialView:
     return _TEST_VIEWS[workspace.project_copy]
+
+
+def _prepare_compact_page_facts(source: Path) -> None:
+    paginated_path = source / "02_v6" / "paginated_word_source.json"
+    paginated = json.loads(paginated_path.read_text(encoding="utf-8"))
+    page = paginated["pages"][0]
+    body = page["blocks"][1]
+    facts = [
+        {
+            **body,
+            "text": text,
+            "source_block_id": f"body-{index}",
+            "source_block_index": index,
+            "source_order": index + 1,
+        }
+        for index, text in enumerate(
+            (
+                "Authoritative body 1",
+                "Resources enter the fund platform.",
+                "Operations support the entry path.",
+                "The source does not quantify flow volume.",
+            ),
+            start=1,
+        )
+    ]
+    page["blocks"] = [page["blocks"][0], *facts]
+    paginated_path.write_text(
+        json.dumps(paginated, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    material_path = source / "02_v6" / "awesome_page_materials" / "page_001.json"
+    material = json.loads(material_path.read_text(encoding="utf-8"))
+    material["complete_word_content"] = facts
+    payload = (
+        json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    material_path.write_bytes(payload)
+    state_path = source / "workflow_v6.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["pages"][0]["material_receipt"]["digest"] = hashlib.sha256(payload).hexdigest()
+    state_path.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _workspace_without_viewable_materials(
@@ -289,6 +340,9 @@ def _compiler_material_view(
 ) -> CompletePageMaterialView:
     return CompletePageMaterialView(
         {
+            "complete_word_content": copy.deepcopy(
+                _compact_material_view().value["complete_word_content"]
+            ),
             "visual_contract": {
                 "background_color": background_color,
                 "primary_color": primary_color,
@@ -303,7 +357,7 @@ def _compiler_material_view(
 
 def test_compile_prompt_injects_confirmed_color_roles_and_budgets_once():
     view = _compiler_material_view("#F7F7F7", "#161616", "#CD202A")
-    value = _director_value(CompletePageMaterialView({}, (), (), ""))
+    value = _director_value()
 
     prompt = compile_consulting_six_part_prompt(
         value, view, font_accent_allowed=True
@@ -325,7 +379,7 @@ def test_compile_prompt_injects_confirmed_color_roles_and_budgets_once():
 
 @pytest.mark.parametrize("secondary_color", ["#CD202A", "#1F5AA6", "#287A55"])
 def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
-    value = _director_value(CompletePageMaterialView({}, (), (), ""))
+    value = _director_value()
     prompt = compile_consulting_six_part_prompt(
         value,
         _compiler_material_view(secondary_color=secondary_color),
@@ -350,18 +404,16 @@ def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
 
 def test_compile_prompt_deduplicates_owned_color_contract_without_deleting_facts():
     view = _compiler_material_view(secondary_color="#1F5AA6")
-    value = _director_value(CompletePageMaterialView({}, (), (), ""))
+    value = _director_value()
     positive, prohibited = _color_constraints(view)
-    value["prompt_sections"]["visual_style_and_color"] += (
-        " " + positive
-    )
-    value["prompt_sections"]["strict_prohibitions"] += (
+    value["page_plan"]["page_purpose"] += " " + positive
+    value["page_plan"]["primary_relationship"]["visual_instruction"] += (
         " " + prohibited
     )
     source_fact = (
         "Source fact: Red Beacon, 红色标识, Scarlet Ledger, and Crimson Record are exact names."
     )
-    value["prompt_sections"]["text_and_typography"] += " " + source_fact
+    value["page_plan"]["support_groups"][0]["label"] += " " + source_fact
 
     prompt = compile_consulting_six_part_prompt(value, view)
 
@@ -370,48 +422,376 @@ def test_compile_prompt_deduplicates_owned_color_contract_without_deleting_facts
     assert prompt.count(source_fact) == 1
 
 
-def _director_value(view: CompletePageMaterialView) -> dict[str, object]:
+def _compact_material_view() -> CompletePageMaterialView:
+    facts = tuple(
+        {
+            "type": "paragraph",
+            "text": text,
+            "source_block_id": f"body-{index}",
+            "source_block_index": index,
+            "source_order": index,
+            "relationship_ids": [],
+            "comment_ids": [],
+        }
+        for index, text in enumerate(
+            (
+                "Regional resources are available.",
+                "Resources enter the fund platform.",
+                "Operations support the entry path.",
+                "The source does not quantify flow volume.",
+            ),
+            start=1,
+        )
+    )
+    return CompletePageMaterialView(
+        {
+            "page_number": 5,
+            "complete_word_content": list(facts),
+            "visual_contract": {
+                "background_color": "#F7F7F7",
+                "primary_color": "#161616",
+                "secondary_color": "#CD202A",
+            },
+        },
+        (),
+        (),
+        "compact-test-view",
+    )
+
+
+def _director_value(
+    view: CompletePageMaterialView | None = None,
+) -> dict[str, object]:
+    material_view = view or _compact_material_view()
+    blocks = material_view.value.get("complete_word_content")
+    assert isinstance(blocks, list) and blocks, "director fixture requires source facts"
+    fact_ids = [
+        str(block["source_block_id"])
+        for block in blocks
+    ]
+    primary_fact_ids = fact_ids[:2]
+    destination_fact_id = primary_fact_ids[-1]
+    support_groups = [
+        {
+            "role": "support" if index == 0 else "note",
+            "label": (
+                "Operating support"
+                if index == 0
+                else "Source limitation" if index == 1 else f"Source limitation {index}"
+            ),
+            "fact_ids": [fact_id],
+        }
+        for index, fact_id in enumerate(fact_ids[2:])
+    ]
+    selected_material_id = next(
+        (
+            str(material["material_id"])
+            for material in material_view.value.get("materials", [])
+            if material.get("viewable_image")
+        ),
+        None,
+    )
+    selected_references = (
+        []
+        if selected_material_id is None
+        else [
+            {
+                "material_id": selected_material_id,
+                "use": "Anchor the real source evidence.",
+                "preserve": "Preserve recognizable identity.",
+            }
+        ]
+    )
     return {
-        "schema_version": "awesome-consulting-page-director-v2",
-        "page_number": 1,
+        "schema_version": "awesome-consulting-page-director-v3",
+        "page_number": int(material_view.value.get("page_number", 5)),
         "quality": "high",
-        "machine_record": {
-            "facts_and_sources": ["The body statement comes from word-block:body-1."],
-            "must_preserve_entities": ["The named subject in word-image:word-photo."],
-            "core_content_and_comment_direction": ["Follow the original comment direction."],
-            "material_use": [
+        "page_plan": {
+            "page_purpose": "Explain how regional resources enter the fund system.",
+            "primary_relationship": {
+                "grammar": "geography",
+                "description": "Regional resource entrances feed the fund platform.",
+                "fact_ids": primary_fact_ids,
+                "visual_instruction": "Use a map-led resource-entry diagram with explicit connectors.",
+                "nodes": [
+                    {
+                        "node_id": "regional-resources",
+                        "label": "Regional resources",
+                        "fact_ids": [primary_fact_ids[0]],
+                    },
+                    {
+                        "node_id": "fund-platform",
+                        "label": "Fund platform",
+                        "fact_ids": [destination_fact_id],
+                    },
+                ],
+                "edges": [
+                    {
+                        "from_node": "regional-resources",
+                        "to_node": "fund-platform",
+                        "label": "enter",
+                        "fact_ids": [destination_fact_id],
+                    }
+                ],
+            },
+            "core_exhibit": {
+                "grammar": "geography",
+                "description": "A regional map with labeled resource flows.",
+                "fact_ids": primary_fact_ids,
+            },
+            "support_groups": support_groups,
+            "reading_path": "Read the map first, then the operating support and limitation.",
+            "local_visuals": [
                 {
-                    "material_id": material_id,
-                    "status": "used_in_image" if "image" in material_id else "background_understanding",
-                    "reason": "Direct evidence or context.",
-                }
-                for material_id in view.material_ids
-            ],
-            "selected_references": [
-                {
-                    "material_id": "word-image:word-photo",
-                    "identity": "The supplied real subject photograph",
-                    "use": "Anchor identity",
-                    "preserve": "Recognizable identity",
-                    "allowed_changes": "Crop and tonal integration",
-                    "composition_relationship": "Primary left-side visual anchor",
+                    "grammar": "flow",
+                    "instruction": "Use one small arrow sequence for the source-supported entry path.",
+                    "fact_ids": [destination_fact_id],
                 }
             ],
-            "fixed_layer_exclusions": ["title", "logo", "footer", "page_number"],
         },
-        "creative_direction": {
-            "business_proposition": "Turn the dense source into one confident visual argument.",
-            "explanatory_lead": "Explain the source-supported decision context in two short lines.",
-            "analytical_backbone": "A continuous evidence chain that resolves into a single insight.",
-            "evidence_interpretation_conclusion": "Enter through the real subject, then move across evidence to the conclusion.",
-            "content_hierarchy": "Lead, analytical evidence, interpretation, and takeaway.",
-            "reading_path_and_density": "Wide editorial collage, quiet whitespace, tactile paper and glass.",
-            "takeaway_statement": "End with the source-supported decision implication.",
-            "supporting_visual_policy": "Use real references as evidence, not decoration.",
-            "anti_ai_visual_policy": "Avoid miniature scenes, neon, and decorative 3D machinery.",
-        },
-        "prompt_sections": _prompt_sections(),
+        "selected_references": selected_references,
     }
+
+
+def _compact_artifact(value: dict[str, object]) -> DirectorArtifact:
+    return DirectorArtifact(
+        value=value,
+        actual_prompt="",
+        selected_reference_ids=(),
+        quality="high",
+        model="gpt-test-current",
+        effort="high",
+        duration_seconds=1.0,
+        model_provider="openai-test",
+        usage={},
+        runtime_trace={},
+        thread_id="thread-compact",
+        turn_id="turn-compact",
+    )
+
+
+def test_compact_director_value_exposes_only_the_page_plan_contract() -> None:
+    value = _director_value()
+    artifact = _compact_artifact(value)
+
+    assert "creative_direction" not in value
+    assert "prompt_sections" not in value
+    assert "machine_record" not in value
+    assert artifact.page_plan == value["page_plan"]
+
+
+def test_director_fixture_uses_the_supplied_view_facts_and_page_metadata() -> None:
+    view = _compact_material_view()
+    view.value["page_number"] = 9
+    view.value["complete_word_content"] = view.value["complete_word_content"][:3]
+    supplied_ids = ["source-a", "source-b", "source-c"]
+    for block, source_id in zip(
+        view.value["complete_word_content"], supplied_ids, strict=True
+    ):
+        block["source_block_id"] = source_id
+
+    value = _director_value(view)
+    serialized = json.dumps(value, ensure_ascii=False)
+    allocated = [*value["page_plan"]["core_exhibit"]["fact_ids"]]
+    allocated.extend(
+        fact_id
+        for group in value["page_plan"]["support_groups"]
+        for fact_id in group["fact_ids"]
+    )
+
+    assert value["page_number"] == 9
+    assert allocated == supplied_ids
+    assert all(source_id in serialized for source_id in supplied_ids)
+    assert "body-1" not in serialized
+
+
+def _validate_compact_value(value: dict[str, object]) -> tuple[str, ...]:
+    return _validate_director_value(value, _compact_material_view())
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["page_plan"]["primary_relationship"]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["primary_relationship"]["nodes"][0]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["primary_relationship"]["edges"][0]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["core_exhibit"]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["support_groups"][0]["fact_ids"].append("body-unknown"),
+        lambda value: value["page_plan"]["local_visuals"][0]["fact_ids"].append("body-unknown"),
+    ],
+    ids=("relationship", "node", "edge", "core", "support", "local-visual"),
+)
+def test_compact_director_rejects_unknown_fact_references(mutate) -> None:
+    value = copy.deepcopy(_director_value())
+    mutate(value)
+
+    with pytest.raises(ValueError, match="unknown fact|source_block_id"):
+        _validate_compact_value(value)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda value: value["page_plan"]["support_groups"].pop(),
+            "allocate every Word fact exactly once",
+        ),
+        (
+            lambda value: value["page_plan"]["support_groups"][0]["fact_ids"].append("body-1"),
+            "each Word fact must be allocated exactly once",
+        ),
+        (
+            lambda value: value["page_plan"].update({"primary_relationship": {}}),
+            "primary_relationship|primary relationship",
+        ),
+        (
+            lambda value: value["page_plan"].update(
+                {"core_exhibit": [value["page_plan"]["core_exhibit"]] * 2}
+            ),
+            "core_exhibit|core exhibit",
+        ),
+        (
+            lambda value: value["page_plan"]["core_exhibit"].update(
+                {"grammar": "radial_orbit"}
+            ),
+            "grammar|radial_orbit",
+        ),
+        (
+            lambda value: value["page_plan"]["primary_relationship"]["edges"][0].update(
+                {"to_node": "missing-node"}
+            ),
+            "edge endpoint|declared node|missing-node",
+        ),
+    ],
+    ids=("omitted", "duplicated", "empty-relationship", "multiple-core", "grammar", "edge-endpoint"),
+)
+def test_compact_director_rejects_invalid_fact_allocation_or_structure(
+    mutate, message: str
+) -> None:
+    value = copy.deepcopy(_director_value())
+    mutate(value)
+
+    with pytest.raises(ValueError, match=message):
+        _validate_compact_value(value)
+
+
+def test_compact_director_accepts_analytical_table_for_comparison() -> None:
+    value = copy.deepcopy(_director_value())
+    relationship = value["page_plan"]["primary_relationship"]
+    relationship.update(
+        {
+            "grammar": "analytical_table",
+            "description": "Compare the regional entrance with the fund platform.",
+            "visual_instruction": "Use a source-bound comparison table.",
+            "nodes": [],
+            "edges": [],
+        }
+    )
+    value["page_plan"]["core_exhibit"]["grammar"] = "analytical_table"
+
+    assert _validate_compact_value(value) == ()
+
+
+@pytest.mark.parametrize("grammar", ["flow", "hierarchy", "geography", "causality"])
+def test_structural_grammars_accept_source_bound_nodes_edges_and_instruction(
+    grammar: str,
+) -> None:
+    value = copy.deepcopy(_director_value())
+    value["page_plan"]["primary_relationship"]["grammar"] = grammar
+    value["page_plan"]["core_exhibit"]["grammar"] = grammar
+
+    assert _validate_compact_value(value) == ()
+
+
+@pytest.mark.parametrize("grammar", ["flow", "hierarchy", "geography", "causality"])
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda relationship: relationship.update({"visual_instruction": "   "}),
+            "visual_instruction|visual instruction",
+        ),
+        (
+            lambda relationship: relationship.update({"nodes": []}),
+            "nodes|source-bound node",
+        ),
+        (
+            lambda relationship: relationship.update({"edges": []}),
+            "edges|at least one edge",
+        ),
+    ],
+    ids=("instruction", "nodes", "edges"),
+)
+def test_structural_grammars_require_nodes_edges_and_visual_instruction(
+    grammar: str, mutate, message: str
+) -> None:
+    value = copy.deepcopy(_director_value())
+    relationship = value["page_plan"]["primary_relationship"]
+    relationship["grammar"] = grammar
+    mutate(relationship)
+
+    with pytest.raises(ValueError, match=message):
+        _validate_compact_value(value)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda relationship: relationship["nodes"][0].pop("fact_ids"),
+        lambda relationship: relationship["nodes"][0].update({"fact_ids": []}),
+        lambda relationship: relationship["nodes"][1].pop("fact_ids"),
+        lambda relationship: relationship["nodes"][1].update({"fact_ids": []}),
+        lambda relationship: relationship["edges"][0].pop("fact_ids"),
+        lambda relationship: relationship["edges"][0].update({"fact_ids": []}),
+    ],
+    ids=(
+        "first-node-missing",
+        "first-node-empty",
+        "second-node-missing",
+        "second-node-empty",
+        "edge-missing",
+        "edge-empty",
+    ),
+)
+def test_relationship_nodes_and_edges_require_non_empty_fact_ids(mutate) -> None:
+    value = copy.deepcopy(_director_value())
+    mutate(value["page_plan"]["primary_relationship"])
+
+    with pytest.raises(ValueError, match="fact_ids|required|non-empty|at least one"):
+        _validate_compact_value(value)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda value: value.update({"page_number": 6}), "page_number"),
+        (
+            lambda value: value["page_plan"]["primary_relationship"]["nodes"][0].update(
+                {"node_id": "   "}
+            ),
+            "node_id",
+        ),
+        (
+            lambda value: value["page_plan"]["primary_relationship"]["nodes"][0].update(
+                {"label": "   "}
+            ),
+            "label",
+        ),
+        (
+            lambda value: value["page_plan"]["primary_relationship"]["edges"][0].update(
+                {"label": "   "}
+            ),
+            "edge label",
+        ),
+    ],
+    ids=("page-number", "node-id", "node-label", "edge-label"),
+)
+def test_compact_director_binds_page_and_rejects_blank_structure(mutate, message) -> None:
+    value = copy.deepcopy(_director_value())
+    mutate(value)
+
+    with pytest.raises(ValueError, match=message):
+        _validate_compact_value(value)
 
 
 def _result(value: dict[str, object]) -> CodexStructuredResult:
@@ -457,8 +837,9 @@ def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path
     assert prompt.count(reference) == 1
     ordered_markers = (
         "WORD BODY AND MATERIAL AUTHORITY",
-        "HARD BOUNDARIES",
         "GENERAL VISUAL DIRECTOR PRINCIPLES",
+        "CONFIRMED PRESENTATION TASKBOOK",
+        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING",
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
         "STRUCTURED OUTPUT REQUIREMENTS",
     )
@@ -466,18 +847,19 @@ def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path
         sorted(prompt.index(marker) for marker in ordered_markers)
     )
     assert prompt.index("Word body text is the primary authority") < prompt.index(reference)
-    assert prompt.index("central largest 17:8 content region") < prompt.index(reference)
     assert prompt.index(reference) < prompt.index("Image-1 = word-image:word-photo")
     assert prompt.index("COMPLETE PAGE MATERIAL VIEW") < prompt.index(
         "STRUCTURED OUTPUT REQUIREMENTS"
     )
-    assert "after material completion" in prompt
-    assert "source-exact formal name from the Word body" in prompt
+    assert "Select only mapped image material IDs" in prompt
+    assert "material audit" not in prompt.casefold()
+    assert "prompt_sections" not in prompt
     assert "neutral non-trademark marker" not in prompt
     assert "3:2" not in prompt
-    schema_bytes = DIRECTOR_SCHEMA.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    assert hashlib.sha256(schema_bytes).hexdigest() == (
-        "9d63ed6ea05379a3afc480eae4fedf700091d5ab92d352c69d2ade9da6ad1860"
+    schema = json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    assert schema["properties"]["schema_version"]["const"] == (
+        "awesome-consulting-page-director-v3"
     )
     assert artifact.selected_reference_ids == ("word-image:word-photo",)
     assert artifact.quality == "high"
@@ -486,7 +868,7 @@ def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path
     assert artifact.effort == "high"
     assert artifact.usage == {"input_tokens": 123, "output_tokens": 45}
     assert artifact.duration_seconds == 3.25
-    assert artifact.creative_direction["analytical_backbone"].startswith("A continuous")
+    assert artifact.page_plan == artifact.value["page_plan"]
     assert artifact.actual_prompt == compile_consulting_six_part_prompt(artifact.value, view)
     authority_path = (
         workspace.project_copy
@@ -513,9 +895,9 @@ def test_director_request_injects_one_reference_between_authority_and_materials_
 
     assert list(sections) == [
         "WORD BODY AND MATERIAL AUTHORITY",
-        "HARD BOUNDARIES",
         "GENERAL VISUAL DIRECTOR PRINCIPLES",
         "CONFIRMED PRESENTATION TASKBOOK",
+        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING",
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
         "STRUCTURED OUTPUT REQUIREMENTS",
     ]
@@ -528,11 +910,45 @@ def test_director_request_injects_one_reference_between_authority_and_materials_
     assert "Word body text is the primary authority" in sections[
         "WORD BODY AND MATERIAL AUTHORITY"
     ]
-    assert "central largest 17:8 content region" in sections["HARD BOUNDARIES"]
+    assert "do not restate or override" in sections[
+        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING"
+    ]
     assert "COMPLETE PAGE MATERIAL VIEW" in sections[
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES"
     ]
     assert call["output_schema"] == json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
+
+
+def test_director_request_defines_only_the_compact_page_plan(tmp_path: Path):
+    call, _sections = _captured_director_request(tmp_path)
+    prompt = str(call["prompt"])
+    assert "Return only selected references and these compact v3 page-plan fields" in prompt
+    assert "complete data does not require a chart" in prompt
+    assert "analytical_table" in prompt
+    assert "flow, hierarchy, geography" in prompt
+    assert "causality, quantitative_chart, or composition_architecture" in prompt
+    assert "source_block_id exactly once" in prompt
+    for removed in (
+        "machine audit",
+        "creative direction",
+        "prompt_sections",
+        "business_proposition",
+        "analytical_backbone",
+        "explanatory_lead",
+        "content_hierarchy",
+        "reading_path_and_density",
+        "takeaway_statement",
+        "evidence_interpretation_conclusion",
+        "supporting_visual_policy",
+    ):
+        assert removed not in prompt.casefold()
+
+
+def test_director_request_does_not_restate_compiler_owned_fields(tmp_path: Path):
+    call, _sections = _captured_director_request(tmp_path)
+    prompt = str(call["prompt"])
+    for removed in ("fixed_layer_exclusions", "task_and_canvas", "six prompt sections"):
+        assert removed not in prompt
 
 
 def test_director_request_uses_only_confirmed_taskbook_without_template_metadata(tmp_path: Path):
@@ -541,374 +957,128 @@ def test_director_request_uses_only_confirmed_taskbook_without_template_metadata
 
     assert all(value in taskbook for value in TASKBOOK_VALUES)
     assert TASKBOOK_BOUNDARY in taskbook
-    assert "business_proposition" in taskbook
-    assert "reading_path_and_density" in taskbook
-    assert "takeaway_statement" in taskbook
-    assert "supporting_visual_policy" in taskbook
     prompt = str(call["prompt"])
-    for forbidden in ("investment-committee", "template_version", "taskbook_digest", '"defaults"'):
+    for forbidden in (
+        "investment-committee",
+        "template_version",
+        "taskbook_digest",
+        '"defaults"',
+    ):
         assert forbidden not in prompt
 
 
-def test_correction_taskbook_uses_same_boundary_without_template_metadata(tmp_path: Path):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    director = direct_page(
-        workspace, view, timeout=60,
-        invoke=lambda *args, **kwargs: _result(_director_value(view)),
-    )
-    candidate = workspace.project_copy / "candidate-taskbook.png"
-    candidate.write_bytes(b"candidate-taskbook")
-    problem = "The takeaway is unclear."
-    value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": workspace.page_number,
-        "strategy": "edit_previous",
-        "problem_addressed": [problem],
-        "preserve": ["Preserve source-exact facts."],
-        "selected_reference_ids": ["word-image:word-photo"],
-        "prompt_sections": _prompt_sections(suffix=" with a clearer takeaway"),
-    }
-    calls: list[dict[str, object]] = []
-
-    def invoke(project: Path, **kwargs):
-        calls.append({"project": project, **kwargs})
-        return _result(value)
-
-    decide_correction(
-        workspace, view, director, previous_candidate=candidate,
-        problems=[problem], timeout=60, invoke=invoke,
-    )
-    prompt = str(calls[0]["prompt"])
-    assert all(value in prompt for value in TASKBOOK_VALUES)
-    assert TASKBOOK_BOUNDARY in prompt
-    for forbidden in ("investment-committee", "template_version", "taskbook_digest", '"defaults"'):
-        assert forbidden not in prompt
-
-
-def test_director_request_preserves_required_explanation_and_source_structure(
+def test_director_request_requires_source_bound_page_structure(
     tmp_path: Path,
 ):
     _call, sections = _captured_director_request(tmp_path)
     requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"].casefold()
 
-    assert "explanatory sentences" in requirements
-    assert "must not collapse into a keyword list" in requirements
-    assert "source-exact" in requirements
-    assert "table" in requirements
-    assert "matrix" in requirements
-    assert "object-action-result" in requirements
-    assert "must preserve that source structure" in requirements
+    _assert_semantic_groups(
+        requirements,
+        (
+            (("core exhibit",)),
+            (("support groups",)),
+            (("source_block_id exactly once",)),
+            (("source-bound nodes",)),
+            (("from_node -> to_node",)),
+            (("non-empty visual instruction",)),
+        ),
+    )
 
 
-def test_director_request_allows_an_information_canvas_without_an_invented_scene(
+def test_director_reference_keeps_metaphors_local(
+    tmp_path: Path,
+):
+    _call, sections = _captured_director_request(tmp_path)
+    principles = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"].casefold()
+
+    assert "illustrative metaphors local" in principles
+    assert "never as an invented whole-page scene" in principles
+
+
+def test_director_request_omits_compiler_owned_execution_details(
     tmp_path: Path,
 ):
     _call, sections = _captured_director_request(tmp_path)
     requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"].casefold()
 
-    assert "does not need a scene" in requirements
-    assert "two-dimensional information canvas" in requirements
-    assert "shared alignment system" in requirements
-    assert "do not invent" in requirements
-    for forbidden_scene in (
-        "industrial park",
-        "track",
-        "mechanical hub",
-    ):
-        assert forbidden_scene in requirements
-
-
-def test_director_request_reserves_canvas_background_for_the_compiler(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"]
-
-    _assert_semantic_groups(
-        requirements,
-        (
-            (("task_and_canvas",)),
-            (("foreground environment",)),
-            (("spatial arrangement",)),
-            (("any prompt_sections field", "every prompt_sections field")),
-            (("canvas background",)),
-            (("background color",)),
-            (("grid",)),
-            (("texture",)),
-            (("gradient",)),
-            (("glow",)),
-            (("do not specify", "must not specify")),
-        ),
-    )
-
-
-def test_director_request_uses_only_the_word_name_when_a_required_real_asset_remains_absent(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"]
-
-    _assert_semantic_groups(
-        requirements,
-        (
-            (("after material completion", "after material supplementation")),
-            (("specifically requested real asset", "explicitly requested real asset")),
-            (("absent from the mapped images", "missing from the mapped images")),
-            (("source-exact formal name",)),
-            (("word body", "word's")),
-            (("fake logo",)),
-            (("fake person",)),
-            (("fake factual image",)),
-            (("do not claim", "must not claim")),
-            (("comment",)),
-            (("fully implemented", "completely implemented")),
-        ),
-    )
-    assert "neutral non-trademark marker" not in requirements.casefold()
-    assert "small identity caption" not in requirements.casefold()
-
-
-def test_direct_page_compiler_uses_only_the_sealed_ui_canvas_background(
-    tmp_path: Path,
-):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    value = copy.deepcopy(_director_value(view))
-    free_background = "Ultraviolet burlap vortex with noisy silver texture."
-    value["prompt_sections"]["task_and_canvas"] = free_background
-
-    artifact = direct_page(
-        workspace,
-        view,
-        timeout=60,
-        invoke=lambda *args, **kwargs: _result(value),
-    )
-
-    scene = _compiled_prompt_sections(artifact.actual_prompt)["Task and Canvas"]
-    background_color = str(view.value["visual_contract"]["background_color"])
-    assert background_color in scene
-    assert artifact.actual_prompt.casefold().count(background_color.casefold()) == 1
-    assert "entire canvas" in scene.casefold()
-    assert free_background.casefold() not in artifact.actual_prompt.casefold()
-
-
-def test_compiler_preserves_director_foreground_arrangement_in_scene_section():
-    value = _director_value(CompletePageMaterialView({}, (), (), ""))
-    value["prompt_sections"]["task_and_canvas"] = (
-        "Arrange the foreground evidence around one central relationship arc. "
-        "Set the canvas background to a blue textured grid."
-    )
-
-    prompt = compile_consulting_six_part_prompt(value, _compiler_material_view("#FFFFFF"))
-    scene = _compiled_prompt_sections(prompt)["Task and Canvas"]
-
-    assert "foreground evidence around one central relationship arc" in scene
-    assert "blue textured grid" not in scene
-    assert "#FFFFFF" in scene
-
-
-def test_compiler_removes_only_explicit_canvas_background_clauses_from_other_sections():
-    value = _director_value(CompletePageMaterialView({}, (), (), ""))
-    value["prompt_sections"].update(
-        {
-            "core_proposition_and_content": (
-                "Keep the foreground subject recognizable. "
-                "Use a soft glow around the subject. "
-                "Set the canvas background color to scarlet."
-            ),
-            "text_and_typography": (
-                "Keep the exact figure visible. "
-                "Align the facts in a compact grid. "
-                "Add a background grid and texture."
-            ),
-            "visual_style_and_color": (
-                "Keep tactile texture on the foreground garment. "
-                "Add a gradient and glow across the canvas."
-            ),
-            "consulting_information_architecture": (
-                "Preserve the supplied identity. "
-                "Make the canvas background a cobalt texture."
-            ),
-            "strict_prohibitions": (
-                "Preserve source-exact facts. Add a background glow."
-            ),
-        }
-    )
-
-    prompt = compile_consulting_six_part_prompt(value, _compiler_material_view("#F7F7F7"))
-    sections = _compiled_prompt_sections(prompt)
-    non_scene = "\n".join(
-        body for heading, body in sections.items() if heading != "Task and Canvas"
-    ).casefold()
-
-    for preserved in (
-        "foreground subject recognizable",
-        "soft glow around the subject",
-        "exact figure visible",
-        "facts in a compact grid",
-        "tactile texture on the foreground garment",
-        "supplied identity",
-        "source-exact facts",
-    ):
-        assert preserved in non_scene
     for removed in (
-        "canvas background color to scarlet",
-        "background grid and texture",
-        "gradient and glow across the canvas",
-        "canvas background a cobalt texture",
-        "background glow",
+        "task_and_canvas",
+        "prompt_sections",
+        "fixed-layer",
+        "canvas background",
+        "central safe region",
     ):
-        assert removed not in non_scene
+        assert removed not in requirements
 
 
-def test_visual_direction_requires_one_page_specific_whole_with_asymmetric_hierarchy(
+def test_director_request_limits_reference_selection_to_mapped_ids(
     tmp_path: Path,
 ):
+    _call, sections = _captured_director_request(tmp_path)
+    requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"]
+
+    assert "Select only mapped image material IDs" in requirements
+    assert "state their use and what to preserve" in requirements
+
+
+def test_compiler_owns_the_sealed_ui_canvas_background() -> None:
+    value = _director_value()
+    prompt = compile_consulting_six_part_prompt(
+        value, _compiler_material_view("#FFFFFF")
+    )
+    style = _compiled_prompt_sections(prompt)["Visual Style and Color"]
+
+    assert "#FFFFFF" in style
+    assert prompt.count("#FFFFFF") == 1
+
+
+def test_visual_direction_contains_only_compact_page_plan_decisions(tmp_path: Path):
     _call, sections = _captured_director_request(tmp_path)
     reference = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"]
 
     _assert_semantic_groups(
         reference,
         (
-            (("coherent whole-page", "coherent whole page")),
-            (("disconnected", "module assembly")),
-            (("word core conclusion", "word conclusion")),
-            (("material relationships", "relationships among the materials")),
-            (("focal point", "primary focus")),
-            (("secondary content", "secondary material")),
-            (("reading path",)),
-            (("asymmetr", "unequal allocation")),
+            (("page purpose",)),
+            (("primary relationship",)),
+            (("core exhibit",)),
+            (("analytical_table",)),
+            (("flow",)),
+            (("hierarchy",)),
+            (("geography",)),
+            (("causality",)),
+            (("local to the evidence",)),
+            (("whole-page scene",)),
         ),
     )
 
 
-def test_visual_direction_treats_reconstructability_as_a_preference_not_a_medium_gate(
-    tmp_path: Path,
-):
+def test_page_plan_schema_requires_the_tts_body_analysis_contract() -> None:
+    schema = json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
+    page_plan = schema["properties"].get("page_plan")
+
+    assert isinstance(page_plan, dict), "v3 schema must define page_plan"
+    serialized = json.dumps(page_plan, ensure_ascii=False).casefold()
+    _assert_semantic_groups(
+        serialized,
+        (
+            ("page_purpose",),
+            ("core_exhibit",),
+            ("primary_relationship",),
+            ("support_groups",),
+            ("reading_path",),
+        ),
+    )
+
+
+def test_visual_direction_keeps_reference_instructions_image_specific(tmp_path: Path):
     _call, sections = _captured_director_request(tmp_path)
     reference = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"]
 
-    _assert_semantic_groups(
-        reference,
-        (
-            (("visual preference",)),
-            (("text zones",)),
-            (("contrast",)),
-            (("separable",)),
-            (("background",)),
-            (("complex photos", "complex photography")),
-            (("illustrations",)),
-            (("remain raster", "stay raster")),
-            (("do not force", "never force")),
-            (("vector",)),
-        ),
-    )
-
-
-def test_visual_direction_allows_a_factual_screenshot_to_lead_when_it_is_core_evidence(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    reference = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"]
-
-    _assert_semantic_groups(
-        reference,
-        (
-            (("factual screenshot",)),
-            (("evidence",)),
-            (("main visual", "primary visual")),
-            (("core evidence",)),
-        ),
-    )
-
-
-def test_visual_direction_makes_repeated_modules_conditional_on_real_grouping_relationships(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    reference = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"]
-
-    _assert_semantic_groups(
-        reference,
-        (
-            (("cards",)),
-            (("columns",)),
-            (("icons",)),
-            (("repeated modules",)),
-            (("not defaults", "not default")),
-            (("relationships",)),
-            (("require grouping", "need grouping")),
-        ),
-    )
-
-
-def test_visual_direction_preserves_reference_authority_and_keeps_image_prompt_pixel_specific(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    reference = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"]
-
-    _assert_semantic_groups(
-        reference,
-        (
-            (("fact evidence", "factual evidence")),
-            (("identity preservation", "identity reference")),
-            (("content material",)),
-            (("style inspiration",)),
-            (("layout reference",)),
-            (("fact and identity", "facts and identities")),
-            (("faithful",)),
-            (("cannot override", "must not override")),
-            (("concise",)),
-            (("facts",)),
-            (("composition",)),
-            (("reference roles",)),
-            (("fixed boundaries", "fixed-layer boundary")),
-            (("17:8",)),
-            (("change pixels", "affect pixels")),
-            (("design-process", "design process")),
-        ),
-    )
-    assert len(reference.split()) < 360
-
-
-def test_visual_direction_binds_exact_facts_to_their_source_subject_before_showing_totals(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    reference = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"]
-    sentences = [sentence.strip().casefold() for sentence in reference.split(".")]
-
-    subject_rule = next(
-        (sentence for sentence in sentences if "source-stated subject" in sentence),
-        "",
-    )
-    _assert_semantic_groups(
-        subject_rule,
-        (
-            (("number",)),
-            (("date",)),
-            (("count",)),
-            (("name",)),
-            (("relationship",)),
-            (("bind", "attach", "map")),
-        ),
-    )
-
-    total_rule = next(
-        (sentence for sentence in sentences if "exact total" in sentence),
-        "",
-    )
-    _assert_semantic_groups(
-        total_rule,
-        (
-            (("all named members", "every named member")),
-            (("represented", "shown")),
-            (("otherwise", "else")),
-            (("omit", "leave out")),
-        ),
-    )
+    assert "pixel-relevant use" in reference
+    assert "identity features to preserve" in reference
+    assert len(reference.split()) < 180
 
 
 def test_direct_page_rejects_existing_different_signed_authority(tmp_path: Path):
@@ -921,7 +1091,7 @@ def test_direct_page_rejects_existing_different_signed_authority(tmp_path: Path)
         invoke=lambda *_args, **_kwargs: _result(_director_value(view)),
     )
     different = _director_value(view)
-    different["creative_direction"]["analytical_backbone"] = "A different signed concept."
+    different["page_plan"]["reading_path"] = "A different signed reading path."
 
     with pytest.raises(ValueError, match="published director authority"):
         direct_page(
@@ -1040,7 +1210,13 @@ def test_direct_page_accepts_a_task2_sealed_complete_view(
         for item in view.value["materials"]
         if item["viewable_image"]
     )
-    value["machine_record"]["selected_references"][0]["material_id"] = selected
+    value["selected_references"] = [
+        {
+            "material_id": selected,
+            "use": "Anchor the real source evidence.",
+            "preserve": "Preserve recognizable identity.",
+        }
+    ]
 
     artifact = direct_page(
         workspace,
@@ -1272,9 +1448,7 @@ def test_direct_page_rejects_republished_derivative_set_or_parent_tamper(
 
 
 def test_compile_prompt_has_exact_natural_language_sections_and_single_fixed_exclusions():
-    value = _director_value(
-        CompletePageMaterialView({}, (), (), "")
-    )
+    value = _director_value()
     prompt = compile_consulting_six_part_prompt(value, _compiler_material_view())
 
     assert [line[3:] for line in prompt.splitlines() if line.startswith("## ")] == list(HEADINGS)
@@ -1283,35 +1457,6 @@ def test_compile_prompt_has_exact_natural_language_sections_and_single_fixed_exc
     assert prompt.count("central largest 17:8 content region") == 1
     assert prompt.count("visibly empty perimeter") == 1
     assert "cinematic evidence wall" not in prompt  # creativity stays open, not flattened into the prompt compiler
-
-
-@pytest.mark.parametrize(
-    ("section", "text", "preserved"),
-    [
-        (
-            "strict_prohibitions",
-            "Preserve verified identities. Do not generate a title, logo, footer, or page number.",
-            "Preserve verified identities.",
-        ),
-        (
-            "visual_style_and_color",
-            "Use a clear reading path. Put all content in the central largest 17:8 content region.",
-            "Use a clear reading path.",
-        ),
-    ],
-)
-def test_compile_prompt_removes_model_restatement_and_keeps_source_preservation(
-    section: str, text: str, preserved: str
-):
-    value = _director_value(CompletePageMaterialView({}, (), (), ""))
-    value["prompt_sections"][section] = text
-
-    prompt = compile_consulting_six_part_prompt(value, _compiler_material_view())
-
-    assert preserved in prompt
-    for term in ("title", "logo", "footer", "page number"):
-        assert prompt.lower().count(term) == 1
-    assert prompt.count("central largest 17:8 content region") == 1
 
 
 def test_visual_director_reference_is_short_generic_and_template_free():
@@ -1336,83 +1481,57 @@ def test_visual_director_reference_is_short_generic_and_template_free():
     assert not any(term.casefold() in text.casefold() for term in forbidden)
 
 
-def test_visual_director_reference_requires_a_coherent_reporting_argument():
+def test_visual_director_reference_matches_page_purpose_without_invented_takeaway():
     text = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8").casefold()
 
-    assert "one coherent argument" in text
-    assert "explanatory copy" in text
-    assert "evidence" in text
-    assert "conclusion" in text
-    assert "single panorama" in text
+    _assert_semantic_groups(
+        text,
+        (
+            (("page purpose",)),
+            (("one source-supported primary relationship",)),
+            (("one core exhibit",)),
+            (("analytical_table",)),
+            (("flow",)),
+            (("hierarchy",)),
+            (("geography",)),
+            (("causality",)),
+            (("local to the evidence",)),
+            (("never as an invented whole-page scene",)),
+        ),
+    )
 
 
-def test_visual_director_reference_treats_confirmed_secondary_color_as_an_accent():
-    text = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8").casefold()
+def test_visual_director_request_allows_secondary_fills_and_spatial_structure(tmp_path: Path):
+    call, _ = _captured_director_request(tmp_path)
+    prompt = str(call["prompt"])
 
-    assert "confirmed secondary color" in text
-    assert "semantic accent" in text
-    assert "large filled region" in text
-    assert "wide path" in text
+    assert "spatial structure remain primary" in prompt
+    assert "text-box fills, shapes, borders, nodes, and connectors" in prompt
+    assert "assign ordered color depth to merely parallel categories" in prompt
+    assert "never a large filled region or wide path" not in prompt
+    assert "at least two visibly distinct tones" in prompt
 
 
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
         (
-            lambda value: value["machine_record"]["selected_references"][0].update(
+            lambda value: value["selected_references"][0].update(
                 {"material_id": "attachment:non-viewable"}
             ),
             "selected reference",
         ),
         (
-            lambda value: value["prompt_sections"].update(
-                {"task_and_canvas": "Read C:\\private\\source.png"}
-            ),
-            "custody|path",
+            lambda value: value["selected_references"][0].update({"use": "   "}),
+            "selected reference|use|non-whitespace|blank",
         ),
         (
-            lambda value: value["prompt_sections"].update(
-                {"task_and_canvas": "Read /private/source.png"}
-            ),
-            "custody|path",
-        ),
-        (
-            lambda value: value["prompt_sections"].update(
-                {"text_and_typography": "Use digest " + "f" * 64}
-            ),
-            "custody|digest|hash",
-        ),
-        (
-            lambda value: value["prompt_sections"].update(
-                {"task_and_canvas": "Do not generate the logo."}
-            ),
-            "compiler-owned|boundary",
-        ),
-        (
-            lambda value: value["machine_record"]["facts_and_sources"].append("   "),
-            "non-whitespace|blank|facts",
-        ),
-        (
-            lambda value: value["machine_record"]["material_use"][0].update(
-                {"reason": " \t "}
-            ),
-            "non-whitespace|blank|reason",
-        ),
-        (
-            lambda value: value["machine_record"]["selected_references"][0].update(
-                {"identity": "   "}
-            ),
-            "non-whitespace|blank|identity",
-        ),
-        (
-            lambda value: value["creative_direction"].update(
-                {"analytical_backbone": " \t "}
-            ),
-            "creative|non-whitespace|blank|analytical_backbone",
+            lambda value: value["page_plan"].update({"page_purpose": " \t "}),
+            "page_purpose|page purpose|non-whitespace|blank",
         ),
     ],
 )
-def test_direct_page_rejects_invalid_audit_or_prompt_output(
+def test_direct_page_rejects_invalid_compact_output(
     tmp_path: Path, mutate, message: str
 ):
     workspace = _workspace(tmp_path)
@@ -1422,438 +1541,3 @@ def test_direct_page_rejects_invalid_audit_or_prompt_output(
 
     with pytest.raises(ValueError, match=message):
         direct_page(workspace, view, timeout=60, invoke=lambda *args, **kwargs: _result(value))
-
-
-def test_direct_page_completes_omitted_material_audit_without_retrying_codex(
-    tmp_path: Path,
-):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    value = copy.deepcopy(_director_value(view))
-    missing_id = value["machine_record"]["material_use"].pop()["material_id"]
-    calls = 0
-
-    def invoke(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return _result(value)
-
-    artifact = direct_page(workspace, view, timeout=60, invoke=invoke)
-
-    assert calls == 1
-    material_use = artifact.value["machine_record"]["material_use"]
-    assert [item["material_id"] for item in material_use] == list(view.material_ids)
-    completed = next(item for item in material_use if item["material_id"] == missing_id)
-    assert completed["status"] == "background_understanding"
-    assert "not selected as an Image2 reference" in completed["reason"]
-
-
-def test_decide_correction_compiler_reuses_the_sealed_ui_canvas_background(
-    tmp_path: Path,
-):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    director = direct_page(
-        workspace,
-        view,
-        timeout=60,
-        invoke=lambda *args, **kwargs: _result(_director_value(view)),
-    )
-    candidate = workspace.project_copy / "candidate-background.png"
-    candidate.write_bytes(b"candidate-background")
-    problem = "The hierarchy is unusable."
-    free_background = "Crimson linen fog with a granular paper texture."
-    value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": workspace.page_number,
-        "strategy": "edit_previous",
-        "problem_addressed": [problem],
-        "preserve": ["Preserve source-exact facts."],
-        "selected_reference_ids": ["word-image:word-photo"],
-        "prompt_sections": _prompt_sections(suffix=" with a corrected hierarchy"),
-    }
-    value["prompt_sections"]["task_and_canvas"] = free_background
-
-    decision = decide_correction(
-        workspace,
-        view,
-        director,
-        previous_candidate=candidate,
-        problems=[problem],
-        timeout=60,
-        invoke=lambda *args, **kwargs: _result(value),
-    )
-
-    scene = _compiled_prompt_sections(decision.actual_prompt)["Task and Canvas"]
-    initial_scene = _compiled_prompt_sections(director.actual_prompt)[
-        "Task and Canvas"
-    ]
-    background_color = str(view.value["visual_contract"]["background_color"])
-    assert "source-authoritative background color" in scene
-    assert "source-authoritative background color" in initial_scene
-    assert background_color in scene
-    assert decision.actual_prompt.casefold().count(background_color.casefold()) == 1
-    assert free_background.casefold() not in decision.actual_prompt.casefold()
-
-
-def test_decide_correction_schema_allows_only_viewable_image_map_ids(tmp_path: Path):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    director = direct_page(
-        workspace,
-        view,
-        timeout=60,
-        invoke=lambda *args, **kwargs: _result(_director_value(view)),
-    )
-    candidate = workspace.project_copy / "candidate-schema.png"
-    candidate.write_bytes(b"candidate-schema")
-    problem = "The source relationship is not visibly correct."
-    value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": workspace.page_number,
-        "strategy": "regenerate_from_materials",
-        "problem_addressed": [problem],
-        "preserve": ["Preserve source-exact facts and identities."],
-        "selected_reference_ids": ["word-image:word-photo"],
-        "prompt_sections": _prompt_sections(suffix=" with corrected source relationships"),
-    }
-    calls: list[dict[str, object]] = []
-
-    def invoke(project: Path, **kwargs):
-        calls.append({"project": project, **kwargs})
-        return _result(value)
-
-    decide_correction(
-        workspace,
-        view,
-        director,
-        previous_candidate=candidate,
-        problems=[problem],
-        timeout=60,
-        invoke=invoke,
-    )
-
-    assert len(calls) == 1
-    prompt_lines = str(calls[0]["prompt"]).splitlines()
-    mapped_ids = [
-        line.split(" = ", 1)[1]
-        for line in prompt_lines
-        if line.startswith("Image-") and "previous-candidate" not in line
-    ]
-    assert mapped_ids
-    schema = calls[0]["output_schema"]
-    selected = schema["properties"]["selected_reference_ids"]
-    assert selected["items"].get("enum") == mapped_ids
-    assert "uniqueItems" not in selected
-    assert _unsupported_structured_output_paths(schema) == []
-    assert selected.get("maxItems") == len(mapped_ids)
-
-    for invalid_id in ("previous-candidate", "attachment:appendix-pdf"):
-        invalid = copy.deepcopy(value)
-        invalid["selected_reference_ids"] = [invalid_id]
-        errors = list(Draft202012Validator(schema).iter_errors(invalid))
-        assert any(list(error.absolute_path) == ["selected_reference_ids", 0] for error in errors)
-
-
-def test_decide_correction_rejects_duplicate_selected_references_locally(tmp_path: Path):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    director = direct_page(
-        workspace,
-        view,
-        timeout=60,
-        invoke=lambda *args, **kwargs: _result(_director_value(view)),
-    )
-    candidate = workspace.project_copy / "candidate-duplicate-refs.png"
-    candidate.write_bytes(b"candidate-duplicate-refs")
-    problem = "The source relationship is not visibly correct."
-    duplicated = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": workspace.page_number,
-        "strategy": "regenerate_from_materials",
-        "problem_addressed": [problem],
-        "preserve": ["Preserve source-exact facts and identities."],
-        "selected_reference_ids": [
-            "word-image:word-photo",
-            "word-image:word-photo",
-        ],
-        "prompt_sections": _prompt_sections(suffix=" with corrected source relationships"),
-    }
-
-    with pytest.raises(ValueError, match="duplicate selected reference"):
-        decide_correction(
-            workspace,
-            view,
-            director,
-            previous_candidate=candidate,
-            problems=[problem],
-            timeout=60,
-            invoke=lambda *args, **kwargs: _result(duplicated),
-        )
-
-
-def test_decide_correction_schema_requires_empty_selection_without_viewable_ids(
-    tmp_path: Path,
-):
-    workspace, view = _workspace_without_viewable_materials(tmp_path)
-    director_value = _director_value(view)
-    director_value["page_number"] = workspace.page_number
-    director_value["machine_record"]["selected_references"] = []
-    director = direct_page(
-        workspace,
-        view,
-        timeout=60,
-        invoke=lambda *args, **kwargs: _result(director_value),
-    )
-    candidate = workspace.project_copy / "candidate-no-refs.png"
-    candidate.write_bytes(b"candidate-no-refs")
-    problem = "The hierarchy is unusable."
-    value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": workspace.page_number,
-        "strategy": "edit_previous",
-        "problem_addressed": [problem],
-        "preserve": ["Preserve source-exact facts."],
-        "selected_reference_ids": [],
-        "prompt_sections": _prompt_sections(suffix=" with a corrected hierarchy"),
-    }
-    calls: list[dict[str, object]] = []
-
-    def invoke(project: Path, **kwargs):
-        calls.append({"project": project, **kwargs})
-        return _result(value)
-
-    decide_correction(
-        workspace,
-        view,
-        director,
-        previous_candidate=candidate,
-        problems=[problem],
-        timeout=60,
-        invoke=invoke,
-    )
-
-    assert len(calls) == 1
-    schema = calls[0]["output_schema"]
-    selected = schema["properties"]["selected_reference_ids"]
-    assert selected.get("maxItems") == 0
-    invalid = copy.deepcopy(value)
-    invalid["selected_reference_ids"] = ["previous-candidate"]
-    errors = list(Draft202012Validator(schema).iter_errors(invalid))
-    assert any(list(error.absolute_path) == ["selected_reference_ids"] for error in errors)
-
-
-@pytest.mark.parametrize("strategy", ["edit_previous", "regenerate_from_materials"])
-def test_decide_correction_lets_codex_choose_directly_and_keeps_candidate_separate(
-    tmp_path: Path, strategy: str
-):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    director = direct_page(
-        workspace, view, timeout=60, invoke=lambda *args, **kwargs: _result(_director_value(view))
-    )
-    candidate = workspace.project_copy / "candidate-1.png"
-    candidate.write_bytes(b"candidate")
-    calls: list[dict[str, object]] = []
-    correction_value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": 1,
-        "strategy": strategy,
-        "problem_addressed": ["The composition is plainly unusable in the 17:8 body region."],
-        "preserve": ["Preserve the real subject identity and verified figures."],
-        "selected_reference_ids": ["word-image:word-photo"],
-        "prompt_sections": _prompt_sections(suffix=" with a materially wider hierarchy"),
-    }
-
-    def invoke(project: Path, **kwargs):
-        calls.append({"project": project, **kwargs})
-        return _result(correction_value)
-
-    decision = decide_correction(
-        workspace,
-        view,
-        director,
-        previous_candidate=candidate,
-        problems=["The composition is plainly unusable in the 17:8 body region."],
-        timeout=60,
-        invoke=invoke,
-    )
-
-    assert len(calls) == 1
-    assert calls[0]["role"] == "awesome-page-correction"
-    assert calls[0]["images"] == (*view.multimodal_images, candidate)
-    prompt = str(calls[0]["prompt"])
-    assert "Image-6 = previous-candidate (not a source material ID)" in prompt
-    assert "selected_reference_ids may contain only exact IDs from IMAGE INPUT MAP" in prompt
-    assert "If IMAGE INPUT MAP has no source image, return an empty list" in prompt
-    assert "Never invent, search for, or mint a reference ID" in prompt
-    assert json.dumps(view.value, ensure_ascii=False, sort_keys=True) in prompt
-    assert json.dumps(director.value, ensure_ascii=False, sort_keys=True) in prompt
-    problem_items = calls[0]["output_schema"]["properties"]["problem_addressed"]["items"]
-    assert problem_items["enum"] == [
-        "The composition is plainly unusable in the 17:8 body region."
-    ]
-    assert decision.strategy == strategy
-    assert decision.problem_addressed == tuple(correction_value["problem_addressed"])
-    assert decision.model_provider == "openai-test"
-
-
-def test_decide_correction_rejects_unknown_refs_unstated_problems_and_unchanged_request(
-    tmp_path: Path,
-):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    director = direct_page(
-        workspace, view, timeout=60, invoke=lambda *args, **kwargs: _result(_director_value(view))
-    )
-    candidate = workspace.project_copy / "candidate-1.png"
-    candidate.write_bytes(b"candidate")
-    base = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": 1,
-        "strategy": "edit_previous",
-        "problem_addressed": ["Wrong aspect ratio"],
-        "preserve": ["Keep the subject"],
-        "selected_reference_ids": ["word-image:word-photo"],
-        "prompt_sections": _prompt_sections(suffix=" corrected"),
-    }
-
-    unknown = copy.deepcopy(base)
-    unknown["selected_reference_ids"] = ["previous-candidate"]
-    with pytest.raises(
-        ValueError,
-        match="selected reference|schema rejected selected_reference_ids",
-    ):
-        decide_correction(
-            workspace, view, director, previous_candidate=candidate,
-            problems=["Wrong aspect ratio"], timeout=60,
-            invoke=lambda *args, **kwargs: _result(unknown),
-        )
-
-    with pytest.raises(ValueError, match="problem.*stated|review|schema rejected problem_addressed"):
-        decide_correction(
-            workspace, view, director, previous_candidate=candidate,
-            problems=["Different explicit problem"], timeout=60,
-            invoke=lambda *args, **kwargs: _result(base),
-        )
-
-    unchanged = copy.deepcopy(base)
-    unchanged["selected_reference_ids"] = list(director.selected_reference_ids)
-    unchanged["prompt_sections"] = copy.deepcopy(director.value["prompt_sections"])
-    with pytest.raises(ValueError, match="unchanged"):
-        decide_correction(
-            workspace, view, director, previous_candidate=candidate,
-            problems=["Wrong aspect ratio"], timeout=60,
-            invoke=lambda *args, **kwargs: _result(unchanged),
-        )
-
-
-def test_second_correction_rejects_same_request_as_previous_correction(tmp_path: Path):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    director = direct_page(
-        workspace, view, timeout=60, invoke=lambda *args, **kwargs: _result(_director_value(view))
-    )
-    candidate_one = workspace.project_copy / "candidate-1.png"
-    candidate_one.write_bytes(b"candidate-one")
-    correction_value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": 1,
-        "strategy": "edit_previous",
-        "problem_addressed": ["Wrong aspect ratio"],
-        "preserve": ["Keep the subject"],
-        "selected_reference_ids": ["word-image:word-photo"],
-        "prompt_sections": _prompt_sections(suffix=" corrected once"),
-    }
-    first = decide_correction(
-        workspace,
-        view,
-        director,
-        previous_candidate=candidate_one,
-        problems=["Wrong aspect ratio"],
-        timeout=60,
-        invoke=lambda *args, **kwargs: _result(correction_value),
-    )
-    with pytest.raises(ValueError, match="consecutive|unchanged|same request"):
-        decide_correction(
-            workspace,
-            view,
-            director,
-            previous_candidate=candidate_one,
-            problems=["Wrong aspect ratio"],
-            timeout=60,
-            invoke=lambda *args, **kwargs: _result(correction_value),
-            previous_decision=first,
-            previous_request_candidate=candidate_one,
-        )
-
-
-def test_second_correction_accepts_changed_strategy_or_candidate_identity(tmp_path: Path):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    director = direct_page(
-        workspace, view, timeout=60, invoke=lambda *args, **kwargs: _result(_director_value(view))
-    )
-    candidate_one = workspace.project_copy / "candidate-1.png"
-    candidate_one.write_bytes(b"candidate-one")
-    first_value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": 1,
-        "strategy": "edit_previous",
-        "problem_addressed": ["Wrong aspect ratio"],
-        "preserve": ["Keep the subject"],
-        "selected_reference_ids": ["word-image:word-photo"],
-        "prompt_sections": _prompt_sections(suffix=" corrected once"),
-    }
-    first = decide_correction(
-        workspace, view, director, previous_candidate=candidate_one,
-        problems=["Wrong aspect ratio"], timeout=60,
-        invoke=lambda *args, **kwargs: _result(first_value),
-    )
-    candidate_two = workspace.project_copy / "candidate-2.png"
-    candidate_two.write_bytes(b"candidate-two")
-    second_value = copy.deepcopy(first_value)
-
-    second = decide_correction(
-        workspace,
-        view,
-        director,
-        previous_candidate=candidate_two,
-        problems=["Wrong aspect ratio"],
-        timeout=60,
-        invoke=lambda *args, **kwargs: _result(second_value),
-        previous_decision=first,
-        previous_request_candidate=candidate_one,
-    )
-
-    assert second.strategy == "edit_previous"
-
-
-def test_correction_rejects_blank_preserve_text(tmp_path: Path):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    director = direct_page(
-        workspace, view, timeout=60, invoke=lambda *args, **kwargs: _result(_director_value(view))
-    )
-    candidate = workspace.project_copy / "candidate-1.png"
-    candidate.write_bytes(b"candidate")
-    correction_value = {
-        "schema_version": "awesome-page-correction-v2",
-        "page_number": 1,
-        "strategy": "edit_previous",
-        "problem_addressed": ["Wrong aspect ratio"],
-        "preserve": ["   "],
-        "selected_reference_ids": ["word-image:word-photo"],
-        "prompt_sections": _prompt_sections(suffix=" corrected"),
-    }
-
-    with pytest.raises(ValueError, match="preserve|non-whitespace|blank"):
-        decide_correction(
-            workspace,
-            view,
-            director,
-            previous_candidate=candidate,
-            problems=["Wrong aspect ratio"],
-            timeout=60,
-            invoke=lambda *args, **kwargs: _result(correction_value),
-        )

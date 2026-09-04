@@ -12,20 +12,20 @@ def test_release_metadata_is_consistently_v6_version() -> None:
     package = json.loads((REPO / "package-info.json").read_text(encoding="utf-8"))
     manifest = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     marketplace = json.loads((REPO / ".agents/plugins/marketplace.json").read_text(encoding="utf-8"))
-    assert package["pluginVersion"] == manifest["version"] == "1.2.2"
-    assert package["releaseTag"] == "v1.2.2"
+    assert package["pluginVersion"] == manifest["version"] == "1.2.3"
+    assert package["releaseTag"] == "v1.2.3"
     assert package["workflowContractVersion"] == "awesome-word-ppt-workflow-v1"
-    assert package["promptContractVersion"] == "consulting-page-director-v2-source-text-custody"
-    assert package["qaPolicyVersion"] == "sole-independent-consulting-visual-review-v2"
+    assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
+    assert package["qaPolicyVersion"] == "sole-independent-five-hard-error-review-v3"
     assert package["apiKeyRequired"] is False
     assert package["marketplacePreviewIdentity"] == marketplace["name"] == "editable-ppt-public"
-    assert marketplace["interface"]["displayName"].endswith("1.2.2")
+    assert marketplace["interface"]["displayName"].endswith("1.2.3")
     assert package["bodyImageAspectPolicy"] == "dynamic-centered-17:8-crop-then-uniform-1904x896-no-stretch"
     assert package["everyPageCallsImage2"] is True
     assert package["initialImageEndpoint"] == "adaptive-images/generate-or-edit"
-    assert package["localRepairEndpoint"] == "deterministic-mechanical-routing-with-model-fallback"
+    assert package["localRepairEndpoint"] == "deterministic-previous-image-local-edit-no-model-fallback"
     assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
-    assert package["qaPolicy"] == "sole-independent-consulting-visual-review-over-final-adapted-candidate"
+    assert package["qaPolicy"] == "sole-independent-five-hard-error-review-over-final-adapted-candidate"
 
 
 def test_active_v6_docs_do_not_advertise_removed_production_semantics() -> None:

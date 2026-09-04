@@ -19,6 +19,10 @@ import sys
 import time
 from urllib import error, request
 from urllib.parse import urlsplit
+
+WORKFLOW_SCRIPTS = Path(__file__).resolve().parents[2] / "run-word-to-ppt-workflow" / "scripts"
+if str(WORKFLOW_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(WORKFLOW_SCRIPTS))
 from provider_keyring import verification_key
 
 
@@ -174,7 +178,7 @@ def _verify(envelope, key):
             raise ValueError(f"provider full authority lacks {field}")
     project_identity = authority["project_identity"]
     if project_identity != {
-        "plugin_id": "awesome-editable-ppt-workflow", "plugin_version": "1.2.2",
+        "plugin_id": "awesome-editable-ppt-workflow", "plugin_version": "1.2.3",
         "workflow_contract": "awesome-word-ppt-workflow-v1",
         "source_identity": authority.get("source_identity"),
     }:

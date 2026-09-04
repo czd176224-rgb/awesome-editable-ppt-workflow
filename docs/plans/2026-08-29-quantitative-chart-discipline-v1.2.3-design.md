@@ -104,7 +104,7 @@ The current `name`, `value(s)`, `time(s)`, `unit`, `trend`, and `relationship` f
 
 `numeric_authority.rendering_primitive` must be exactly one of `column_bar`, `line_point`, `xy`, `cumulative_bridge`, `time_interval`, or `variable_rectangle`. Local conservative mapping selects it before reconstruction. The reconstruction worker must not infer or replace it from the accepted image. An ambiguous mapping falls back to the recoverable source chart type or a native table.
 
-For the three standard primitive families, `numeric_authority.chart_variant` is explicit: `column`, `bar`, `line`, `dot`, `scatter`, or `bubble`. Target-versus-actual data retains explicit `target_value` and `actual_value`; the renderer may add only a target line or a difference arrow derived directly from those two values.
+For the three standard primitive families, `numeric_authority.chart_variant` is explicit: `column`, `bar`, `line`, `dot`, `scatter`, or `bubble`. Target-versus-actual data retains explicit `target_value` and `actual_value`; the existing dot renderer adds the allowed target line and direct-difference arrow from that one pair without introducing a separate annotation-choice field.
 
 If the conditions are incomplete or ambiguous, retain the source chart type when it is recoverable; otherwise fall back to a native table. Never invent missing numbers to keep a chart.
 
@@ -315,7 +315,7 @@ The spike implements only the single standard-chart lifecycle and the single exp
 
 ## 15. Verification and Release Gate
 
-The synthetic gate contains ten explicit quantitative cases so no promised form hides behind a combined test:
+The synthetic gate contains nine quantitative relationship cases covering ten visual marks without adding a second production choice contract for the original target/actual/variance relationship:
 
 1. column/bar comparison;
 2. line trend;
@@ -325,8 +325,7 @@ The synthetic gate contains ten explicit quantitative cases so no promised form 
 6. waterfall/value bridge;
 7. Gantt/time interval;
 8. Mekko-like size-and-share with denominator;
-9. target line;
-10. difference arrow.
+9. target/actual/variance dot comparison, with independent readback assertions for its target line and difference arrow.
 
 Add a separate `8 relationships × 2 modes` contract matrix. Each quantitative row asserts required dimensions and its allowed renderer; each qualitative row asserts the named non-scaled substitute and absence of `numeric_authority`. Qualitative cases may share fixtures because they reuse existing editable shapes and tables rather than eight new rendering engines.
 

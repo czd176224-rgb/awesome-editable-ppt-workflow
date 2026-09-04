@@ -149,7 +149,7 @@
 - Modify: `plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_accepted_image_worker_reconstruction.py`
 - Modify: `docs/plans/2026-08-29-quantitative-chart-discipline-v1.2.3-design.md`
 
-- [ ] Build ten explicit quantitative fixtures: column/bar, line, scatter, bubble, dot, waterfall, Gantt, variable rectangle, target line, and difference arrow.
+- [ ] Build nine quantitative relationship fixtures covering ten visual marks: column/bar, line, scatter, bubble, dot, waterfall, Gantt, variable rectangle, and one target/actual/variance dot fixture with independent target-line and difference-arrow readback assertions.
 - [ ] Build an explicit `8 relationships × 2 modes` matrix. Each quantitative row asserts required dimensions and renderer; each qualitative row asserts its named substitute and absence of `numeric_authority`.
 - [ ] Verify standard pages contain native chart objects; special pages and qualitative substitutes contain editable shapes/tables; no qualitative case contains invented quantitative encoding.
 - [ ] Add a controlled harness for `C:\Users\24927\Desktop\黄石市产业创新与母基金专业化管理合作建议_PPT生成专用Word副本_V3.docx`, assert SHA-256 `519FC2C5DAA0B4A2E65954E6FA20DF461E04587749C69AFB5952C6535A4A4A11`, assert 42 logical pages, and select pages 5, 10, 14, 20, 21, and 40. Seal deterministic confirmation data directly so no UI interaction occurs.

@@ -4,7 +4,7 @@ This file is the single source of truth for page object decisions. Field contrac
 
 Every `source.png` is judged in three steps, in this order:
 
-The source is the accepted body's only visual authority. Object-source decisions exist to reproduce that image editably, not to redesign or reinterpret it. Preserve visible content, composition, object geometry, hierarchy, palette, spacing, visual rhythm, and major decorative elements. Do not consult Word, page-local comments, attachments, generation prompts, or reference selections after acceptance.
+The source is the accepted body's visual authority. Object-source decisions exist to reproduce that image editably, not to redesign or reinterpret it. Preserve visible content, composition, object geometry, hierarchy, palette, spacing, visual rhythm, and major decorative elements. There are exactly two narrow exceptions. A sealed page_plan may correct only relationship node identity, edge direction, and connector endpoints. A matching chart with sealed numeric_authority may correct only values, units, periods, labels, and quantitative geometry as specified in manifest-schema.md. The accepted image still owns composition and style; neither exception authorizes replacing the core exhibit or reading path. Do not consult Word, page-local comments, attachments, generation prompts, or reference selections after acceptance.
 
 1. Background recognition and repair.
 2. Foreground asset separation.

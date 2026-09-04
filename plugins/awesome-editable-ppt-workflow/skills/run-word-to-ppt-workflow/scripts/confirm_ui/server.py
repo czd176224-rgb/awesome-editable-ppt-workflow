@@ -79,7 +79,7 @@ _PAGE_AUTHORITY_DIRECTORIES = (
 )
 _REPARSE_POINT = 0x400
 
-VISUAL_FIELDS = (
+REQUIRED_VISUAL_FIELDS = (
     "primary_color",
     "secondary_color",
     "background_color",
@@ -89,7 +89,9 @@ VISUAL_FIELDS = (
     "body_size_pt",
     "caption_size_pt",
 )
-CONFIRMATION_FIELDS = ("submission_id", "revision", *VISUAL_FIELDS)
+OPTIONAL_VISUAL_FIELDS = ("highlight_color",)
+VISUAL_FIELDS = (*REQUIRED_VISUAL_FIELDS, *OPTIONAL_VISUAL_FIELDS)
+CONFIRMATION_FIELDS = ("submission_id", "revision", *REQUIRED_VISUAL_FIELDS)
 DIRECTOR_SUBMISSION_FIELDS = ("selected_director_template_id", "director_taskbook")
 STYLE_SCHEMA_PATH = SCRIPT_DIR.parents[1] / "schemas" / "style_confirmation.schema.json"
 TEMPLATE_DEFAULTS = tuple(
@@ -535,14 +537,24 @@ def _save_visual_contract(project: Path, payload: dict[str, Any]) -> dict[str, A
     if (project / "workflow_v6.json").is_file():
         legacy = {*CONFIRMATION_FIELDS, "confirmed_pages"}
         current = {*CONFIRMATION_FIELDS, *DIRECTOR_SUBMISSION_FIELDS}
-        if set(payload) not in (legacy, current):
+        payload_fields = set(payload)
+        base_fields = payload_fields - set(OPTIONAL_VISUAL_FIELDS)
+        if base_fields not in (legacy, current):
             raise ValueError("confirmation must contain visual fields and approved director fields only")
-        if set(payload) == legacy:
+        if base_fields == legacy:
             proposed = _read_json(project / "02_v6" / "page_composition.json")
             if payload["confirmed_pages"] != proposed["pages"]:
                 raise ValueError("page composition is automatic and cannot be changed")
-            payload = {field: payload[field] for field in CONFIRMATION_FIELDS}
-        visual_payload = {field: payload[field] for field in CONFIRMATION_FIELDS}
+            payload = {
+                field: payload[field]
+                for field in (*CONFIRMATION_FIELDS, *OPTIONAL_VISUAL_FIELDS)
+                if field in payload
+            }
+        visual_payload = {
+            field: payload[field]
+            for field in (*CONFIRMATION_FIELDS, *OPTIONAL_VISUAL_FIELDS)
+            if field in payload
+        }
         if type(visual_payload["revision"]) is not int or visual_payload["revision"] < 0:
             raise ValueError("revision must be a non-negative integer")
         error = _contract_error({**visual_payload, "revision": visual_payload["revision"] + 1})
@@ -550,7 +562,7 @@ def _save_visual_contract(project: Path, payload: dict[str, Any]) -> dict[str, A
             raise ValueError(error)
         return _v6_final_submission(
             project,
-            {field: _clean(payload[field]) for field in VISUAL_FIELDS},
+            {field: _clean(payload[field]) for field in VISUAL_FIELDS if field in payload},
             payload,
         )
     error = _contract_error(payload)
@@ -572,7 +584,11 @@ def _save_visual_contract(project: Path, payload: dict[str, Any]) -> dict[str, A
         current_revision = 0
         if payload["revision"] != current_revision + 1:
             raise RuntimeError("stale confirmation revision")
-        exact = {field: _clean(payload[field]) for field in CONFIRMATION_FIELDS}
+        exact = {
+            field: _clean(payload[field])
+            for field in (*CONFIRMATION_FIELDS, *OPTIONAL_VISUAL_FIELDS)
+            if field in payload
+        }
         _write_json(result_path, exact)
         return exact
 
@@ -1956,7 +1972,8 @@ def _wait(project: Path, stage: str, timeout: int) -> int:
                             state["style_confirmation"] = {
                                 "status": "confirmed",
                                 "contract": {
-                                    field: _clean(visual_contract[field]) for field in VISUAL_FIELDS
+                                    field: _clean(visual_contract[field])
+                                    for field in VISUAL_FIELDS if field in visual_contract
                                 },
                             }
                             state["confirmed_ui_revision"] = revision

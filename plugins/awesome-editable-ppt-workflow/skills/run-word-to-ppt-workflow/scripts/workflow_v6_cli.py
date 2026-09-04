@@ -118,7 +118,12 @@ def main() -> int:
         _emit(build_reconstruction_request(args.project, page_number=args.page))
     elif args.command == "finalize-page":
         _require_valid_project(args.project)
-        _emit(finalize_reconstructed_page(args.project, page_number=args.page, reconstructed_body=args.body_pptx))
+        _emit(finalize_reconstructed_page(
+            args.project,
+            page_number=args.page,
+            reconstructed_body=args.body_pptx,
+            authority_mode="sealed_reconstruction",
+        ))
     elif args.command == "assemble":
         _require_valid_project(args.project)
         _emit(assemble_v6_deck(args.project))

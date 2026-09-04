@@ -81,12 +81,17 @@ if ($PackageInfo.geometryTolerancePercent -ne 0.1) {
 if ($PackageInfo.initialImageEndpoint -ne "adaptive-images/generate-or-edit") {
     throw "V6 initial page generation must use the adaptive generate-or-edit dispatcher"
 }
-if ($PackageInfo.localRepairEndpoint -ne "deterministic-mechanical-routing-with-model-fallback") {
-    throw "V6 page repair must stay on the same provider and remain bounded by two review-directed corrections"
+if ($PackageInfo.localRepairEndpoint -ne "deterministic-previous-image-local-edit-no-model-fallback" -or
+    $PackageInfo.designAcceptancePolicy -ne "single-independent-review-with-at-most-two-corrections") {
+    throw "V6 page repair must edit the previous image deterministically, use at most two corrections, and have no correction-model fallback"
 }
-if ($PackageInfo.promptContractVersion -ne "consulting-page-director-v2-source-text-custody" -or
+if ($PackageInfo.promptContractVersion -ne "consulting-page-director-v3-compact-page-plan" -or
+    $PackageInfo.qaPolicyVersion -ne "sole-independent-five-hard-error-review-v3" -or
     $PackageInfo.pageImagePolicy -ne "generate-without-refs-edit-with-confirmed-refs") {
-    throw "package-info must declare the consulting director v2 prompt and confirmed-materials image policy"
+    throw "package-info must declare the consulting director v3 compact page plan and confirmed-materials image policy"
+}
+if ($PackageInfo.releaseStatus -ne "development-not-release-ready") {
+    throw "package-info must keep this source branch marked development-not-release-ready"
 }
 
 if ($MetadataOnly) {

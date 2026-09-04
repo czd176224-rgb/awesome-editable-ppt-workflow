@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import uuid
 import zipfile
 import copy
@@ -30,6 +31,29 @@ from workflow_v6_materials import select_numeric_authority
 from workflow_v6_composition import load_composition_authority
 from workflow_v6_state import mutation_lock, save
 import workflow_v6_secure_io as secure_io
+from complex_page_experiment import (
+    open_live_page_workspace,
+    verify_signed_acceptance_receipt,
+)
+
+
+_EDITPPT_CLI = (
+    Path(__file__).resolve().parents[2]
+    / "reconstruct-editable-slide"
+    / "cli"
+)
+if _EDITPPT_CLI.is_dir() and str(_EDITPPT_CLI) not in sys.path:
+    sys.path.insert(0, str(_EDITPPT_CLI))
+from editppt.runtime.validate_pptx import (  # noqa: E402
+    _connector_endpoints,
+    _shape_arrowheads,
+    _shape_kind,
+    quantitative_chart_readback_violations,
+)
+from editppt.runtime.build_pptx_from_manifest import (  # noqa: E402
+    apply_native_charts,
+    normalize_manifest,
+)
 
 
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -81,11 +105,14 @@ def _copy_page_slide(source_path: Path, destination: Presentation, destination_l
     source_slide = source.slides[0]
     destination_slide = destination.slides.add_slide(destination_layout)
     mapping: dict[str, str] = {}
+    chart_relationships: set[str] = set()
     for relationship in source_slide.part.rels.values():
         if relationship.reltype == RT.SLIDE_LAYOUT:
             continue
         if relationship.reltype == RT.IMAGE:
             mapping[relationship.rId] = _copy_image_relationship(relationship, destination_slide)
+        elif relationship.reltype == RT.CHART:
+            chart_relationships.add(relationship.rId)
         elif relationship.is_external:
             mapping[relationship.rId] = destination_slide.part.relate_to(
                 relationship.target_ref, relationship.reltype, is_external=True
@@ -94,6 +121,18 @@ def _copy_page_slide(source_path: Path, destination: Presentation, destination_l
             raise ValueError(f"unsupported V6 slide relationship: {relationship.reltype}")
     copied_content = copy.deepcopy(source_slide.element.cSld)
     copied_content.set("name", f"editable-ppt-v6-page:{page_number}")
+    for node in tuple(copied_content.iter()):
+        if not any(
+            attribute in _RELATIONSHIP_ATTRIBUTES and relationship_id in chart_relationships
+            for attribute, relationship_id in node.attrib.items()
+        ):
+            continue
+        chart_frame = node
+        while chart_frame is not copied_content and chart_frame.tag.rsplit("}", 1)[-1] != "graphicFrame":
+            chart_frame = chart_frame.getparent()
+        if chart_frame is copied_content or chart_frame.getparent() is None:
+            raise ValueError("V6 chart relationship has no removable graphic frame")
+        chart_frame.getparent().remove(chart_frame)
     for node in copied_content.iter():
         for attribute, old_id in tuple(node.attrib.items()):
             if attribute in _RELATIONSHIP_ATTRIBUTES:
@@ -214,7 +253,8 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
     if not accepted_receipt.is_file():
         raise ValueError("V6 accepted Image2 receipt is missing")
     receipt_bytes = secure_io.read_bytes(root, accepted_receipt.relative_to(root))
-    receipt = json.loads(receipt_bytes.decode("utf-8"))
+    workspace = open_live_page_workspace(root, page_number)
+    receipt = verify_signed_acceptance_receipt(workspace, receipt_bytes)
     if not isinstance(receipt, Mapping) or receipt.get("page_number") != page_number:
         raise ValueError("V6 accepted Image2 receipt identity is invalid")
     selected = receipt.get("candidate", receipt.get("selected"))
@@ -282,6 +322,7 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
         },
         "sealed_image_edits": [],
         "sealed_text_repairs": [dict(item) for item in repairs],
+        "page_plan": receipt["page_plan"],
         "geometry": geometry_contract(),
         "requirements": {
             "object_level_editable": True,
@@ -575,8 +616,159 @@ def _validate_reconstructed_text_repairs(
             raise ValueError("V6 reconstructed native text did not apply a sealed repair")
 
 
+def _shape_object_id(shape: object) -> str | None:
+    properties = shape._element.xpath(".//p:cNvPr")
+    if not properties:
+        return None
+    description = properties[0].get("descr", "")
+    return description.removeprefix("object_id:") if description.startswith("object_id:") else None
+
+
+def _inside(point: tuple[int, int], shape: object) -> bool:
+    x, y = point
+    return (
+        shape.left - 1 <= x <= shape.left + shape.width + 1
+        and shape.top - 1 <= y <= shape.top + shape.height + 1
+    )
+
+
+def _require_final_authority(
+    root: Path,
+    page_number: int,
+    reconstructed_body: Path,
+    deck: Presentation,
+    authority_mode: str,
+) -> Mapping[str, Any] | None:
+    """Verify sealed worker authority before the host publishes the editable page."""
+    if authority_mode == "native_direct":
+        page = _load_reconstruction_state(root)["pages"][page_number - 1]
+        if page.get("selected_candidate") is not None:
+            raise ValueError("V6 native-direct finalization cannot use a selected candidate")
+        receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
+        if receipt_path.exists():
+            raise ValueError("V6 native-direct finalization cannot use an acceptance receipt")
+        if page.get("state") not in {"accepted", "reconstructing", "page_complete"}:
+            raise ValueError("V6 native-direct acceptance authority is missing")
+        return None
+    if authority_mode != "sealed_reconstruction":
+        raise ValueError("V6 finalization authority mode is invalid")
+    request_path = reconstructed_body.parent / "accepted_reconstruction_request.json"
+    manifest_path = reconstructed_body.parent / "manifest.json"
+    if not request_path.is_file():
+        raise ValueError("V6 sealed reconstruction request is missing")
+    if not manifest_path.is_file():
+        raise ValueError("V6 sealed reconstruction manifest is missing")
+    request = _read_json(request_path)
+    accepted = request.get("accepted_receipt")
+    if not isinstance(accepted, Mapping) or accepted.get("path") != (
+        Path("04_v6") / "images" / f"page_{page_number:03d}.json"
+    ).as_posix():
+        raise ValueError("V6 sealed acceptance receipt relationship is invalid")
+    receipt_path = root / str(accepted["path"])
+    if not receipt_path.is_file():
+        raise ValueError("V6 sealed acceptance receipt is missing")
+    receipt_bytes = secure_io.read_bytes(root, receipt_path.relative_to(root))
+    receipt = verify_signed_acceptance_receipt(
+        open_live_page_workspace(root, page_number), receipt_bytes,
+    )
+    if (
+        accepted.get("sha256") != hashlib.sha256(receipt_bytes).hexdigest()
+        or receipt.get("page_number") != page_number
+        or request.get("page_plan") != receipt.get("page_plan")
+    ):
+        raise ValueError("V6 sealed acceptance receipt relationship is invalid")
+    canonical_request = _read_json(
+        root / "05_v6" / "reconstruction_requests" / f"page_{page_number:03d}.json"
+    )
+    page_request_path = reconstructed_body.parent / "page_request.json"
+    jobs_path = reconstructed_body.parents[2] / "page_jobs.json"
+    page_request = _read_json(page_request_path)
+    jobs = _read_json(jobs_path)
+    job = next(
+        (
+            item for item in jobs.get("pages", [])
+            if isinstance(item, Mapping) and item.get("page_id") == "page_001"
+        ),
+        None,
+    )
+    dispatch = job.get("dispatch") if isinstance(job, Mapping) else None
+    if (
+        request != canonical_request
+        or not isinstance(job, Mapping)
+        or not isinstance(dispatch, Mapping)
+        or dispatch.get("page_request_sha256") != _sha256(page_request_path)
+        or any(
+            page_request.get(field) != request.get(field)
+            for field in ("page_plan", "numeric_authority")
+        )
+    ):
+        raise ValueError("V6 sealed reconstruction request relationship is invalid")
+    manifest = _read_json(manifest_path)
+
+    relationship = request.get("page_plan", {}).get("primary_relationship", {})
+    nodes = relationship.get("nodes", [])
+    edges = relationship.get("edges", [])
+    shapes_by_id: dict[str, list[object]] = {}
+    for shape in deck.slides[0].shapes:
+        object_id = _shape_object_id(shape)
+        if object_id:
+            shapes_by_id.setdefault(object_id, []).append(shape)
+    manifest_ids = [
+        item.get("object_id")
+        for section in ("text_boxes", "tables", "images", "shapes", "charts")
+        for item in manifest.get(section, [])
+        if isinstance(item, Mapping)
+    ]
+    for node in nodes:
+        node_id = node.get("node_id") if isinstance(node, Mapping) else None
+        if not isinstance(node_id, str) or manifest_ids.count(node_id) != 1 or len(shapes_by_id.get(node_id, [])) != 1:
+            raise ValueError(f"V6 sealed relationship node is missing or duplicated: {node_id}")
+    for edge in edges:
+        if not isinstance(edge, Mapping):
+            raise ValueError("V6 sealed relationship edge is invalid")
+        source_id, target_id = edge.get("from_node"), edge.get("to_node")
+        edge_id = f"edge:{source_id}->{target_id}"
+        matches = shapes_by_id.get(edge_id, [])
+        if (
+            source_id not in shapes_by_id
+            or target_id not in shapes_by_id
+            or manifest_ids.count(edge_id) != 1
+            or len(matches) != 1
+        ):
+            raise ValueError(f"V6 sealed relationship edge is missing or duplicated: {edge_id}")
+        connector = matches[0]
+        if _shape_kind(connector) not in {"line", "connector"}:
+            raise ValueError(f"V6 sealed relationship edge is not a real line: {edge_id}")
+        start_x, start_y, end_x, end_y = _connector_endpoints(connector)
+        if (
+            not _inside((start_x, start_y), shapes_by_id[source_id][0])
+            or not _inside((end_x, end_y), shapes_by_id[target_id][0])
+            or _shape_arrowheads(connector) != {"tailEnd": "triangle"}
+        ):
+            raise ValueError(f"V6 sealed relationship edge direction is invalid: {edge_id}")
+
+    authority = request.get("numeric_authority")
+    if authority is not None:
+        charts = manifest.get("charts", [])
+        matching = [
+            chart for chart in charts
+            if isinstance(chart, Mapping)
+            and all(chart.get(key) == value for key, value in authority.items())
+        ]
+        if len(matching) != 1:
+            raise ValueError("V6 sealed numeric authority is missing or changed")
+        violations = quantitative_chart_readback_violations(reconstructed_body, [manifest])
+        if violations:
+            raise ValueError("V6 sealed numeric authority failed readback: " + json.dumps(violations, ensure_ascii=False))
+    return accepted
+
+
 def finalize_reconstructed_page(
-    project: Path, *, page_number: int, reconstructed_body: Path
+    project: Path,
+    *,
+    page_number: int,
+    reconstructed_body: Path,
+    authority_mode: str = "sealed_reconstruction",
 ) -> dict[str, Any]:
     secure_io.reject_reparse_chain(Path(project))
     root = Path(project).resolve()
@@ -588,6 +780,9 @@ def finalize_reconstructed_page(
     if len(opened.slides) != 1:
         raise ValueError("V6 reconstructed body must contain exactly one slide")
     _validate_reconstructed_text_repairs(root, page_number, opened)
+    accepted_receipt = _require_final_authority(
+        root, page_number, reconstructed_body, opened, authority_mode,
+    )
     page_index = page_number - 1
     page = state["pages"][page_index]
     if page["state"] not in {"accepted", "reconstructing", "page_complete"}:
@@ -682,6 +877,8 @@ def finalize_reconstructed_page(
         "fixed_frame": fixed,
         "post_reconstruction_visual_qa": False,
     }
+    if accepted_receipt is not None:
+        report["accepted_receipt"] = dict(accepted_receipt)
     _write_json(output_dir / "page.json", report)
     return report
 
@@ -707,6 +904,36 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
     ]
     if any(not path.is_file() for path in pages):
         raise ValueError("a V6 finalized page package is missing")
+    chart_manifests = []
+    for page_number, page in enumerate(state["pages"], start=1):
+        manifest_path = (
+            root / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
+            / "pages" / "page_001" / "manifest.json"
+        )
+        if manifest_path.is_file():
+            normalized = normalize_manifest(_read_json(manifest_path))
+        else:
+            final_report_path = (
+                root / "06_v6" / "pages" / f"page_{page_number:03d}" / "page.json"
+            )
+            if not final_report_path.is_file():
+                raise ValueError("V6 finalized page report is missing")
+            final_report = _read_json(final_report_path)
+            receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
+            if (
+                final_report.get("accepted_receipt") is not None
+                or page.get("selected_candidate") is not None
+                or receipt_path.is_file()
+            ):
+                raise ValueError("V6 sealed reconstruction manifest is missing")
+            if any(shape.has_chart for shape in Presentation(pages[page_number - 1]).slides[0].shapes):
+                raise ValueError(
+                    "V6 manifestless native-direct page contains an undeclared native chart"
+                )
+            normalized = {"charts": []}
+        if page_number == 1:
+            normalized["charts"] = []
+        chart_manifests.append(normalized)
     output_dir = root / "08_final"
     output = output_dir / "deck.pptx"
     temporary = output_dir / f".deck-v6-{uuid.uuid4().hex[:8]}.tmp"
@@ -716,6 +943,7 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
         _copy_page_slide(path, deck, layout, page_number)
     with secure_io.hold_parent(root, temporary.relative_to(root), create=True):
         deck.save(temporary)
+        apply_native_charts(temporary, chart_manifests)
         reopened = Presentation(temporary)
         if len(reopened.slides) != len(pages):
             raise ValueError("assembled V6 slide count is incorrect")

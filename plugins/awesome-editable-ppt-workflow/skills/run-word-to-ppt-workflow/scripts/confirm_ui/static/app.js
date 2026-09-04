@@ -7,7 +7,7 @@
   "use strict";
 
   var VISUAL_FIELDS = [
-    "primary_color", "secondary_color", "background_color", "cjk_font", "latin_font",
+    "primary_color", "secondary_color", "highlight_color", "background_color", "cjk_font", "latin_font",
     "title_size_pt", "body_size_pt", "caption_size_pt"
   ];
   var TASKBOOK_FIELDS = [

@@ -18,7 +18,7 @@ EDITPPT_RUNTIME = PLUGIN / "skills" / "reconstruct-editable-slide" / "cli" / "ed
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from test_workflow_v6_reconstruction import _body, _project  # noqa: E402
+from test_workflow_v6_reconstruction import _body, _project, _write_signed_receipt  # noqa: E402
 import workflow_v6_pipeline  # noqa: E402
 import workflow_v6_reconstruction_worker as worker_module  # noqa: E402
 from workflow_v6_pipeline import (  # noqa: E402
@@ -32,6 +32,12 @@ from workflow_v6_reconstruction_worker import (  # noqa: E402
     reconstruct_accepted_page,
 )
 from workflow_v6_state import load, save  # noqa: E402
+from test_quantitative_chart_v123_e2e import (  # noqa: E402
+    _production_worker,
+    _qualitative_manifest,
+    _relationship_manifest,
+    _with_relationship,
+)
 
 
 def _accepted_outcome(project: Path, page_number: int = 1):
@@ -56,11 +62,24 @@ def _workspace(project: Path, page_number: int = 1):
 
 
 def _successful_worker(calls: list, text: str = "Editable worker output"):
+    def manifest(page_request):
+        value = _with_relationship(
+            _qualitative_manifest("flow", "timeline_roadmap"), page_request,
+        )
+        value["text_boxes"].append({
+            "object_id": "worker-output-text",
+            "name": "worker-output-text",
+            "box_px": [200, 300, 800, 100],
+            "text": text,
+            "font_size": 20,
+        })
+        return value
+
+    sealed_worker = _production_worker(manifest, [])
+
     def invoke(request):
         calls.append(request)
-        body = request.page_dir / "worker-body.pptx"
-        _body(body, text)
-        return PageWorkerResult(status="completed", reconstructed_body=body)
+        return sealed_worker(request)
 
     return invoke
 
@@ -114,11 +133,11 @@ def test_page_worker_prompt_enforces_sealed_text_repairs(tmp_path: Path):
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     receipt["reconstruction_repairs"] = [
         {
-            "category": "misleading_fabrication",
+            "category": "severe_usability",
             "detail": "将错字“清出”修正为“退出”，其余构图保持不变。",
         }
     ]
-    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+    _write_signed_receipt(project, 1, receipt)
     calls: list = []
 
     reconstruct_accepted_page(
@@ -146,23 +165,7 @@ def test_page_worker_request_copies_numeric_authority_before_whole_request_hash(
 
     def worker(request):
         calls.append(request)
-        completed = subprocess.run(
-            [
-                sys.executable,
-                str(EDITPPT_RUNTIME / "record_page_dispatch.py"),
-                str(request.run_dir),
-                "--page", "page_001",
-                "--agent-id", "test-worker",
-                "--prompt-file", str(request.prompt_file),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert completed.returncode == 0, completed.stderr
-        body = request.page_dir / "numeric-authority.pptx"
-        _body(body, "Numeric authority")
-        return PageWorkerResult(status="completed", reconstructed_body=body)
+        return _production_worker(_relationship_manifest, [])(request)
 
     reconstruct_accepted_page(
         _workspace(project), _accepted_outcome(project), page_worker=worker,
@@ -170,8 +173,10 @@ def test_page_worker_request_copies_numeric_authority_before_whole_request_hash(
 
     page_request_path = calls[0].page_dir / "page_request.json"
     page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    receipt = json.loads((project / "04_v6/images/page_001.json").read_text(encoding="utf-8"))
     jobs = json.loads((calls[0].run_dir / "page_jobs.json").read_text(encoding="utf-8"))
     assert page_request["numeric_authority"] == authority
+    assert page_request["page_plan"] == receipt["page_plan"]
     assert jobs["pages"][0]["dispatch"]["page_request_sha256"] == hashlib.sha256(
         page_request_path.read_bytes()
     ).hexdigest()
@@ -251,6 +256,21 @@ def test_interrupted_prepare_validates_accepted_request_before_resyncing_authori
     )
 
 
+def test_interrupted_prepare_rejects_stale_page_plan_before_resync(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    accepted_request = worker_module.build_reconstruction_request(project, page_number=1)
+    _run_dir, page_dir, _prompt_file = worker_module._prepare_run(project, accepted_request, 1)
+    page_request_path = page_dir / "page_request.json"
+    original_page_request = page_request_path.read_bytes()
+    changed_request = json.loads(json.dumps(accepted_request))
+    changed_request["page_plan"]["primary_relationship"]["edges"][0]["to_node"] = "source"
+
+    with pytest.raises(RuntimeError, match="accepted reconstruction request changed"):
+        worker_module._prepare_run(project, changed_request, 1)
+
+    assert page_request_path.read_bytes() == original_page_request
+
+
 def test_unreadable_text_uses_paddle_once_then_same_page_worker(tmp_path: Path):
     project = _project(tmp_path, 1)
     worker_calls: list = []
@@ -263,9 +283,7 @@ def test_unreadable_text_uses_paddle_once_then_same_page_worker(tmp_path: Path):
                 status="needs_paddle",
                 reason="accepted image text is too small to transcribe reliably",
             )
-        body = request.page_dir / "paddle-assisted.pptx"
-        _body(body, "Paddle assisted editable output")
-        return PageWorkerResult(status="completed", reconstructed_body=body)
+        return _successful_worker([], "Paddle assisted editable output")(request)
 
     def paddle(request):
         paddle_calls.append(request)

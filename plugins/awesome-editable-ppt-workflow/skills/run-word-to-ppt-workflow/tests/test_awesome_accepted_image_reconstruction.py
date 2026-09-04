@@ -15,30 +15,34 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from test_workflow_v6_reconstruction import _body, _project  # noqa: E402
+from test_workflow_v6_reconstruction import (  # noqa: E402
+    _body,
+    _project,
+    _write_signed_receipt,
+    finalize_reconstructed_page,
+)
 from workflow_v6_reconstruction import (  # noqa: E402
     assemble_v6_deck,
     build_reconstruction_request,
-    finalize_reconstructed_page,
 )
 from workflow_v6_state import load, save  # noqa: E402
 
 
-def _remove_pre_acceptance_materials(project: Path) -> None:
-    for name in ("00_source", "01_ui", "02_v6", "03_v6"):
+def _remove_transient_pre_acceptance_inputs(project: Path) -> None:
+    for name in ("00_source", "01_ui", "03_v6"):
         shutil.rmtree(project / name, ignore_errors=True)
 
 
-def test_reconstruction_request_builds_and_recovers_after_material_chain_is_removed(
+def test_reconstruction_request_builds_and_recovers_after_transient_inputs_are_removed(
     tmp_path: Path,
 ):
     project = _project(tmp_path, 1)
     receipt_path = project / "04_v6" / "images" / "page_001.json"
     receipt_digest = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    accepted_image = project / receipt["selected"]["path"]
+    accepted_image = project / receipt["candidate"]["path"]
     accepted_digest = hashlib.sha256(accepted_image.read_bytes()).hexdigest()
-    _remove_pre_acceptance_materials(project)
+    _remove_transient_pre_acceptance_inputs(project)
 
     first = build_reconstruction_request(project, page_number=1)
     recovered = build_reconstruction_request(project, page_number=1)
@@ -49,7 +53,7 @@ def test_reconstruction_request_builds_and_recovers_after_material_chain_is_remo
         "sha256": receipt_digest,
     }
     assert first["source_body"] == {
-        "path": receipt["selected"]["path"],
+        "path": receipt["candidate"]["path"],
         "sha256": accepted_digest,
         "pixels": {"width": 1904, "height": 896},
     }
@@ -65,10 +69,10 @@ def test_reconstruction_request_rejects_accepted_image_with_wrong_dimensions(tmp
     project = _project(tmp_path, 1)
     receipt_path = project / "04_v6" / "images" / "page_001.json"
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    accepted_image = project / receipt["selected"]["path"]
+    accepted_image = project / receipt["candidate"]["path"]
     Image.new("RGB", (1536, 1024), "white").save(accepted_image)
-    receipt["selected"]["sha256"] = hashlib.sha256(accepted_image.read_bytes()).hexdigest()
-    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    receipt["candidate"]["sha256"] = hashlib.sha256(accepted_image.read_bytes()).hexdigest()
+    _write_signed_receipt(project, 1, receipt)
 
     with pytest.raises(ValueError, match="1904x896"):
         build_reconstruction_request(project, page_number=1)
@@ -78,20 +82,9 @@ def test_reconstruction_request_accepts_current_candidate_acceptance_receipt(tmp
     project = _project(tmp_path, 1)
     receipt_path = project / "04_v6" / "images" / "page_001.json"
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    candidate = receipt.pop("selected")
-    candidate["request_identity"] = "b" * 64
-    receipt.update({
-        "schema_version": "awesome-complex-page-acceptance-v1",
-        "status": "accepted",
-        "candidate": candidate,
-    })
-    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    candidate = receipt["candidate"]
 
-    state = load(project)
-    selected = state["pages"][0]["selected_candidate"]
-    selected.pop("operation")
-    selected["sha256"] = candidate["sha256"]
-    save(project, state)
+    assert "selected" not in receipt
 
     request = build_reconstruction_request(project, page_number=1)
 

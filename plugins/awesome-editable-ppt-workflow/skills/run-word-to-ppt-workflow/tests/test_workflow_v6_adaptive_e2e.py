@@ -31,7 +31,7 @@ from workflow_v6_image import generate_page_body  # noqa: E402
 from workflow_v6_reconstruction import (  # noqa: E402
     assemble_v6_deck,
     build_reconstruction_request,
-    finalize_reconstructed_page,
+    finalize_reconstructed_page as _finalize_reconstructed_page,
 )
 from workflow_v6_source import initialize_v6_project  # noqa: E402
 from workflow_v6_state import load, save  # noqa: E402
@@ -45,6 +45,16 @@ from workflow_v6_pipeline import (  # noqa: E402
 from workflow_v6_special_pages import render_special_page  # noqa: E402
 from awesome_page_materials import publish_page_materials  # noqa: E402
 from fixed_region_contract import fixed_frame_execution  # noqa: E402
+
+
+def finalize_reconstructed_page(*args, **kwargs):
+    project = Path(args[0] if args else kwargs["project"])
+    page_number = kwargs["page_number"]
+    state = load(project)
+    state["pages"][page_number - 1]["selected_candidate"] = None
+    save(project, state)
+    (project / "04_v6" / "images" / f"page_{page_number:03d}.json").unlink(missing_ok=True)
+    return _finalize_reconstructed_page(*args, authority_mode="native_direct", **kwargs)
 
 
 def test_44_logical_markers_ignore_physical_pagination_and_keep_source_ids(tmp_path: Path) -> None:
