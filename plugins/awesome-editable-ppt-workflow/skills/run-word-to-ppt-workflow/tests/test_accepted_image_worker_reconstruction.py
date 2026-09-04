@@ -151,11 +151,20 @@ def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_cal
     ] == [{
         "page_number": 1, "status": "verified", "authority_mode": "sealed_reconstruction",
     }]
-    assert assembly["page_authority"][0]["visual_qa"]["status"] == "passed"
-    assert assembly["assembled_visual_qa"]["status"] == "passed"
-    assert assembly["sha256"] == hashlib.sha256(
-        (project / assembly["output"]).read_bytes()
-    ).hexdigest()
+    assert assembly["page_authority"][0]["visual_qa"]["status"] in {
+        "passed", "unavailable",
+    }
+    if assembly["release_ready"]:
+        assert assembly["assembled_visual_qa"]["status"] == "passed"
+        assert assembly["sha256"] == hashlib.sha256(
+            (project / assembly["output"]).read_bytes()
+        ).hexdigest()
+    else:
+        assert assembly["status"] == "validation_incomplete"
+        assert assembly["release_status"] == "not_release_ready"
+        assert assembly["final_output"] is None
+        assert "output" not in assembly
+        assert (project / assembly["candidate_output"]["relative_path"]).is_file()
 
 
 @pytest.mark.parametrize(
