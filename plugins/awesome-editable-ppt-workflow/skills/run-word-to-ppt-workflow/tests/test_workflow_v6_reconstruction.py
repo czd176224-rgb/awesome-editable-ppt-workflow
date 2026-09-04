@@ -153,6 +153,16 @@ def _write_signed_receipt(project: Path, page_number: int, value: dict | None = 
             "checkpoint_sha256": "7" * 64,
         },
     }
+    authority = receipt["provider_authority"]
+    for name, payload in (
+        ("trace", b'{"trace":"test"}\n'),
+        ("capability", b'{"capability":"test"}\n'),
+        ("journal", b'{"event":"test"}\n'),
+    ):
+        authority_path = project / authority[f"{name}_path"]
+        authority_path.parent.mkdir(parents=True, exist_ok=True)
+        authority_path.write_bytes(payload)
+        authority[f"{name}_sha256"] = hashlib.sha256(payload).hexdigest()
     unsigned = {key: item for key, item in receipt.items() if key not in {"key_id", "hmac_sha256"}}
     key_id, key = signing_key()
     unsigned["key_id"] = key_id

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import uuid
 import zipfile
@@ -36,6 +37,8 @@ from complex_page_experiment import (
     open_live_page_workspace,
     verify_signed_acceptance_receipt,
 )
+from complex_page_experiment.loop import _candidate_from_receipt
+from workflow_v6_special_pages import SPECIAL_ROLES
 
 
 _EDITPPT_CLI = (
@@ -633,6 +636,77 @@ def _inside(point: tuple[int, int], shape: object) -> bool:
     )
 
 
+def _confirmed_page_role(root: Path, page_number: int) -> str:
+    composition = load_composition_authority(root)
+    if composition is None:
+        return "content"
+    matches = [
+        page for page in composition["pages"]
+        if page.get("output_page_number") == page_number
+    ]
+    if len(matches) != 1:
+        raise ValueError("V6 confirmed page composition authority is invalid")
+    role = matches[0].get("page_role")
+    if not isinstance(role, str):
+        raise ValueError("V6 confirmed page role authority is invalid")
+    return role
+
+
+def _require_recorded_worker_output(
+    run_dir: Path,
+    job: Mapping[str, Any],
+    manifest_path: Path,
+    page_pptx: Path,
+) -> None:
+    result = job.get("result")
+    artifacts = result.get("artifacts") if isinstance(result, Mapping) else None
+    hashes = result.get("sha256") if isinstance(result, Mapping) else None
+    expected = {
+        "page_manifest": manifest_path.relative_to(run_dir).as_posix(),
+        "page_pptx": page_pptx.relative_to(run_dir).as_posix(),
+    }
+    if (
+        job.get("status") != "recorded"
+        or not isinstance(artifacts, Mapping)
+        or not isinstance(hashes, Mapping)
+        or any(artifacts.get(name) != path for name, path in expected.items())
+        or hashes.get("page_manifest") != _sha256(manifest_path)
+        or hashes.get("page_pptx") != _sha256(page_pptx)
+    ):
+        raise ValueError("V6 recorded worker artifact authority is invalid")
+
+    validator = _EDITPPT_CLI / "editppt" / "runtime" / "validate_pptx.py"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(Path(__file__).resolve().parent), env.get("PYTHONPATH"))
+        if value
+    )
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(validator),
+            str(page_pptx),
+            "--manifest",
+            str(manifest_path),
+        ],
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    try:
+        report = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        report = None
+    if completed.returncode != 0 or not isinstance(report, Mapping) or report.get("passed") is not True:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "page validation failed"
+        raise ValueError(f"V6 recorded worker PPTX failed deterministic validation: {detail}")
+
+
 def _require_final_authority(
     root: Path,
     page_number: int,
@@ -672,9 +746,9 @@ def _require_final_authority(
     if not receipt_path.is_file():
         raise ValueError("V6 sealed acceptance receipt is missing")
     receipt_bytes = secure_io.read_bytes(root, receipt_path.relative_to(root))
-    receipt = verify_signed_acceptance_receipt(
-        open_live_page_workspace(root, page_number), receipt_bytes,
-    )
+    workspace = open_live_page_workspace(root, page_number)
+    receipt = verify_signed_acceptance_receipt(workspace, receipt_bytes)
+    candidate = _candidate_from_receipt(workspace, receipt)
     if (
         accepted.get("sha256") != hashlib.sha256(receipt_bytes).hexdigest()
         or receipt.get("page_number") != page_number
@@ -708,27 +782,39 @@ def _require_final_authority(
         or page_request.get("accepted_source_body") != request.get("source_body")
     ):
         raise ValueError("V6 sealed reconstruction request relationship is invalid")
-    source_body = request.get("source_body")
+    candidate_bytes = secure_io.read_bytes(root, candidate.path.resolve().relative_to(root))
+    signed_source_body = {
+        "path": candidate.path.resolve().relative_to(root).as_posix(),
+        "sha256": hashlib.sha256(candidate_bytes).hexdigest(),
+        **normalized_raster_pixel_seal(candidate_bytes),
+    }
+    selected = _load_reconstruction_state(root)["pages"][page_number - 1].get(
+        "selected_candidate"
+    )
+    signed_candidate = receipt.get("candidate")
+    if (
+        not isinstance(selected, Mapping)
+        or not isinstance(signed_candidate, Mapping)
+        or any(selected.get(field) != signed_candidate.get(field) for field in ("path", "attempt", "operation"))
+        or request.get("source_body") != signed_source_body
+        or canonical_request.get("source_body") != signed_source_body
+        or page_request.get("accepted_source_body") != signed_source_body
+    ):
+        raise ValueError("V6 sealed accepted source does not match the signed candidate")
+    source_body = signed_source_body
     worker_source = page_request.get("worker_source_body")
     if not isinstance(source_body, Mapping) or not isinstance(worker_source, Mapping):
         raise ValueError("V6 sealed accepted-image authority is incomplete")
-    accepted_image = root / str(source_body.get("path", ""))
     worker_image = reconstructed_body.parent / "source.png"
-    if not accepted_image.is_file() or not worker_image.is_file():
+    if not worker_image.is_file():
         raise ValueError("V6 sealed accepted-image authority is missing")
-    accepted_bytes = secure_io.read_bytes(root, accepted_image.relative_to(root))
     worker_bytes = secure_io.read_bytes(root, worker_image.relative_to(root))
-    accepted_seal = {
-        "path": source_body.get("path"),
-        "sha256": hashlib.sha256(accepted_bytes).hexdigest(),
-        **normalized_raster_pixel_seal(accepted_bytes),
-    }
     current_worker_seal = {
         "path": worker_source.get("path"),
         "sha256": hashlib.sha256(worker_bytes).hexdigest(),
         **normalized_raster_pixel_seal(worker_bytes),
     }
-    if accepted_seal != source_body or current_worker_seal != worker_source:
+    if current_worker_seal != worker_source:
         raise ValueError("V6 sealed accepted-image digest changed")
     if worker_source.get("normalized_pixel_sha256") != source_body.get("normalized_pixel_sha256"):
         raise ValueError("V6 worker source pixels do not match the accepted image")
@@ -789,6 +875,9 @@ def _require_final_authority(
         violations = quantitative_chart_readback_violations(reconstructed_body, [manifest])
         if violations:
             raise ValueError("V6 sealed numeric authority failed readback: " + json.dumps(violations, ensure_ascii=False))
+    _require_recorded_worker_output(
+        reconstructed_body.parents[2], job, manifest_path, reconstructed_body,
+    )
     return {
         "accepted_receipt": dict(accepted),
         "accepted_source_body": dict(source_body),
@@ -809,10 +898,14 @@ def verify_completed_page_authority(project: Path, page_number: int) -> dict[str
         raise RuntimeError("completed reconstruction authority is incomplete")
     final = _read_json(final_path)
     artifact_version = final.get("artifact_version")
+    page_role = _confirmed_page_role(root, page_number)
+    expected_artifact_version = (
+        "special-page-v6" if page_role in SPECIAL_ROLES else "final-page-v6"
+    )
     expected_page = package_dir / "page.pptx"
     expected_relative = expected_page.relative_to(root).as_posix()
     if (
-        artifact_version not in {"final-page-v6", "special-page-v6"}
+        artifact_version != expected_artifact_version
         or final.get("page_pptx") != expected_relative
     ):
         raise RuntimeError("completed page receipt authority is invalid")
