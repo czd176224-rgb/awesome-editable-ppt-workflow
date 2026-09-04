@@ -138,8 +138,8 @@ def _color_constraints(
     if highlight is not None:
         positive = (
             "Treat the confirmed background color as the canvas base; "
-            f"use primary color {colors['primary_color']} for long body text, ordinary labels, and deep headings. "
-            f"Use secondary color {secondary} for the core exhibit, main path, and main data series. "
+            f"use primary color {colors['primary_color']} for long body text, ordinary labels, deep headings, and the core exhibit. "
+            f"Use secondary color {secondary} for the main path, main option, and main data series. "
             "Short structural labels on ordinary pages may use the secondary color sparingly, while "
             "Long body text remains primary or neutral. "
             f"Use highlight color {highlight} only for source-supported targets, differences, key numbers, and final nodes. "

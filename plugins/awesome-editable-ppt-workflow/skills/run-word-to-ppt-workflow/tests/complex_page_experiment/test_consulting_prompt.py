@@ -428,8 +428,8 @@ def test_optional_highlight_color_adds_consulting_color_roles_only_to_visual_sec
     ]
     visual = sections["Visual Style and Color"]
     assert prompt.count("#D3A62C") == 1
-    assert "primary color #161616 for long body text, ordinary labels, and deep headings" in visual
-    assert "secondary color #CD202A for the core exhibit, main path, and main data series" in visual
+    assert "primary color #161616 for long body text, ordinary labels, deep headings, and the core exhibit" in visual
+    assert "secondary color #CD202A for the main path, main option, and main data series" in visual
     assert "Short structural labels on ordinary pages may use the secondary color sparingly" in visual
     assert "highlight color #D3A62C only for source-supported targets, differences, key numbers, and final nodes" in visual
     assert "Use light or neutral treatments for supporting evidence" in visual
