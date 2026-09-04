@@ -871,13 +871,14 @@ def finalize_reconstructed_page(
         reconstructed_bytes = buffer.getvalue()
     else:
         reconstructed_bytes = reconstructed_body.read_bytes()
-    repair_target: Path | None = None
     staged_dir: Path | None = None
+    backup_dir: Path | None = None
     published_new = False
     if repairing_complete_page:
-        repair_target = output_dir / f".page-repair-{uuid.uuid4().hex[:8]}.pptx"
-        secure_io.atomic_write_bytes(root, repair_target.relative_to(root), reconstructed_bytes)
-        finalization_output = repair_target
+        staged_dir = output_dir.parent / f".{output_dir.name}.{uuid.uuid4().hex}.tmp"
+        staged_dir.mkdir(parents=True)
+        finalization_output = staged_dir / "page.pptx"
+        secure_io.atomic_write_bytes(root, finalization_output.relative_to(root), reconstructed_bytes)
     elif output.is_file():
         existing_bytes = secure_io.read_bytes(root, output.relative_to(root))
         if existing_bytes != reconstructed_bytes:
@@ -905,13 +906,6 @@ def finalize_reconstructed_page(
         )
         if fixed.get("passed") is not True:
             raise ValueError("V6 fixed-layer validation failed: " + "; ".join(fixed.get("issues", [])))
-        if repairing_complete_page:
-            secure_io.atomic_write_bytes(
-                root,
-                output.relative_to(root),
-                secure_io.read_bytes(root, finalization_output.relative_to(root)),
-                replace=True,
-            )
         report = {
             "artifact_version": "final-page-v6",
             "page_number": page_number,
@@ -924,9 +918,21 @@ def finalize_reconstructed_page(
             report.update(sealed_authority)
         if staged_dir is not None:
             _write_json(staged_dir / "page.json", report)
-            os.replace(staged_dir, output_dir)
+            if repairing_complete_page:
+                backup_dir = output_dir.parent / f".{output_dir.name}.{uuid.uuid4().hex}.bak"
+                os.replace(output_dir, backup_dir)
+                try:
+                    os.replace(staged_dir, output_dir)
+                except Exception:
+                    os.replace(backup_dir, output_dir)
+                    backup_dir = None
+                    raise
+                shutil.rmtree(backup_dir, ignore_errors=True)
+                backup_dir = None
+            else:
+                os.replace(staged_dir, output_dir)
+                published_new = True
             staged_dir = None
-            published_new = True
         else:
             _write_json(output_dir / "page.json", report)
         if not repairing_complete_page and commit_state:
@@ -937,10 +943,10 @@ def finalize_reconstructed_page(
             shutil.rmtree(output_dir)
         raise
     finally:
-        if repair_target is not None and repair_target.is_file():
-            repair_target.unlink()
         if staged_dir is not None and staged_dir.is_dir():
             shutil.rmtree(staged_dir)
+        if backup_dir is not None and backup_dir.is_dir() and not output_dir.exists():
+            os.replace(backup_dir, output_dir)
 
 
 def assemble_v6_deck(project: Path) -> dict[str, Any]:

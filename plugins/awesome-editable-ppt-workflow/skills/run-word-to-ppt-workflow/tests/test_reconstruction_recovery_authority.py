@@ -84,7 +84,10 @@ def test_explicit_native_direct_requires_no_candidate_or_receipt(tmp_path: Path)
     assert report["fixed_frame"]["passed"] is True
 
 
-@pytest.mark.parametrize("defect", ["stale_binding", "pixel_binding", "replaced", "deleted"])
+@pytest.mark.parametrize(
+    "defect",
+    ["stale_binding", "pixel_binding", "worker_pixel_binding", "replaced", "deleted"],
+)
 def test_completed_recovery_rejects_stale_replaced_or_deleted_acceptance_receipt(
     tmp_path: Path, defect: str,
 ) -> None:
@@ -106,11 +109,16 @@ def test_completed_recovery_rejects_stale_replaced_or_deleted_acceptance_receipt
         reconstruction = json.loads(reconstruction_path.read_text(encoding="utf-8"))
         reconstruction["accepted_receipt"]["sha256"] = "0" * 64
         reconstruction_path.write_text(json.dumps(reconstruction), encoding="utf-8")
-    else:
+    elif defect == "pixel_binding":
         reconstruction_path = project / "05_v6/reconstruction_runs/page_001/reconstruction.json"
         reconstruction = json.loads(reconstruction_path.read_text(encoding="utf-8"))
         reconstruction["accepted_source_body"]["normalized_pixel_sha256"] = "0" * 64
         reconstruction_path.write_text(json.dumps(reconstruction), encoding="utf-8")
+    else:
+        final_path = project / "06_v6/pages/page_001/page.json"
+        final = json.loads(final_path.read_text(encoding="utf-8"))
+        final["worker_source_body"]["normalized_pixel_sha256"] = "0" * 64
+        final_path.write_text(json.dumps(final), encoding="utf-8")
 
     outcome = _accepted_outcome(project) if receipt_path.is_file() else SimpleNamespace(
         status="accepted", accepted=SimpleNamespace(candidate=SimpleNamespace(path="unused")),

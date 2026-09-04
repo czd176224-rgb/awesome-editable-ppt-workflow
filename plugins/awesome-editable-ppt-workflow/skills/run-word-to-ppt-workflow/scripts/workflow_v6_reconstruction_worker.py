@@ -357,6 +357,7 @@ def _recovery(project: Path, page_number: int) -> dict[str, Any] | None:
         not isinstance(accepted_source, dict)
         or not isinstance(worker_source, dict)
         or final.get("accepted_source_body") != accepted_source
+        or final.get("worker_source_body") != worker_source
         or _source_seal(
             project,
             project / str(accepted_source.get("path", "")),
