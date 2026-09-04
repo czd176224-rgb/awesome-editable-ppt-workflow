@@ -73,7 +73,6 @@ def _top_level_prompt_sections(prompt: str) -> dict[str, str]:
         "WORD BODY AND MATERIAL AUTHORITY",
         "GENERAL VISUAL DIRECTOR PRINCIPLES",
         "CONFIRMED PRESENTATION TASKBOOK",
-        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING",
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
         "STRUCTURED OUTPUT REQUIREMENTS",
     )
@@ -402,7 +401,7 @@ def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
         assert not any(term in compiler_owned for term in ("红色", "scarlet", "crimson"))
 
 
-def test_compile_prompt_deduplicates_owned_color_contract_without_deleting_facts():
+def test_compile_prompt_subordinates_director_color_words_without_deleting_facts():
     view = _compiler_material_view(secondary_color="#1F5AA6")
     value = _director_value()
     positive, prohibited = _color_constraints(view)
@@ -416,9 +415,13 @@ def test_compile_prompt_deduplicates_owned_color_contract_without_deleting_facts
     value["page_plan"]["support_groups"][0]["label"] += " " + source_fact
 
     prompt = compile_consulting_six_part_prompt(value, view)
+    sections = _compiled_prompt_sections(prompt)
 
-    assert prompt.count(positive) == 1
-    assert prompt.count(prohibited) == 1
+    assert positive in sections["Consulting Information Architecture"]
+    assert prohibited in sections["Consulting Information Architecture"]
+    assert "has no execution authority" in sections["Consulting Information Architecture"]
+    assert positive in sections["Visual Style and Color"]
+    assert prohibited in sections["Visual Style and Color"]
     assert prompt.count(source_fact) == 1
 
 
@@ -811,7 +814,7 @@ def _result(value: dict[str, object]) -> CodexStructuredResult:
     )
 
 
-def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path: Path):
+def test_direct_page_sends_non_color_material_authority_and_ordered_image_mapping(tmp_path: Path):
     workspace = _workspace(tmp_path)
     view = _material_view(workspace)
     calls: list[dict[str, object]] = []
@@ -828,7 +831,16 @@ def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path
     assert call["role"] == "awesome-page-director"
     assert call["images"] == view.multimodal_images
     prompt = str(call["prompt"])
-    assert json.dumps(view.value, ensure_ascii=False, sort_keys=True) in prompt
+    director_view = copy.deepcopy(view.value)
+    for key in (
+        "background_color",
+        "primary_color",
+        "secondary_color",
+        "highlight_color",
+    ):
+        director_view["visual_contract"].pop(key, None)
+    assert json.dumps(director_view, ensure_ascii=False, sort_keys=True) in prompt
+    assert json.dumps(view.value, ensure_ascii=False, sort_keys=True) not in prompt
     assert "Authoritative body 1" in prompt
     assert "Keep this original direction exactly.  " in prompt
     assert "Image-1 = word-image:word-photo" in prompt
@@ -839,7 +851,6 @@ def test_direct_page_sends_complete_authority_and_ordered_image_mapping(tmp_path
         "WORD BODY AND MATERIAL AUTHORITY",
         "GENERAL VISUAL DIRECTOR PRINCIPLES",
         "CONFIRMED PRESENTATION TASKBOOK",
-        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING",
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
         "STRUCTURED OUTPUT REQUIREMENTS",
     )
@@ -897,7 +908,6 @@ def test_director_request_injects_one_reference_between_authority_and_materials_
         "WORD BODY AND MATERIAL AUTHORITY",
         "GENERAL VISUAL DIRECTOR PRINCIPLES",
         "CONFIRMED PRESENTATION TASKBOOK",
-        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING",
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
         "STRUCTURED OUTPUT REQUIREMENTS",
     ]
@@ -910,13 +920,29 @@ def test_director_request_injects_one_reference_between_authority_and_materials_
     assert "Word body text is the primary authority" in sections[
         "WORD BODY AND MATERIAL AUTHORITY"
     ]
-    assert "do not restate or override" in sections[
-        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING"
-    ]
     assert "COMPLETE PAGE MATERIAL VIEW" in sections[
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES"
     ]
     assert call["output_schema"] == json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
+
+
+def test_director_request_excludes_compiler_owned_color_authority(tmp_path: Path):
+    call, sections = _captured_director_request(tmp_path)
+    prompt = str(call["prompt"])
+
+    assert "COMPILER-OWNED COLOR CONTRACT FOR PLANNING" not in prompt
+    for compiler_owned_color in (
+        '"background_color"',
+        '"primary_color"',
+        '"secondary_color"',
+        '"highlight_color"',
+        "#F7F7F7",
+        "#161616",
+        "#CD202A",
+    ):
+        assert compiler_owned_color not in prompt
+    assert "GENERAL VISUAL DIRECTOR PRINCIPLES" in sections
+    assert "source-supported primary relationship" in prompt
 
 
 def test_director_request_defines_only_the_compact_page_plan(tmp_path: Path):
@@ -1501,15 +1527,15 @@ def test_visual_director_reference_matches_page_purpose_without_invented_takeawa
     )
 
 
-def test_visual_director_request_allows_secondary_fills_and_spatial_structure(tmp_path: Path):
+def test_visual_director_request_keeps_spatial_guidance_without_color_contract(tmp_path: Path):
     call, _ = _captured_director_request(tmp_path)
     prompt = str(call["prompt"])
 
-    assert "spatial structure remain primary" in prompt
-    assert "text-box fills, shapes, borders, nodes, and connectors" in prompt
-    assert "assign ordered color depth to merely parallel categories" in prompt
-    assert "never a large filled region or wide path" not in prompt
-    assert "at least two visibly distinct tones" in prompt
+    assert "source-bound nodes" in prompt
+    assert "concrete visual instruction" in prompt
+    assert "authority is limited to spatial composition" in prompt
+    assert "secondary-color-family" not in prompt
+    assert "assign ordered color depth" not in prompt
 
 
 @pytest.mark.parametrize(

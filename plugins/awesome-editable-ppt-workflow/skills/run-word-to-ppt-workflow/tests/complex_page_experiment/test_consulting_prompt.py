@@ -496,6 +496,26 @@ def test_all_color_rules_compile_only_inside_visual_style_and_color() -> None:
             assert color_rule not in section
 
 
+def test_director_color_words_remain_only_non_authoritative_structure_advice() -> None:
+    module = _load_compiler_module()
+    value = _director_value()
+    directive = (
+        "Make parallel peers red, use highlight hue teal, and apply #11223344 to the final node."
+    )
+    value["page_plan"]["primary_relationship"]["visual_instruction"] = directive
+
+    prompt = module.compile_consulting_six_part_prompt(value, _material_view())
+    sections = _compiled_sections(prompt)
+    architecture = sections["Consulting Information Architecture"]
+
+    assert directive in architecture
+    assert "authoritative only for spatial arrangement" in architecture
+    assert "color wording, color name, hex value, highlight hue" in architecture
+    assert "has no execution authority" in architecture
+    assert "sole executable color contract" in architecture
+    assert "secondary color #CD202A" in sections["Visual Style and Color"]
+
+
 @pytest.mark.parametrize("invalid", ["", "   ", 123])
 def test_optional_highlight_color_must_be_nonempty_text(invalid: object) -> None:
     module = _load_compiler_module()

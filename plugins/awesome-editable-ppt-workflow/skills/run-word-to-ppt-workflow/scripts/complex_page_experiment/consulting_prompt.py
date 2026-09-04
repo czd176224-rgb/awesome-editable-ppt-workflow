@@ -64,6 +64,14 @@ _ARCHITECTURE_CONSTRAINT = (
     "Use a source-supported conclusion where present, no invented takeaway."
 )
 
+_DIRECTOR_AUTHORITY_BOUNDARY = (
+    "The serialized director content below is authoritative only for spatial arrangement, "
+    "source-supported relationships, core exhibit selection, and reading path. Any color wording, "
+    "color name, hex value, highlight hue, palette, or color-role suggestion inside it has no "
+    "execution authority. The sole executable color contract is the compiler-owned contract in "
+    "Visual Style and Color."
+)
+
 _TYPOGRAPHY_CONSTRAINT = (
     "Render source-authorized Simplified Chinese accurately and legibly, with presentation-scale "
     "hierarchy for explanatory lead, analytical labels, evidence, interpretation, and takeaway. "
@@ -389,16 +397,19 @@ def compile_consulting_six_part_prompt(
     positive_color, prohibited_color = _color_constraints(
         material_view, font_accent_allowed=font_accent_allowed
     )
-    architecture = _page_plan_architecture(value, material_view).replace(
-        positive_color, ""
-    ).replace(prohibited_color, "")
+    architecture = _page_plan_architecture(value, material_view)
     sections = {
         "task_and_canvas": _TASK_CONSTRAINT,
         "core_proposition_and_content": _join(
             (VISIBLE_COPY_BOUNDARY, _complete_fact_content(material_view), FRONTEND_FIDELITY)
         ),
         "consulting_information_architecture": _join(
-            (architecture, _ARCHITECTURE_CONSTRAINT, LOCAL_VISUAL_SCOPE)
+            (
+                _DIRECTOR_AUTHORITY_BOUNDARY,
+                architecture,
+                _ARCHITECTURE_CONSTRAINT,
+                LOCAL_VISUAL_SCOPE,
+            )
         ),
         "visual_style_and_color": "",
         "text_and_typography": "",
