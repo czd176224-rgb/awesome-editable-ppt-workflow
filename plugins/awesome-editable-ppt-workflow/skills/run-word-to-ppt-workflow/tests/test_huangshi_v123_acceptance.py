@@ -41,7 +41,6 @@ from workflow_v6_reconstruction import (  # noqa: E402
 from workflow_v6_reconstruction_worker import PageWorkerResult, reconstruct_accepted_page  # noqa: E402
 from workflow_v6_state import create, load  # noqa: E402
 from test_quantitative_chart_v123_e2e import (  # noqa: E402
-    _add_relationship_arrowheads,
     _connector_endpoints,
 )
 from test_workflow_v6_reconstruction import _write_signed_receipt  # noqa: E402
@@ -130,8 +129,6 @@ def _production_worker(manifest: dict, calls: list[dict], director_prompt: str |
         )):
             completed = subprocess.run(command, capture_output=True, text=True, check=False)
             assert completed.returncode == 0, completed.stdout or completed.stderr
-            if index == 0:
-                _add_relationship_arrowheads(request.page_dir / "page.pptx")
         validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
         assert validation["passed"] is True
         calls.append({"page_request": page_request, "accepted_request": accepted_request, "manifest": json.loads(manifest_path.read_text(encoding="utf-8")), "prompt": request.prompt_file.read_text(encoding="utf-8")})

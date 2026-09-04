@@ -54,7 +54,7 @@ def _accepted_outcome(project: Path) -> SimpleNamespace:
     return SimpleNamespace(status="accepted", accepted=SimpleNamespace(candidate=candidate))
 
 
-def _production_worker(manifest_factory, calls: list[dict], post_build=None, post_validate=None):
+def _production_worker(manifest_factory, calls: list[dict], post_validate=None):
     def worker(request):
         page_request = json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
         accepted_request = json.loads((request.page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8"))
@@ -71,11 +71,9 @@ def _production_worker(manifest_factory, calls: list[dict], post_build=None, pos
             [sys.executable, str(RUNTIME / "main.py"), "page", "build", str(request.page_dir)],
             [sys.executable, str(RUNTIME / "main.py"), "page", "validate", str(request.page_dir), "--report", "validation.json"],
         )
-        for index, command in enumerate(commands):
+        for command in commands:
             completed = subprocess.run(command, capture_output=True, text=True, check=False)
             assert completed.returncode == 0, completed.stderr
-            if index == 0 and post_build is not None:
-                post_build(request.page_dir / "page.pptx")
         validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
         assert validation["passed"] is True
         if post_validate is not None:
@@ -128,16 +126,6 @@ def _with_relationship(manifest: dict, page_request: dict) -> dict:
             "stroke": "#6B7A90",
         })
     return manifest
-
-
-def _add_relationship_arrowheads(path: Path) -> None:
-    deck = Presentation(path)
-    for shape in deck.slides[0].shapes:
-        if shape.name.startswith("edge:"):
-            arrow = OxmlElement("a:tailEnd")
-            arrow.set("type", "triangle")
-            shape._element.spPr.get_or_add_ln().append(arrow)
-    deck.save(path)
 
 
 def _connector_endpoints(shape) -> tuple[int, int, int, int]:
@@ -410,7 +398,6 @@ def test_final_editable_relationship_geometry_and_numeric_authority_match_sealed
         page_worker=_production_worker(
             _relationship_manifest,
             calls,
-            post_build=_add_relationship_arrowheads,
         ),
     )
 
@@ -461,12 +448,12 @@ def test_finalization_rejects_broken_sealed_relationship(
             edge["box_px"] = [points[0], points[1], points[2] - points[0], 4]
         return manifest
 
-    with pytest.raises(ValueError, match="sealed relationship"):
+    with pytest.raises((AssertionError, ValueError), match="sealed (?:directed edge|relationship)"):
         reconstruct_accepted_page(
             SimpleNamespace(project_copy=project, page_number=1),
             _accepted_outcome(project),
             page_worker=_production_worker(
-                manifest_factory, [], post_build=_add_relationship_arrowheads,
+                manifest_factory, [],
             ),
         )
 
@@ -492,7 +479,6 @@ def test_finalization_rejects_missing_numeric_label_unit_or_period(
             page_worker=_production_worker(
                 _relationship_manifest,
                 [],
-                post_build=_add_relationship_arrowheads,
                 post_validate=remove_authority_text,
             ),
         )
@@ -520,7 +506,6 @@ def test_finalization_fails_closed_when_sealed_worker_artifact_is_missing(
             page_worker=_production_worker(
                 _relationship_manifest,
                 [],
-                post_build=_add_relationship_arrowheads,
                 post_validate=remove_authority,
             ),
         )
@@ -574,7 +559,7 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
             SimpleNamespace(project_copy=quantitative_project, page_number=1),
             _accepted_outcome(quantitative_project),
             page_worker=_production_worker(
-                _relationship_manifest, quantitative_calls, post_build=_add_relationship_arrowheads,
+                _relationship_manifest, quantitative_calls,
             ),
         )
         assert quantitative_calls[0]["request"]["numeric_authority"] == authority
@@ -607,7 +592,6 @@ def test_eight_relationships_use_real_selector_reconstruction_and_renderer_contr
                     _qualitative_manifest(r, f), page_request,
                 ),
                 qualitative_calls,
-                post_build=_add_relationship_arrowheads,
             ),
         )
         assert "numeric_authority" not in qualitative_calls[0]["request"]

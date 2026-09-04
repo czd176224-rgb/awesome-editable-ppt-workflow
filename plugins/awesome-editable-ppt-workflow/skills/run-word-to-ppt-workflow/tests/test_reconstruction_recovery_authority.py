@@ -16,7 +16,6 @@ if str(SCRIPTS) not in sys.path:
 from test_accepted_image_worker_reconstruction import _workspace  # noqa: E402
 from test_quantitative_chart_v123_e2e import (  # noqa: E402
     _accepted_outcome,
-    _add_relationship_arrowheads,
     _production_worker,
     _relationship_manifest,
     _relationship_project,
@@ -77,9 +76,7 @@ def test_completed_recovery_rejects_stale_replaced_or_deleted_acceptance_receipt
     reconstruct_accepted_page(
         _workspace(project),
         _accepted_outcome(project),
-        page_worker=_production_worker(
-            _relationship_manifest, [], post_build=_add_relationship_arrowheads,
-        ),
+        page_worker=_production_worker(_relationship_manifest, []),
     )
     receipt_path = project / "04_v6/images/page_001.json"
     if defect == "deleted":

@@ -33,7 +33,6 @@ from workflow_v6_reconstruction_worker import (  # noqa: E402
 )
 from workflow_v6_state import load, save  # noqa: E402
 from test_quantitative_chart_v123_e2e import (  # noqa: E402
-    _add_relationship_arrowheads,
     _production_worker,
     _qualitative_manifest,
     _relationship_manifest,
@@ -76,9 +75,7 @@ def _successful_worker(calls: list, text: str = "Editable worker output"):
         })
         return value
 
-    sealed_worker = _production_worker(
-        manifest, [], post_build=_add_relationship_arrowheads,
-    )
+    sealed_worker = _production_worker(manifest, [])
 
     def invoke(request):
         calls.append(request)
@@ -168,9 +165,7 @@ def test_page_worker_request_copies_numeric_authority_before_whole_request_hash(
 
     def worker(request):
         calls.append(request)
-        return _production_worker(
-            _relationship_manifest, [], post_build=_add_relationship_arrowheads,
-        )(request)
+        return _production_worker(_relationship_manifest, [])(request)
 
     reconstruct_accepted_page(
         _workspace(project), _accepted_outcome(project), page_worker=worker,

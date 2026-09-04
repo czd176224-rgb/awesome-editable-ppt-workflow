@@ -32,6 +32,7 @@ DEFAULT_TEXT_FIT_SAFETY = 0.9
 DEFAULT_TEXT_LINE_HEIGHT = 1.22
 DEFAULT_MIN_FONT_SIZE = 4.0
 SPECIAL_CHART_PRIMITIVES = {"cumulative_bridge", "time_interval", "variable_rectangle"}
+EDGE_BOUNDARY_INSET_PX = 1 / 1024
 
 
 def emu(value):
@@ -176,6 +177,68 @@ def normalize_position_item(manifest, item):
         item["cell_margin_x"] = mapped["width"]
         item["cell_margin_y"] = mapped["height"]
     return item
+
+
+def _snap_edge_endpoint(point, node, role):
+    box = node.get("box_px")
+    if not isinstance(box, (list, tuple)) or len(box) != 4:
+        raise ValueError(f"sealed directed edge {role} node is missing box_px")
+    try:
+        x, y = map(float, point)
+        left, top, width, height = map(float, box)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"sealed directed edge {role} geometry is invalid") from exc
+    right, bottom = left + width, top + height
+    if left <= x <= right and top <= y <= bottom:
+        return x, y
+    snapped_x = min(max(x, left), right)
+    snapped_y = min(max(y, top), bottom)
+    if math.hypot(x - snapped_x, y - snapped_y) > 1:
+        raise ValueError(f"sealed directed edge endpoint is outside {role} node by more than 1 source pixel")
+    if x < left:
+        snapped_x = left + min(EDGE_BOUNDARY_INSET_PX, width / 2)
+    elif x > right:
+        snapped_x = right - min(EDGE_BOUNDARY_INSET_PX, width / 2)
+    if y < top:
+        snapped_y = top + min(EDGE_BOUNDARY_INSET_PX, height / 2)
+    elif y > bottom:
+        snapped_y = bottom - min(EDGE_BOUNDARY_INSET_PX, height / 2)
+    return snapped_x, snapped_y
+
+
+def _normalize_directed_edges(manifest):
+    objects = [
+        item
+        for section in ("text_boxes", "tables", "images", "shapes", "charts")
+        for item in manifest.get(section, [])
+        if isinstance(item, dict) and isinstance(item.get("object_id"), str)
+    ]
+    by_id = {}
+    for item in objects:
+        by_id.setdefault(item["object_id"], []).append(item)
+    for edge in manifest.get("shapes", []):
+        edge_id = edge.get("object_id")
+        if not isinstance(edge_id, str) or not edge_id.startswith("edge:") or "->" not in edge_id:
+            continue
+        matches = []
+        for source_id in by_id:
+            prefix = f"edge:{source_id}->"
+            if edge_id.startswith(prefix):
+                target_id = edge_id[len(prefix):]
+                if target_id in by_id:
+                    matches.append((source_id, target_id))
+        if len(matches) != 1:
+            raise ValueError(f"sealed directed edge nodes are missing or ambiguous: {edge_id}")
+        source_id, target_id = matches[0]
+        if len(by_id[source_id]) != 1 or len(by_id[target_id]) != 1 or len(by_id[edge_id]) != 1:
+            raise ValueError(f"sealed directed edge nodes are missing or duplicated: {edge_id}")
+        points = edge.get("points_px")
+        if not isinstance(points, (list, tuple)) or len(points) != 4:
+            raise ValueError(f"sealed directed edge points_px is required: {edge_id}")
+        start = _snap_edge_endpoint(points[:2], by_id[source_id][0], "source")
+        end = _snap_edge_endpoint(points[2:], by_id[target_id][0], "target")
+        edge["points_px"] = [*start, *end]
+        edge["_sealed_directed_edge"] = True
 
 
 def iter_text_lines(item):
@@ -703,6 +766,7 @@ def normalize_manifest(manifest):
                         raise ValueError("editable-image-v3 table cell colors must be explicit RGB")
         # Force the V4 aspect gate even for manifests without positioned objects.
         effective_content_box_for_manifest(normalized)
+    _normalize_directed_edges(normalized)
     normalized["text_boxes"] = [
         fit_text_item(normalize_position_item(normalized, item), normalized) for item in normalized.get("text_boxes", [])
     ]
@@ -748,14 +812,16 @@ def shape_fill(fill):
     return f'<a:solidFill><a:srgbClr val="{hex_color(fill)}"/></a:solidFill>'
 
 
-def shape_line_xml(stroke, width, dash=None):
+def shape_line_xml(stroke, width, dash=None, tail_end=None):
     if not stroke or stroke == "none":
         return '<a:ln><a:noFill/></a:ln>'
     dash_xml = f'<a:prstDash val="{xml_text(dash)}"/>' if dash else ""
+    tail_end_xml = f'<a:tailEnd type="{xml_text(tail_end)}"/>' if tail_end else ""
     return (
         f'<a:ln w="{int(float(width or 1) * 12700)}">'
         f'<a:solidFill><a:srgbClr val="{hex_color(stroke)}"/></a:solidFill>'
         f"{dash_xml}"
+        f"{tail_end_xml}"
         "</a:ln>"
     )
 
@@ -867,7 +933,10 @@ def shape_xml(idx, item):
     flip_h = ' flipH="1"' if item.get("flip_h") else ""
     flip_v = ' flipV="1"' if item.get("flip_v") else ""
     fill = shape_fill(item.get("fill"))
-    line = shape_line_xml(item.get("stroke", "#000000"), stroke_width, item.get("dash"))
+    line = shape_line_xml(
+        item.get("stroke", "#000000"), stroke_width, item.get("dash"),
+        "triangle" if item.get("_sealed_directed_edge") else None,
+    )
     preset = item.get("preset")
     if item.get("polygon_px"):
         geometry = custom_polygon_geometry_xml(item)
