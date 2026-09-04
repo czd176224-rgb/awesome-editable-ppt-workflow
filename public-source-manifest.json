@@ -6,7 +6,7 @@
     "workflowContractVersion":  "awesome-word-ppt-workflow-v1",
     "promptContractVersion":  "consulting-page-director-v3-compact-page-plan",
     "pageImagePolicy":  "generate-without-refs-edit-with-confirmed-refs",
-    "indexTreeSha256":  "a8ac0143d0ae7efe6099b58674263730f257d82364f357dc510f96ee3a0e9045",
+    "indexTreeSha256":  "7c8554b0cd461fe485805e5e5cb36692f6bffc790e14c720525544b49da01a68",
     "files":  {
                   ".agents/plugins/marketplace.json":  "a9ff9f849c8d3f256967f637d91560a479d766ed8b141dbf7689cea0e2689328",
                   ".gitattributes":  "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
@@ -191,7 +191,7 @@
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_consulting_prompt.py":  "c01674597fc30485e1508cba461b172cd4270e12b07718918d1cd151c92bafde",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_director.py":  "2c7d4124d225e1c8bec140ac1a0d5d32799c2f7801fb85bfc42347bb12cf30a2",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_evidence.py":  "820cf6c88a66868ee8c8b00a0538f4b1dfd3358772b51affa073b5fbacfa804b",
-                  "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_four_page_round.py":  "aec1560b1ee57e6996bc5d743069a44aa4085fafda26b1cbb52df36229b8d574",
+                  "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_four_page_round.py":  "c5c7309cf441c0ef5297fd91c5bfbf096988dd9c865056548ef8ea9e77bd22c7",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_loop.py":  "353cdec3f0c69c6e348ca03979aa3b39cbc20e211225a3db5a7c25ce2231e9c2",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_materials.py":  "f0fda38c548c7ffc11a1311a2f48a35eeaaa262d2c6a3cadb7065f77f4a8f9a3",
                   "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_provider.py":  "df5c8ae07a96a07821b4dbb67412993d66169bad13a400aa5ec53e6dea697a9b",
