@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import hashlib
+import hmac
 import html
 import json
 import os
@@ -42,6 +43,7 @@ from workflow_v6_reconstruction import (  # noqa: E402
 )
 from workflow_v6_reconstruction_worker import PageWorkerResult, reconstruct_accepted_page  # noqa: E402
 from workflow_v6_state import create, load  # noqa: E402
+from provider_keyring import signing_key  # noqa: E402
 from test_quantitative_chart_v123_e2e import (  # noqa: E402
     _connector_endpoints,
 )
@@ -67,6 +69,47 @@ PAGE_CONTRACTS = {
     40: ("flow", ("0—30天", "31—60天", "61—90天", "12个月")),
     41: ("analytical_table", ("资本形成", "产业投资", "科技转化", "企业成长", "绿色转型", "退出循环")),
 }
+
+
+def _resign_real_receipt_without_mutating_provider_evidence(
+    source_project: Path,
+    project: Path,
+    page_number: int,
+    receipt: dict,
+) -> dict:
+    authority = receipt["provider_authority"]
+    test_payloads = {
+        b'{"trace":"test"}\n',
+        b'{"capability":"test"}\n',
+        b'{"event":"test"}\n',
+    }
+    for name in ("trace", "capability", "journal"):
+        relative = Path(authority[f"{name}_path"])
+        source_bytes = (source_project / relative).read_bytes()
+        copied_bytes = (project / relative).read_bytes()
+        expected_digest = authority[f"{name}_sha256"]
+        assert copied_bytes == source_bytes
+        assert copied_bytes not in test_payloads
+        assert hashlib.sha256(copied_bytes).hexdigest() == expected_digest
+    unsigned = {
+        key: item for key, item in receipt.items()
+        if key not in {"key_id", "hmac_sha256"}
+    }
+    key_id, key = signing_key()
+    unsigned["key_id"] = key_id
+    payload = json.dumps(
+        unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    signed = {
+        **unsigned,
+        "hmac_sha256": hmac.new(key, payload, hashlib.sha256).hexdigest(),
+    }
+    path = project / "04_v6" / "images" / f"page_{page_number:03d}.json"
+    path.write_text(
+        json.dumps(signed, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return signed
 
 STRUCTURAL_RELATIONSHIPS = {
     5: (
@@ -707,7 +750,9 @@ def test_huangshi_real_provider_selected_page_release_evidence() -> None:
         receipt["source_identity"] = workspace.source_snapshot_sha256
         receipt["source_snapshot_sha256"] = workspace.source_snapshot_sha256
         receipt["material_view_sha256"] = new_state["pages"][output_page - 1]["material_receipt"]["digest"]
-        signed = _write_signed_receipt(project, output_page, receipt)
+        signed = _resign_real_receipt_without_mutating_provider_evidence(
+            source_project, project, output_page, receipt,
+        )
         candidate = signed["candidate"]
         selected = {
             "path": candidate["path"],
