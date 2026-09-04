@@ -354,11 +354,8 @@ def _validate_director(
     current_prompt = compile_consulting_six_part_prompt(
         director.value, material_view, font_accent_allowed=font_accent_allowed
     )
-    legacy_prompt = compile_consulting_six_part_prompt(
-        director.value, material_view, font_accent_allowed=None
-    )
     if (
-        director.actual_prompt not in {current_prompt, legacy_prompt}
+        director.actual_prompt != current_prompt
         or selected != director.selected_reference_ids
         or director.value.get("quality") != director.quality
         or not isinstance(director.model, str)

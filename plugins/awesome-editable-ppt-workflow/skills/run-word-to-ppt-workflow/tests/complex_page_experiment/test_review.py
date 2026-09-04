@@ -9,13 +9,18 @@ import pytest
 from PIL import Image
 
 from codex_subscription_runtime import CodexStructuredResult
-from complex_page_experiment.director import DirectorArtifact, direct_page
+from complex_page_experiment.director import (
+    DirectorArtifact,
+    compile_consulting_six_part_prompt,
+    direct_page,
+)
 from complex_page_experiment.materials import CompletePageMaterialView
 from complex_page_experiment.provider import (
     build_experiment_image_request,
     run_provider_attempt,
 )
 from complex_page_experiment.review import (
+    _validate_director,
     preflight_candidate,
     review_candidate_once,
     validate_published_review_authority,
@@ -544,6 +549,21 @@ def test_review_rejects_forged_material_or_director_before_codex(review_fixture)
             invoke=invoke,
         )
     assert called is False
+
+
+def test_review_rejects_legacy_prompt_instead_of_current_project_prompt(review_fixture):
+    workspace, view, director, _candidate, _recorder = review_fixture
+    legacy_prompt = compile_consulting_six_part_prompt(
+        director.value, view, font_accent_allowed=None
+    )
+    assert legacy_prompt != director.actual_prompt
+
+    with pytest.raises(ValueError, match="director artifact identity"):
+        _validate_director(
+            workspace,
+            replace(director, actual_prompt=legacy_prompt),
+            view,
+        )
 
 
 def test_review_rechecks_candidate_and_prompt_bytes_after_preflight(review_fixture):

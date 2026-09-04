@@ -386,7 +386,7 @@ def test_compiler_emits_the_new_six_sections_and_seals_owned_constraints() -> No
     assert "do not calculate new metrics, infer missing values" in prompt
     assert "Let relationships shape space" in prompt
     assert "parallel peers keep the same tone" in prompt
-    assert "derived shades of secondary color #CD202A" in prompt
+    assert "secondary color #CD202A" in prompt
     assert "strong #A41A22" in prompt
     assert "support #E1797F" in prompt
     assert "soft #F0BCBF" in prompt
@@ -428,16 +428,92 @@ def test_optional_highlight_color_adds_consulting_color_roles_only_to_visual_sec
     ]
     visual = sections["Visual Style and Color"]
     assert prompt.count("#D3A62C") == 1
-    assert "primary color #161616 for long body text, ordinary labels, deep headings, and the core exhibit" in visual
+    assert "primary color #161616 for long body text, ordinary labels, deep headings, and neutral structure" in visual
     assert "secondary color #CD202A for the main path, main option, and main data series" in visual
-    assert "Short structural labels on ordinary pages may use the secondary color sparingly" in visual
     assert "highlight color #D3A62C only for source-supported targets, differences, key numbers, and final nodes" in visual
     assert "Use light or neutral treatments for supporting evidence" in visual
     assert "Risk red or positive green is allowed only when the source explicitly assigns that business meaning" in visual
-    assert "Long body text remains primary or neutral" in visual
+    assert "text objects may not use secondary-family or highlight-family colors" in visual
     for heading, section in sections.items():
         if heading != "Visual Style and Color":
             assert "#D3A62C" not in section
+
+
+@pytest.mark.parametrize("font_accent_allowed", [False, True])
+def test_highlight_color_keeps_shared_relationship_semantics(
+    font_accent_allowed: bool,
+) -> None:
+    module = _load_compiler_module()
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(),
+        _material_view(highlight_color="#D3A62C"),
+        font_accent_allowed=font_accent_allowed,
+    )
+    visual = _compiled_sections(prompt)["Visual Style and Color"]
+
+    assert "parallel peers and same-category items use the same tone" in visual.casefold()
+    assert "Ordered light-to-dark shades may communicate only a source-explicit process, hierarchy, stage, or visual focus" in visual
+    for invented_meaning in (
+        "order",
+        "magnitude",
+        "classification",
+        "risk",
+        "status",
+        "rating",
+        "positive/negative meaning",
+    ):
+        assert invented_meaning in visual
+
+
+def test_highlight_color_respects_emphasis_page_text_gate() -> None:
+    module = _load_compiler_module()
+    material_view = _material_view(highlight_color="#D3A62C")
+
+    emphasis = module.compile_consulting_six_part_prompt(
+        _director_value(), material_view, font_accent_allowed=True
+    )
+    ordinary = module.compile_consulting_six_part_prompt(
+        _director_value(), material_view, font_accent_allowed=False
+    )
+
+    assert "important short text may selectively use secondary or highlight" in emphasis
+    assert "long body text remains primary or neutral" in emphasis.casefold()
+    assert "text objects may not use secondary-family or highlight-family colors" in ordinary
+    assert "non-text structural marks" in ordinary
+
+
+def test_all_color_rules_compile_only_inside_visual_style_and_color() -> None:
+    module = _load_compiler_module()
+    prompt = module.compile_consulting_six_part_prompt(
+        _director_value(), _material_view(), font_accent_allowed=False
+    )
+    sections = _compiled_sections(prompt)
+    color_rule = "assign ordered color depth to merely parallel categories"
+
+    assert color_rule in sections["Visual Style and Color"]
+    for heading, section in sections.items():
+        if heading != "Visual Style and Color":
+            assert color_rule not in section
+
+
+def test_director_color_words_remain_only_non_authoritative_structure_advice() -> None:
+    module = _load_compiler_module()
+    value = _director_value()
+    directive = (
+        "Make parallel peers red, use highlight hue teal, and apply #11223344 to the final node."
+    )
+    value["page_plan"]["primary_relationship"]["visual_instruction"] = directive
+
+    prompt = module.compile_consulting_six_part_prompt(value, _material_view())
+    sections = _compiled_sections(prompt)
+    architecture = sections["Consulting Information Architecture"]
+
+    assert directive in architecture
+    assert "authoritative only for spatial arrangement" in architecture
+    assert "color wording, color name, hex value, highlight hue" in architecture
+    assert "has no execution authority" in architecture
+    assert "sole executable color contract" in architecture
+    assert "secondary color #CD202A" in sections["Visual Style and Color"]
 
 
 @pytest.mark.parametrize("invalid", ["", "   ", 123])
@@ -937,7 +1013,7 @@ def test_compiler_bans_accent_family_text_only_on_non_emphasis_pages() -> None:
     )
 
     assert "This is not a user-confirmed emphasis page" in prompt
-    assert "Do not use any secondary-color-family shade for any text" in prompt
+    assert "text objects may not use secondary-family or highlight-family colors" in prompt
     assert "text-box fills, shapes, borders, nodes, and connectors" in prompt
 
 
@@ -947,7 +1023,7 @@ def test_compiler_legacy_mode_omits_only_the_new_page_gate() -> None:
         _director_value(), _material_view(), font_accent_allowed=None
     )
     assert "user-confirmed emphasis page" not in prompt
-    assert "derived shades of secondary color #CD202A" in prompt
+    assert "secondary color #CD202A" in prompt
 
 
 def test_compiler_rejects_deleted_correction_v2_authority() -> None:

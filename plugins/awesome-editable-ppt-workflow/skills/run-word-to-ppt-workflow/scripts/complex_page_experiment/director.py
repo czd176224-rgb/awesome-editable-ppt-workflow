@@ -21,7 +21,7 @@ from provider_keyring import signing_key, verification_key
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 from director_taskbook import confirmed_taskbook_prompt, project_emphasis_pages
 
-from .consulting_prompt import _color_constraints, compile_consulting_six_part_prompt
+from .consulting_prompt import compile_consulting_six_part_prompt
 
 from .materials import (
     CompletePageMaterialView,
@@ -409,7 +409,19 @@ def direct_page(
     )
     visual_reference = _visual_director_reference()
     taskbook = confirmed_taskbook_prompt(workspace.project_copy)
-    color_contract = " ".join(_color_constraints(material_view, font_accent_allowed=font_accent_allowed))
+    director_material_view = dict(material_view.value)
+    visual_contract = director_material_view.get("visual_contract")
+    if isinstance(visual_contract, Mapping):
+        director_material_view["visual_contract"] = {
+            key: value
+            for key, value in visual_contract.items()
+            if key not in {
+                "background_color",
+                "primary_color",
+                "secondary_color",
+                "highlight_color",
+            }
+        }
     prompt = (
         "WORD BODY AND MATERIAL AUTHORITY\n"
         "Word body text is the primary authority for page facts, theme, and narrative. Comments "
@@ -419,15 +431,14 @@ def direct_page(
         f"{visual_reference}\n\n"
         "CONFIRMED PRESENTATION TASKBOOK\n"
         f"{taskbook}\n\n"
-        "COMPILER-OWNED COLOR CONTRACT FOR PLANNING\n"
-        f"{color_contract}\n"
-        "Use these existing roles only to plan visual hierarchy; do not restate or override them.\n\n"
         "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES\n"
         "IMAGE INPUT MAP (input order is authoritative)\n"
         f"{_mapping_text(image_ids)}\n\n"
         "COMPLETE PAGE MATERIAL VIEW\n"
-        f"{_canonical_text(material_view.value)}\n\n"
+        f"{_canonical_text(director_material_view)}\n\n"
         "STRUCTURED OUTPUT REQUIREMENTS\n"
+        "Your authority is limited to spatial composition, source-supported relationships, core "
+        "exhibit choice, and reading path; do not make color or palette decisions. "
         "Return only selected references and these compact v3 page-plan fields: page_purpose, "
         "primary_relationship, core_exhibit, support_groups, reading_path, and local_visuals. Allocate every Word "
         "source_block_id exactly once across the core exhibit and support groups; bind every other "
