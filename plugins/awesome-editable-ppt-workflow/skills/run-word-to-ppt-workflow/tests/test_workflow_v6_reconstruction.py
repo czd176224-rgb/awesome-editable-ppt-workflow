@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import hashlib
 import hmac
+import os
 import sys
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.chart.data import ChartData
 from pptx.dml.color import RGBColor
@@ -23,11 +24,14 @@ if str(SCRIPTS) not in sys.path:
 
 from workflow_v6_contract import canonical_sha256, new_page, new_project  # noqa: E402
 from workflow_v6_reconstruction import (  # noqa: E402
+    _compare_body_images,
+    _render_reconstructed_body,
     assemble_v6_deck,
     build_reconstruction_request,
     finalize_reconstructed_page as _finalize_reconstructed_page,
 )
 import workflow_v6_reconstruction as reconstruction_module  # noqa: E402
+from editppt.runtime.fixed_region_runtime import CONTENT_BOX, SLIDE  # noqa: E402
 from workflow_v6_state import create, load, save  # noqa: E402
 from awesome_page_materials import publish_page_materials  # noqa: E402
 from director_taskbook import project_emphasis_pages, taskbook_digest  # noqa: E402
@@ -46,6 +50,25 @@ def finalize_reconstructed_page(*args, **kwargs):
     save(project, state)
     (project / "04_v6" / "images" / f"page_{page_number:03d}.json").unlink(missing_ok=True)
     return _finalize_reconstructed_page(*args, authority_mode="native_direct", **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_assembled_deck_renderer(monkeypatch):
+    def render(_pptx: Path, expected_pages: int, render_dir: Path) -> dict:
+        render_dir.mkdir(parents=True, exist_ok=True)
+        for page_number in range(1, expected_pages + 1):
+            Image.new("RGB", (1904, 1071), "white").save(
+                render_dir / f"page-{page_number:03d}.png"
+            )
+        return {
+            "available": True,
+            "status": "passed",
+            "detail": f"test renderer produced {expected_pages} slides",
+            "slides": expected_pages,
+            "rendered_slides": expected_pages,
+        }
+
+    monkeypatch.setattr(reconstruction_module, "_render_powerpoint_deck", render)
 
 
 def _page_plan(page_number: int) -> dict[str, object]:
@@ -219,6 +242,26 @@ def _body(path: Path, text: str, *, color: str | None = None, bold: bool = False
     deck.save(path)
 
 
+def _empty_manifest() -> dict:
+    return {
+        "workflow_contract_version": "fixed-canvas-cm-v2",
+        "reconstruction_contract_version": "editable-image-v3",
+        "slide": dict(SLIDE),
+        "content_box": dict(CONTENT_BOX),
+        "source": {"width_px": 1904, "height_px": 896},
+        "text_inventory": [],
+        "visual_inventory": [],
+        "background_strategy": "native white body background",
+        "quality_checks": {
+            "font_size_calibrated": True,
+            "visual_inventory_matched": True,
+            "background_strategy_checked": True,
+            "shape_corner_geometry_checked": True,
+        },
+        "text_boxes": [], "tables": [], "shapes": [], "images": [], "charts": [],
+    }
+
+
 def _project(tmp_path: Path, page_count: int = 2) -> Path:
     root = tmp_path / "project"
     (root / "00_source").mkdir(parents=True)
@@ -279,13 +322,13 @@ def _project(tmp_path: Path, page_count: int = 2) -> Path:
     return root
 
 
-def test_v6_reconstruction_request_has_no_exact_material_or_post_visual_qa(tmp_path: Path):
+def test_v6_reconstruction_request_has_no_exact_material_and_requires_post_visual_qa(tmp_path: Path):
     project = _project(tmp_path, 1)
     receipt = json.loads((project / "04_v6/images/page_001.json").read_text(encoding="utf-8"))
     request = build_reconstruction_request(project, page_number=1)
     assert request["workflow_contract_version"] == "awesome-word-ppt-workflow-v1"
     assert request["requirements"]["exact_reference_material_custody"] is False
-    assert request["requirements"]["post_reconstruction_visual_qa"] is False
+    assert request["requirements"]["post_reconstruction_visual_qa"] is True
     assert request["sealed_image_edits"] == []
     assert request["sealed_text_repairs"] == []
     assert request["page_plan"] == receipt["page_plan"]
@@ -441,16 +484,346 @@ def test_finalize_and_assemble_add_fixed_layers_without_office_or_visual_qa(tmp_
         body = tmp_path / f"body-{page}.pptx"
         _body(body, f"可编辑正文{page}")
         report = finalize_reconstructed_page(project, page_number=page, reconstructed_body=body)
-        assert report["post_reconstruction_visual_qa"] is False
+        assert report["post_reconstruction_visual_qa"]["status"] == "skipped"
         assert report["fixed_frame"]["passed"] is True
 
     report = assemble_v6_deck(project)
     output = project / report["output"]
     deck = Presentation(output)
     assert len(deck.slides) == 2
-    assert report["office_render_required"] is False
-    assert report["post_reconstruction_visual_qa"] is False
+    assert report["post_reconstruction_visual_qa"]["status"] == "skipped"
+    assert report["release_ready"] is True
+    assert report["release_status"] == "release_ready"
+    assert report["openxml_validation"]["status"] == "passed"
+    assert report["final_output"] == {
+        "path": str(output),
+        "relative_path": report["output"],
+        "sha256": report["sha256"],
+    }
+    assert {report["enhanced_validation"][name]["status"] for name in ("officecli", "powerpoint")} <= {
+        "passed", "failed", "skipped",
+    }
     assert all(page["state"] == "page_complete" for page in load(project)["pages"])
+
+
+def test_post_reconstruction_visual_comparison_rejects_severe_body_loss(tmp_path: Path):
+    source = Image.new("RGB", (1904, 896), "white")
+    for left in (80, 520, 960, 1400):
+        for top in (80, 330, 580):
+            for x in range(left, left + 320):
+                for y in range(top, top + 170):
+                    source.putpixel((x, y), (23, 54, 93))
+    source_path = tmp_path / "source.png"
+    preview_path = tmp_path / "preview.png"
+    source.save(source_path)
+    Image.new("RGB", (1200, 675), "white").save(preview_path)
+
+    report = _compare_body_images(source_path, preview_path)
+
+    assert report["passed"] is False
+    assert report["reason"] == "severe_body_content_loss"
+    assert report["metrics"]["foreground_retention"] < report["thresholds"]["minimum_foreground_retention"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="actual PowerPoint render requires Windows")
+def test_actual_pptx_render_detects_removed_body_content(tmp_path: Path):
+    populated = tmp_path / "populated.pptx"
+    partial = tmp_path / "partial.pptx"
+    for path, boxes in ((populated, 12), (partial, 1)):
+        deck = Presentation()
+        deck.slide_width = Cm(25.4)
+        deck.slide_height = Cm(14.288)
+        slide = deck.slides.add_slide(deck.slide_layouts[6])
+        for index in range(boxes):
+            row, column = divmod(index, 4)
+            shape = slide.shapes.add_shape(
+                1, Cm(1.2 + column * 5.8), Cm(2.8 + row * 3.2), Cm(4.8), Cm(2.2),
+            )
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = RGBColor.from_string("17365D")
+        deck.save(path)
+    source = tmp_path / "source.png"
+    missing = tmp_path / "missing.png"
+
+    populated_render = _render_reconstructed_body(populated, source)
+    if populated_render["status"] == "unavailable":
+        pytest.skip(populated_render["detail"])
+    assert populated_render["status"] == "passed"
+    missing_render = _render_reconstructed_body(partial, missing)
+    assert missing_render["status"] == "passed"
+
+    comparison = _compare_body_images(source, missing)
+    assert comparison["passed"] is False
+    assert comparison["reason"] == "severe_body_content_loss"
+
+
+def test_sealed_page_visual_failure_blocks_publication(tmp_path: Path, monkeypatch):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "sealed" / "page.pptx"
+    body.parent.mkdir()
+    _body(body, "sealed body")
+    (body.parent / "manifest.json").write_text("{}", encoding="utf-8")
+    source = project / "04_v6/images/page_001.png"
+    monkeypatch.setattr(
+        reconstruction_module,
+        "_require_final_authority",
+        lambda *_args, **_kwargs: {
+            "accepted_receipt": {},
+            "accepted_source_body": {"path": source.relative_to(project).as_posix(), "sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
+            "worker_source_body": {},
+        },
+    )
+    monkeypatch.setattr(
+        reconstruction_module,
+        "_run_post_reconstruction_visual_qa",
+        lambda *_args, **_kwargs: {"status": "failed", "passed": False, "reason": "severe_body_content_loss"},
+    )
+
+    with pytest.raises(ValueError, match="post-reconstruction visual QA failed"):
+        _finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+
+    assert not (project / "06_v6/pages/page_001/page.pptx").exists()
+
+
+def test_sealed_page_without_actual_renderer_remains_assembly_ready(tmp_path: Path, monkeypatch):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "sealed" / "page.pptx"
+    body.parent.mkdir()
+    _body(body, "sealed body")
+    source = project / "04_v6/images/page_001.png"
+    monkeypatch.setattr(
+        reconstruction_module,
+        "_require_final_authority",
+        lambda *_args, **_kwargs: {
+            "accepted_receipt": {},
+            "accepted_source_body": {"path": source.relative_to(project).as_posix(), "sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
+            "worker_source_body": {},
+        },
+    )
+    monkeypatch.setattr(
+        reconstruction_module,
+        "_run_post_reconstruction_visual_qa",
+        lambda *_args, **_kwargs: {
+            "status": "unavailable", "passed": False,
+            "reason": "actual_pptx_render_unavailable",
+        },
+    )
+
+    report = _finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+
+    assert report["artifact_version"] == "final-page-v6"
+    assert report["post_reconstruction_visual_qa"]["status"] == "unavailable"
+    assert (project / report["page_pptx"]).is_file()
+    assert load(project)["pages"][0]["state"] == "page_complete"
+    manifest = project / "05_v6/reconstruction_runs/page_001/pages/page_001/manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps(_empty_manifest()), encoding="utf-8")
+    monkeypatch.setattr(
+        reconstruction_module,
+        "verify_completed_page_authority",
+        lambda *_args, **_kwargs: {
+            "status": "verified",
+            "authority_mode": "sealed_reconstruction",
+            "visual_qa": report["post_reconstruction_visual_qa"],
+        },
+    )
+    monkeypatch.setattr(
+        reconstruction_module,
+        "_render_powerpoint_deck",
+        lambda *_args, **_kwargs: {
+            "available": False, "status": "skipped", "detail": "not installed",
+        },
+    )
+
+    assembly = assemble_v6_deck(project)
+
+    assert assembly["status"] == "validation_incomplete"
+    assert assembly["release_ready"] is False
+    assert (project / assembly["candidate_output"]["relative_path"]).is_file()
+
+
+def test_final_openxml_failure_preserves_previous_deck(tmp_path: Path, monkeypatch):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "body.pptx"
+    _body(body, "editable body")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+    first = assemble_v6_deck(project)
+    output = project / first["output"]
+    old_bytes = output.read_bytes()
+    assembly_report = project / first["assembly_report"]
+    old_report = assembly_report.read_bytes()
+    monkeypatch.setattr(
+        reconstruction_module,
+        "_validate_final_openxml",
+        lambda *_args, **_kwargs: {"status": "failed", "passed": False, "reason": "broken package"},
+    )
+
+    with pytest.raises(ValueError, match="OpenXML validation failed"):
+        assemble_v6_deck(project)
+
+    assert output.read_bytes() == old_bytes
+    assert assembly_report.read_bytes() == old_report
+    assert not list(project.glob(".08_final.*.tmp"))
+
+
+def test_available_enhanced_validation_failure_preserves_previous_deck(tmp_path: Path, monkeypatch):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "body.pptx"
+    _body(body, "editable body")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+    monkeypatch.setattr(
+        reconstruction_module, "_officecli_validation",
+        lambda *_args, **_kwargs: {"available": False, "status": "skipped", "detail": "not installed"},
+    )
+    calls = 0
+
+    def powerpoint_result(_pptx, expected_pages, render_dir):
+        nonlocal calls
+        calls += 1
+        render_dir.mkdir(parents=True, exist_ok=True)
+        for page_number in range(1, expected_pages + 1):
+            Image.new("RGB", (1904, 1071), "white").save(
+                render_dir / f"page-{page_number:03d}.png"
+            )
+        return {
+            "available": True,
+            "status": "passed" if calls == 1 else "failed",
+            "detail": "simulated render validation",
+        }
+
+    monkeypatch.setattr(reconstruction_module, "_render_powerpoint_deck", powerpoint_result)
+    first = assemble_v6_deck(project)
+    output = project / first["output"]
+    old_bytes = output.read_bytes()
+    assembly_report = project / first["assembly_report"]
+    old_report = assembly_report.read_bytes()
+
+    with pytest.raises(ValueError, match="enhanced final validation failed"):
+        assemble_v6_deck(project)
+
+    assert output.read_bytes() == old_bytes
+    assert assembly_report.read_bytes() == old_report
+    assert not list(project.glob(".08_final.*.tmp"))
+
+
+def test_unavailable_powerpoint_creates_candidate_without_replacing_final(tmp_path: Path, monkeypatch):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "body.pptx"
+    _body(body, "editable body")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+    monkeypatch.setattr(
+        reconstruction_module, "_officecli_validation",
+        lambda *_args, **_kwargs: {"available": False, "status": "skipped", "detail": "not installed"},
+    )
+    calls = 0
+
+    def powerpoint_result(_pptx, expected_pages, render_dir):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            render_dir.mkdir(parents=True, exist_ok=True)
+            for page_number in range(1, expected_pages + 1):
+                Image.new("RGB", (1904, 1071), "white").save(
+                    render_dir / f"page-{page_number:03d}.png"
+                )
+        return (
+            {"available": True, "status": "passed", "detail": "rendered"}
+            if calls == 1 else
+            {"available": False, "status": "skipped", "detail": "not installed"}
+        )
+
+    monkeypatch.setattr(reconstruction_module, "_render_powerpoint_deck", powerpoint_result)
+    first = assemble_v6_deck(project)
+    final = project / first["output"]
+    old_final = final.read_bytes()
+    assembly_report = project / first["assembly_report"]
+    old_report = assembly_report.read_bytes()
+
+    candidate = assemble_v6_deck(project)
+
+    assert candidate["status"] == "validation_incomplete"
+    assert candidate["release_ready"] is False
+    assert candidate["final_output"] is None
+    assert (project / candidate["candidate_output"]["relative_path"]).is_file()
+    assert final.read_bytes() == old_final
+    assert assembly_report.read_bytes() == old_report
+
+
+def test_assembled_visual_qa_rejects_one_localized_body_block(
+    tmp_path: Path, monkeypatch,
+):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "body.pptx"
+    _body(body, "editable body")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+    source = project / "04_v6/images/page_001.png"
+    source_image = Image.new("RGB", (1904, 896), "white")
+    source_draw = ImageDraw.Draw(source_image)
+    for row in range(4):
+        for column in range(8):
+            left = column * 230 + 20
+            top = row * 210 + 20
+            source_draw.rectangle((left, top, left + 150, top + 95), fill="#17365D")
+    source_image.save(source)
+    page_report_path = project / "06_v6/pages/page_001/page.json"
+    page_report = json.loads(page_report_path.read_text(encoding="utf-8"))
+    page_report["accepted_source_body"] = {"path": source.relative_to(project).as_posix()}
+    page_report_path.write_text(json.dumps(page_report), encoding="utf-8")
+    manifest = project / "05_v6/reconstruction_runs/page_001/pages/page_001/manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps(_empty_manifest()), encoding="utf-8")
+    monkeypatch.setattr(
+        reconstruction_module,
+        "verify_completed_page_authority",
+        lambda *_args, **_kwargs: {
+            "status": "verified",
+            "authority_mode": "sealed_reconstruction",
+            "visual_qa": {"status": "unavailable", "passed": False},
+        },
+    )
+
+    def localized_render(_pptx: Path, expected_pages: int, render_dir: Path) -> dict:
+        assert expected_pages == 1
+        render_dir.mkdir(parents=True)
+        image = Image.new("RGB", (1904, 1071), "white")
+        ImageDraw.Draw(image).rectangle((180, 240, 380, 390), fill="#17365D")
+        image.save(render_dir / "page-001.png")
+        return {"available": True, "status": "passed", "detail": "rendered"}
+
+    monkeypatch.setattr(reconstruction_module, "_render_powerpoint_deck", localized_render)
+
+    with pytest.raises(ValueError, match="assembled deck visual QA failed"):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
+    assert not list(project.glob(".08_final.*.tmp"))
+
+
+def test_assembly_report_write_failure_preserves_previous_final_package(
+    tmp_path: Path, monkeypatch,
+):
+    project = _project(tmp_path, 1)
+    body = tmp_path / "body.pptx"
+    _body(body, "editable body")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=body)
+    first = assemble_v6_deck(project)
+    output = project / first["output"]
+    assembly_report = project / first["assembly_report"]
+    old_deck = output.read_bytes()
+    old_report = assembly_report.read_bytes()
+
+    monkeypatch.setattr(
+        reconstruction_module,
+        "_write_staged_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("report write failed")),
+    )
+
+    with pytest.raises(OSError, match="report write failed"):
+        assemble_v6_deck(project)
+
+    assert output.read_bytes() == old_deck
+    assert assembly_report.read_bytes() == old_report
+    assert not list(project.glob(".08_final.*.tmp"))
 
 
 def test_assembly_allows_manifestless_genuine_native_direct_page(tmp_path: Path):

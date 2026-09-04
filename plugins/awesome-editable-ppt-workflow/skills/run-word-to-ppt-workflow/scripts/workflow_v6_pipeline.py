@@ -127,7 +127,9 @@ def _assembly_summary(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {"status": "failed", "reason": "assembly returned no status"}
     result = dict(value)
-    if result.get("status") not in {"complete", "deferred", "failed"}:
+    if result.get("status") not in {
+        "complete", "deferred", "failed", "validation_incomplete",
+    }:
         return {"status": "failed", "reason": "assembly returned an invalid status"}
     return result
 

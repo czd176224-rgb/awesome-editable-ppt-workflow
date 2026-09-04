@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
+import html
 import json
 import os
 import shutil
@@ -110,13 +112,22 @@ def _accepted_outcome(project: Path, page_number: int) -> SimpleNamespace:
     return SimpleNamespace(status="accepted", accepted=SimpleNamespace(candidate=candidate))
 
 
-def _production_worker(manifest: dict, calls: list[dict], director_prompt: str | None = None):
+def _production_worker(
+    manifest: dict,
+    calls: list[dict],
+    director_prompt: str | None = None,
+    source_page_dir: Path | None = None,
+):
     def worker(request):
         page_request = json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
         accepted_request = json.loads((request.page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8"))
         assert page_request == json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
         assert page_request.get("numeric_authority") == accepted_request.get("numeric_authority")
         manifest_path = request.page_dir / "manifest.json"
+        if source_page_dir is not None and (source_page_dir / "assets").is_dir():
+            shutil.copytree(
+                source_page_dir / "assets", request.page_dir / "assets", dirs_exist_ok=True,
+            )
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         dispatch = subprocess.run(
             [sys.executable, str(RUNTIME / "record_page_dispatch.py"), str(request.run_dir), "--page", "page_001", "--agent-id", "deterministic-worker", "--prompt-file", str(request.prompt_file)],
@@ -131,6 +142,21 @@ def _production_worker(manifest: dict, calls: list[dict], director_prompt: str |
             assert completed.returncode == 0, completed.stdout or completed.stderr
         validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
         assert validation["passed"] is True
+        Image.new("RGB", (8, 8), "white").save(
+            request.page_dir / "split_assets_contact.png"
+        )
+        (request.page_dir / "page_result.json").write_text("{}\n", encoding="utf-8")
+        recorded = subprocess.run(
+            [
+                sys.executable,
+                str(RUNTIME / "record_manifest_page_result.py"),
+                str(request.run_dir),
+                "--page", "page_001",
+                "--agent-id", "deterministic-worker",
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        assert recorded.returncode == 0, recorded.stdout or recorded.stderr
         calls.append({"page_request": page_request, "accepted_request": accepted_request, "manifest": json.loads(manifest_path.read_text(encoding="utf-8")), "prompt": request.prompt_file.read_text(encoding="utf-8")})
         return PageWorkerResult(status="completed", reconstructed_body=request.page_dir / "page.pptx")
 
@@ -625,3 +651,151 @@ def test_huangshi_optional_assembled_powerpoint_preview(tmp_path: Path) -> None:
         assert _preview_has_ink(preview, by_name["fixed-frame-page-number"], deck.slide_width, deck.slide_height)
         label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-source-label-")]
         assert all(_preview_has_ink(preview, shape, deck.slide_width, deck.slide_height) for shape in label_shapes)
+
+
+def test_huangshi_real_provider_selected_page_release_evidence() -> None:
+    """Rebuild and publish through the formal route with real selected Image2 bodies."""
+    source_value = os.getenv("EDITPPT_HUANGSHI_REAL_PROJECT")
+    evidence_value = os.getenv("EDITPPT_HUANGSHI_EVIDENCE_DIR")
+    if not source_value or not evidence_value:
+        pytest.skip("set the real Huangshi project and a new evidence directory")
+    source_project = Path(source_value).resolve()
+    evidence_root = Path(evidence_value).resolve()
+    assert source_project.is_dir()
+    assert not evidence_root.exists(), "evidence directory must be new"
+    assert _sha256(source_project / "00_source/source.docx") == WORD_SHA256
+    logo_svg = source_project / "00_source/logo.svg"
+    assert LOGO.is_file() and base64.b64encode(LOGO.read_bytes()) in logo_svg.read_bytes()
+    complete_source = extract(WORD, DEFAULT_MARKER)
+    assert complete_source["page_count"] == 42
+    source_by_page = {page["page_number"]: page for page in complete_source["pages"]}
+    selected_source = copy.deepcopy(complete_source)
+    selected_source["pages"] = []
+    for output_page, source_page in enumerate(SELECTED, start=1):
+        page = copy.deepcopy(source_by_page[source_page])
+        page["source_page_number"] = source_page
+        page["page_number"] = output_page
+        selected_source["pages"].append(page)
+    selected_source["page_count"] = len(SELECTED)
+    project = _build_project(evidence_root, selected_source, logo_svg)
+    actual_state = load(source_project)
+    new_state = load(project)
+    new_state["word_source"] = dict(actual_state["word_source"])
+    new_state["logo_source"] = dict(actual_state["logo_source"])
+    new_state["source_identity"] = actual_state["source_identity"]
+    new_state["confirmed_ui_revision"] = actual_state["confirmed_ui_revision"]
+    new_state["confirmed_ui_digest"] = actual_state["confirmed_ui_digest"]
+    new_state["style_confirmation"] = dict(actual_state["style_confirmation"])
+    new_state["director_confirmation"] = dict(actual_state["director_confirmation"])
+    from workflow_v6_state import save
+    save(project, new_state)
+    shutil.copytree(source_project / "04_v6", project / "04_v6", dirs_exist_ok=True)
+    composition_path = project / "02_v6/page_composition.json"
+    composition = json.loads(composition_path.read_text(encoding="utf-8"))
+    for output_page, source_page in enumerate(SELECTED, start=1):
+        composition["pages"][output_page - 1]["source_page_number"] = source_page
+    composition_path.write_text(json.dumps(composition, ensure_ascii=False), encoding="utf-8")
+    for output_page, source_page in enumerate(SELECTED, start=1):
+        workspace = open_live_page_workspace(project, output_page)
+        receipt = json.loads(
+            (source_project / "04_v6/images" / f"page_{source_page:03d}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        receipt["experiment_id"] = workspace.experiment_id
+        receipt["page_number"] = output_page
+        receipt["source_identity"] = workspace.source_snapshot_sha256
+        receipt["source_snapshot_sha256"] = workspace.source_snapshot_sha256
+        receipt["material_view_sha256"] = new_state["pages"][output_page - 1]["material_receipt"]["digest"]
+        signed = _write_signed_receipt(project, output_page, receipt)
+        candidate = signed["candidate"]
+        selected = {
+            "path": candidate["path"],
+            "sha256": candidate["sha256"],
+            "attempt": candidate["attempt"],
+            "operation": candidate["operation"],
+            "receipt_path": f"04_v6/images/page_{output_page:03d}.json",
+        }
+        new_state["pages"][output_page - 1]["first_candidate"] = dict(selected)
+        new_state["pages"][output_page - 1]["selected_candidate"] = dict(selected)
+    save(project, new_state)
+
+    worker_calls: list[dict] = []
+    for output_page, source_page_number in enumerate(SELECTED, start=1):
+        receipt = json.loads(
+            (project / "04_v6/images" / f"page_{output_page:03d}.json").read_text(encoding="utf-8")
+        )
+        candidate = receipt["candidate"]
+        assert candidate["duration_seconds"] > 0
+        assert receipt["provider_authority"]["trace_path"]
+        manifest = json.loads(
+            (
+                source_project / "05_v6/reconstruction_runs" / f"page_{source_page_number:03d}"
+                / "pages/page_001/manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        build_reconstruction_request(project, page_number=output_page)
+        reconstruct_accepted_page(
+            SimpleNamespace(project_copy=project, page_number=output_page),
+            _accepted_outcome(project, output_page),
+            page_worker=_production_worker(
+                manifest,
+                worker_calls,
+                source_page_dir=(
+                    source_project / "05_v6/reconstruction_runs"
+                    / f"page_{source_page_number:03d}/pages/page_001"
+                ),
+            ),
+        )
+
+    assembly = assemble_v6_deck(project)
+    assert assembly["status"] == "complete"
+    assert assembly["release_ready"] is True
+    assert assembly["release_status"] == "release_ready"
+    assert assembly["openxml_validation"]["status"] == "passed"
+    assert assembly["enhanced_validation"]["powerpoint"]["status"] == "passed"
+    assert assembly["page_count"] == len(SELECTED)
+    assert Path(assembly["final_output"]["path"]).is_file()
+    assert assembly["assembled_visual_qa"]["status"] == "passed"
+    assembled_pages = {
+        item["page_number"]: item for item in assembly["assembled_visual_qa"]["pages"]
+    }
+    page_reports = []
+    for output_page, source_page_number in enumerate(SELECTED, start=1):
+        page_report = json.loads(
+            (project / "06_v6/pages" / f"page_{output_page:03d}/page.json").read_text(encoding="utf-8")
+        )
+        visual = page_report["post_reconstruction_visual_qa"]
+        assert visual["status"] == "passed"
+        assert visual["rendering"]["backend"] == "powerpoint_com"
+        assembled_visual = assembled_pages[output_page]
+        assert assembled_visual["status"] == "passed"
+        assert (project / assembled_visual["rendered_body"]).is_file()
+        page_reports.append({
+            "page_number": source_page_number,
+            "output_page_number": output_page,
+            "accepted": assembled_visual["source"],
+            "reconstructed": assembled_visual["rendered_body"],
+            "visual_qa": assembled_visual,
+        })
+    rows = "\n".join(
+        "<section><h2>Word page {page}</h2><div class='pair'>"
+        "<figure><figcaption>Accepted Image2 body</figcaption><img src='{accepted}'></figure>"
+        "<figure><figcaption>Actual assembled editable deck render</figcaption><img src='{reconstructed}'></figure>"
+        "</div><pre>{metrics}</pre></section>".format(
+            page=item["page_number"],
+            accepted=html.escape(item["accepted"]),
+            reconstructed=html.escape(item["reconstructed"]),
+            metrics=html.escape(json.dumps(item["visual_qa"]["metrics"], ensure_ascii=False, indent=2)),
+        )
+        for item in page_reports
+    )
+    (evidence_root / "huangshi-selected-page-comparison.html").write_text(
+        "<!doctype html><meta charset='utf-8'><title>Huangshi selected-page release evidence</title>"
+        "<style>body{font-family:Arial,sans-serif;margin:32px;background:#f3f5f7;color:#17365d}"
+        "section{background:white;padding:20px;margin:0 0 24px;border-radius:8px}.pair{display:grid;"
+        "grid-template-columns:1fr 1fr;gap:16px}img{width:100%;border:1px solid #ccd5df}"
+        "figcaption{font-weight:700;margin-bottom:8px}pre{white-space:pre-wrap}</style>"
+        + rows,
+        encoding="utf-8",
+    )

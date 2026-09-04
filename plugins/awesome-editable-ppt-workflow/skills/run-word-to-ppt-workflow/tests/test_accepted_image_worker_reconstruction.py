@@ -145,9 +145,14 @@ def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_cal
     assert final["accepted_source_body"] == accepted_request["source_body"]
     assert reconstruction["accepted_source_body"] == accepted_request["source_body"]
     assert reconstruction["worker_source_body"] == page_request["worker_source_body"]
-    assert assembly["page_authority"] == [{
+    assert [
+        {key: item[key] for key in ("page_number", "status", "authority_mode")}
+        for item in assembly["page_authority"]
+    ] == [{
         "page_number": 1, "status": "verified", "authority_mode": "sealed_reconstruction",
     }]
+    assert assembly["page_authority"][0]["visual_qa"]["status"] == "passed"
+    assert assembly["assembled_visual_qa"]["status"] == "passed"
     assert assembly["sha256"] == hashlib.sha256(
         (project / assembly["output"]).read_bytes()
     ).hexdigest()

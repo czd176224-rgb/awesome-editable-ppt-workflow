@@ -97,6 +97,24 @@ def test_native_special_page_bypasses_creative_stages_and_assembles_with_content
             lambda _root, _outcomes: {"status": "deferred", "reason": "pages incomplete"},
             {"status": "deferred", "reason": "pages incomplete"},
         ),
+        (
+            lambda _root, _outcomes: {
+                "status": "validation_incomplete",
+                "release_ready": False,
+                "candidate_output": {
+                    "relative_path": "08_candidate/deck.pptx",
+                    "sha256": "b" * 64,
+                },
+            },
+            {
+                "status": "validation_incomplete",
+                "release_ready": False,
+                "candidate_output": {
+                    "relative_path": "08_candidate/deck.pptx",
+                    "sha256": "b" * 64,
+                },
+            },
+        ),
         (None, {"status": "not_run"}),
     ],
 )
