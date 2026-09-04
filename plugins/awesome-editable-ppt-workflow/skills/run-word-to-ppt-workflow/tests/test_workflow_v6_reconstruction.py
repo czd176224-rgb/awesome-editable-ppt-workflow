@@ -21,12 +21,13 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from workflow_v6_contract import new_page, new_project  # noqa: E402
+from workflow_v6_contract import canonical_sha256, new_page, new_project  # noqa: E402
 from workflow_v6_reconstruction import (  # noqa: E402
     assemble_v6_deck,
     build_reconstruction_request,
     finalize_reconstructed_page as _finalize_reconstructed_page,
 )
+import workflow_v6_reconstruction as reconstruction_module  # noqa: E402
 from workflow_v6_state import create, load, save  # noqa: E402
 from awesome_page_materials import publish_page_materials  # noqa: E402
 from director_taskbook import project_emphasis_pages, taskbook_digest  # noqa: E402
@@ -37,6 +38,10 @@ def finalize_reconstructed_page(*args, **kwargs):
     project = Path(args[0] if args else kwargs["project"])
     page_number = kwargs["page_number"]
     state = load(project)
+    state["word_source"]["authority_mode"] = "legacy_non_word"
+    state["source_identity"] = canonical_sha256({
+        "word_source": state["word_source"], "logo_source": state["logo_source"],
+    })
     state["pages"][page_number - 1]["selected_candidate"] = None
     save(project, state)
     (project / "04_v6" / "images" / f"page_{page_number:03d}.json").unlink(missing_ok=True)
@@ -410,7 +415,6 @@ def test_finalize_requires_exact_native_text_repair(tmp_path: Path):
             project,
             page_number=1,
             reconstructed_body=wrong,
-            authority_mode="native_direct",
         )
 
     correct = tmp_path / "correct.pptx"
@@ -743,3 +747,35 @@ def test_finalize_allows_verified_same_accepted_page_repair(tmp_path: Path):
     receipt.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(ValueError, match="existing finalized page authority"):
         finalize_reconstructed_page(project, page_number=1, reconstructed_body=first)
+
+
+def test_completed_page_repair_receipt_failure_preserves_old_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    project = _project(tmp_path, 1)
+    first = tmp_path / "body-first.pptx"
+    repaired = tmp_path / "body-repaired.pptx"
+    _body(first, "first reconstruction")
+    _body(repaired, "repaired reconstruction")
+    finalize_reconstructed_page(project, page_number=1, reconstructed_body=first)
+    page_path = project / "06_v6/pages/page_001/page.pptx"
+    receipt_path = project / "06_v6/pages/page_001/page.json"
+    old_page = page_path.read_bytes()
+    old_receipt = receipt_path.read_bytes()
+    old_state = (project / "workflow_v6.json").read_bytes()
+
+    original_write = reconstruction_module._write_json
+
+    def fail_page_receipt(path, value):
+        if Path(path).name == "page.json":
+            raise RuntimeError("simulated repair receipt failure")
+        return original_write(path, value)
+
+    monkeypatch.setattr(reconstruction_module, "_write_json", fail_page_receipt)
+
+    with pytest.raises(RuntimeError, match="repair receipt failure"):
+        finalize_reconstructed_page(project, page_number=1, reconstructed_body=repaired)
+
+    assert page_path.read_bytes() == old_page
+    assert receipt_path.read_bytes() == old_receipt
+    assert (project / "workflow_v6.json").read_bytes() == old_state

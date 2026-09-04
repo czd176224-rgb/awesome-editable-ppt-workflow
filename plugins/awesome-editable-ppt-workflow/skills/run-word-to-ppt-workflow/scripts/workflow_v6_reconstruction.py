@@ -28,6 +28,7 @@ from fixed_region_contract import fixed_frame_execution
 from director_taskbook import project_emphasis_pages
 from workflow_v6_contract import geometry_contract, transition_page, validate_project
 from workflow_v6_materials import select_numeric_authority
+from workflow_v6_media import normalized_raster_pixel_seal
 from workflow_v6_composition import load_composition_authority
 from workflow_v6_state import mutation_lock, save
 import workflow_v6_secure_io as secure_io
@@ -318,7 +319,7 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
         "source_body": {
             "path": relative.as_posix(),
             "sha256": image_digest,
-            "pixels": {"width": 1904, "height": 896},
+            **normalized_raster_pixel_seal(image_bytes),
         },
         "sealed_image_edits": [],
         "sealed_text_repairs": [dict(item) for item in repairs],
@@ -641,7 +642,10 @@ def _require_final_authority(
 ) -> Mapping[str, Any] | None:
     """Verify sealed worker authority before the host publishes the editable page."""
     if authority_mode == "native_direct":
-        page = _load_reconstruction_state(root)["pages"][page_number - 1]
+        state = _load_reconstruction_state(root)
+        if state.get("word_source", {}).get("authority_mode") != "legacy_non_word":
+            raise ValueError("V6 formal Word reconstruction requires sealed_reconstruction authority")
+        page = state["pages"][page_number - 1]
         if page.get("selected_candidate") is not None:
             raise ValueError("V6 native-direct finalization cannot use a selected candidate")
         receipt_path = root / "04_v6" / "images" / f"page_{page_number:03d}.json"
@@ -701,8 +705,33 @@ def _require_final_authority(
             page_request.get(field) != request.get(field)
             for field in ("page_plan", "numeric_authority")
         )
+        or page_request.get("accepted_source_body") != request.get("source_body")
     ):
         raise ValueError("V6 sealed reconstruction request relationship is invalid")
+    source_body = request.get("source_body")
+    worker_source = page_request.get("worker_source_body")
+    if not isinstance(source_body, Mapping) or not isinstance(worker_source, Mapping):
+        raise ValueError("V6 sealed accepted-image authority is incomplete")
+    accepted_image = root / str(source_body.get("path", ""))
+    worker_image = reconstructed_body.parent / "source.png"
+    if not accepted_image.is_file() or not worker_image.is_file():
+        raise ValueError("V6 sealed accepted-image authority is missing")
+    accepted_bytes = secure_io.read_bytes(root, accepted_image.relative_to(root))
+    worker_bytes = secure_io.read_bytes(root, worker_image.relative_to(root))
+    accepted_seal = {
+        "path": source_body.get("path"),
+        "sha256": hashlib.sha256(accepted_bytes).hexdigest(),
+        **normalized_raster_pixel_seal(accepted_bytes),
+    }
+    current_worker_seal = {
+        "path": worker_source.get("path"),
+        "sha256": hashlib.sha256(worker_bytes).hexdigest(),
+        **normalized_raster_pixel_seal(worker_bytes),
+    }
+    if accepted_seal != source_body or current_worker_seal != worker_source:
+        raise ValueError("V6 sealed accepted-image digest changed")
+    if worker_source.get("normalized_pixel_sha256") != source_body.get("normalized_pixel_sha256"):
+        raise ValueError("V6 worker source pixels do not match the accepted image")
     manifest = _read_json(manifest_path)
 
     relationship = request.get("page_plan", {}).get("primary_relationship", {})
@@ -760,7 +789,22 @@ def _require_final_authority(
         violations = quantitative_chart_readback_violations(reconstructed_body, [manifest])
         if violations:
             raise ValueError("V6 sealed numeric authority failed readback: " + json.dumps(violations, ensure_ascii=False))
-    return accepted
+    return {
+        "accepted_receipt": dict(accepted),
+        "accepted_source_body": dict(source_body),
+        "worker_source_body": dict(worker_source),
+    }
+
+
+def commit_reconstructed_page(project: Path, *, page_number: int) -> None:
+    root = Path(project).resolve()
+    page = _load_reconstruction_state(root)["pages"][page_number - 1]
+    if page["state"] == "page_complete":
+        return
+    if page["state"] != "accepted":
+        raise ValueError("V6 page cannot commit reconstruction completion")
+    page = transition_page(page, "reconstructing")
+    _update_reconstruction_page(root, page_number, transition_page(page, "page_complete"))
 
 
 def finalize_reconstructed_page(
@@ -769,6 +813,7 @@ def finalize_reconstructed_page(
     page_number: int,
     reconstructed_body: Path,
     authority_mode: str = "sealed_reconstruction",
+    commit_state: bool = True,
 ) -> dict[str, Any]:
     secure_io.reject_reparse_chain(Path(project))
     root = Path(project).resolve()
@@ -780,7 +825,7 @@ def finalize_reconstructed_page(
     if len(opened.slides) != 1:
         raise ValueError("V6 reconstructed body must contain exactly one slide")
     _validate_reconstructed_text_repairs(root, page_number, opened)
-    accepted_receipt = _require_final_authority(
+    sealed_authority = _require_final_authority(
         root, page_number, reconstructed_body, opened, authority_mode,
     )
     page_index = page_number - 1
@@ -826,19 +871,24 @@ def finalize_reconstructed_page(
         reconstructed_bytes = buffer.getvalue()
     else:
         reconstructed_bytes = reconstructed_body.read_bytes()
-    repair_target: Path | None = None
+    staged_dir: Path | None = None
+    backup_dir: Path | None = None
+    published_new = False
     if repairing_complete_page:
-        repair_target = output_dir / f".page-repair-{uuid.uuid4().hex[:8]}.pptx"
-        secure_io.atomic_write_bytes(root, repair_target.relative_to(root), reconstructed_bytes)
-        finalization_output = repair_target
+        staged_dir = output_dir.parent / f".{output_dir.name}.{uuid.uuid4().hex}.tmp"
+        staged_dir.mkdir(parents=True)
+        finalization_output = staged_dir / "page.pptx"
+        secure_io.atomic_write_bytes(root, finalization_output.relative_to(root), reconstructed_bytes)
     elif output.is_file():
         existing_bytes = secure_io.read_bytes(root, output.relative_to(root))
         if existing_bytes != reconstructed_bytes:
             raise ValueError("V6 reconstructed page output already contains different bytes")
         finalization_output = output
     else:
-        secure_io.atomic_write_bytes(root, output.relative_to(root), reconstructed_bytes)
-        finalization_output = output
+        staged_dir = output_dir.parent / f".{output_dir.name}.{uuid.uuid4().hex}.tmp"
+        staged_dir.mkdir(parents=True)
+        finalization_output = staged_dir / "page.pptx"
+        secure_io.atomic_write_bytes(root, finalization_output.relative_to(root), reconstructed_bytes)
     try:
         apply_fixed_frame(
             finalization_output,
@@ -856,31 +906,47 @@ def finalize_reconstructed_page(
         )
         if fixed.get("passed") is not True:
             raise ValueError("V6 fixed-layer validation failed: " + "; ".join(fixed.get("issues", [])))
-        if repairing_complete_page:
-            secure_io.atomic_write_bytes(
-                root,
-                output.relative_to(root),
-                secure_io.read_bytes(root, finalization_output.relative_to(root)),
-                replace=True,
-            )
+        report = {
+            "artifact_version": "final-page-v6",
+            "page_number": page_number,
+            "page_pptx": output.relative_to(root).as_posix(),
+            "sha256": _sha256(finalization_output),
+            "fixed_frame": fixed,
+            "post_reconstruction_visual_qa": False,
+        }
+        if sealed_authority is not None:
+            report.update(sealed_authority)
+        if staged_dir is not None:
+            _write_json(staged_dir / "page.json", report)
+            if repairing_complete_page:
+                backup_dir = output_dir.parent / f".{output_dir.name}.{uuid.uuid4().hex}.bak"
+                os.replace(output_dir, backup_dir)
+                try:
+                    os.replace(staged_dir, output_dir)
+                except Exception:
+                    os.replace(backup_dir, output_dir)
+                    backup_dir = None
+                    raise
+                shutil.rmtree(backup_dir, ignore_errors=True)
+                backup_dir = None
+            else:
+                os.replace(staged_dir, output_dir)
+                published_new = True
+            staged_dir = None
+        else:
+            _write_json(output_dir / "page.json", report)
+        if not repairing_complete_page and commit_state:
+            commit_reconstructed_page(root, page_number=page_number)
+        return report
+    except Exception:
+        if published_new and output_dir.is_dir() and not repairing_complete_page:
+            shutil.rmtree(output_dir)
+        raise
     finally:
-        if repair_target is not None and repair_target.is_file():
-            repair_target.unlink()
-    if not repairing_complete_page:
-        page = transition_page(page, "page_complete")
-        _update_reconstruction_page(root, page_number, page)
-    report = {
-        "artifact_version": "final-page-v6",
-        "page_number": page_number,
-        "page_pptx": output.relative_to(root).as_posix(),
-        "sha256": _sha256(output),
-        "fixed_frame": fixed,
-        "post_reconstruction_visual_qa": False,
-    }
-    if accepted_receipt is not None:
-        report["accepted_receipt"] = dict(accepted_receipt)
-    _write_json(output_dir / "page.json", report)
-    return report
+        if staged_dir is not None and staged_dir.is_dir():
+            shutil.rmtree(staged_dir)
+        if backup_dir is not None and backup_dir.is_dir() and not output_dir.exists():
+            os.replace(backup_dir, output_dir)
 
 
 def assemble_v6_deck(project: Path) -> dict[str, Any]:

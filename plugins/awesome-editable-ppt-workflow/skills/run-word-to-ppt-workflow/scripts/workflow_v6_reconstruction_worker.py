@@ -15,8 +15,11 @@ from typing import Any, Callable, Literal
 from workflow_v6_reconstruction import (
     assemble_v6_deck,
     build_reconstruction_request,
+    commit_reconstructed_page,
     finalize_reconstructed_page,
 )
+from workflow_v6_media import normalized_raster_pixel_seal
+import workflow_v6_secure_io as secure_io
 from workflow_v6_state import load
 from complex_page_experiment import open_live_page_workspace, verify_signed_acceptance_receipt
 
@@ -77,6 +80,24 @@ def _run_script(script: Path, *args: object, timeout: int = 300) -> subprocess.C
     return completed
 
 
+def _atomic_json(root: Path, path: Path, value: dict[str, Any]) -> None:
+    secure_io.atomic_write_bytes(
+        root,
+        path.relative_to(root),
+        (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        replace=path.exists(),
+    )
+
+
+def _source_seal(root: Path, path: Path, *, sealed_path: str) -> dict[str, Any]:
+    data = secure_io.read_bytes(root, path.relative_to(root))
+    return {
+        "path": sealed_path,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        **normalized_raster_pixel_seal(data),
+    }
+
+
 def _prepare_run(project: Path, reconstruction_request: dict[str, Any], page_number: int) -> tuple[Path, Path, Path]:
     run_dir = project / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
     page_dir = run_dir / "pages" / "page_001"
@@ -108,7 +129,7 @@ def _prepare_run(project: Path, reconstruction_request: dict[str, Any], page_num
     if request_copy.exists() and request_copy.read_bytes() != encoded:
         raise RuntimeError("accepted reconstruction request changed after preparation")
     if not request_copy.exists():
-        request_copy.write_bytes(encoded)
+        secure_io.atomic_write_bytes(project, request_copy.relative_to(project), encoded)
     page_request_path = page_dir / "page_request.json"
     page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
     for authority in ("numeric_authority", "page_plan"):
@@ -117,10 +138,17 @@ def _prepare_run(project: Path, reconstruction_request: dict[str, Any], page_num
             page_request.pop(authority, None)
         else:
             page_request[authority] = value
-    page_request_path.write_text(
-        json.dumps(page_request, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    accepted_source = dict(reconstruction_request["source_body"])
+    worker_source = _source_seal(
+        project,
+        page_dir / "source.png",
+        sealed_path=(page_dir / "source.png").relative_to(project).as_posix(),
     )
+    if worker_source["normalized_pixel_sha256"] != accepted_source["normalized_pixel_sha256"]:
+        raise RuntimeError("prepared worker source pixels differ from the accepted image")
+    page_request["accepted_source_body"] = accepted_source
+    page_request["worker_source_body"] = worker_source
+    _atomic_json(project, page_request_path, page_request)
     prompt_file = page_dir / "worker-prompt.md"
     _run_script(PROMPT_BUILDER, run_dir, "--page", "page_001", "--out", prompt_file)
     runtime_command = f'"{_python()}" "{RUNTIME / "main.py"}"'
@@ -189,6 +217,13 @@ def _default_page_worker(request: PageWorkerRequest) -> PageWorkerResult:
         raise RuntimeError("reconstruction page is not dispatchable")
 
     prompt = request.prompt_file.read_text(encoding="utf-8")
+    for name in (
+        "validation.json", "manifest.json", "page.pptx", "page_result.json",
+        "preview.png", "split_assets_contact.png", ".record-validation.json",
+    ):
+        path = request.page_dir / name
+        if path.is_file():
+            path.unlink()
     command = [
         _codex_executable(), "exec",
         "-C", str(request.page_dir),
@@ -217,6 +252,9 @@ def _default_page_worker(request: PageWorkerRequest) -> PageWorkerResult:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"Codex page worker could not complete: {exc}") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "Codex page worker failed"
+        return PageWorkerResult("failed", reason=detail)
     result = _validation_result(request.page_dir)
     if result.status == "completed":
         _run_script(
@@ -229,10 +267,7 @@ def _default_page_worker(request: PageWorkerRequest) -> PageWorkerResult:
         return result
     if result.status == "needs_paddle":
         return result
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or result.reason
-    else:
-        detail = result.reason or completed.stderr.strip() or completed.stdout.strip()
+    detail = result.reason or completed.stderr.strip() or completed.stdout.strip()
     return PageWorkerResult("failed", reason=detail)
 
 
@@ -316,6 +351,26 @@ def _recovery(project: Path, page_number: int) -> dict[str, Any] | None:
         raise RuntimeError("completed reconstructed page changed")
     if value.get("final_page_sha256") != final.get("sha256"):
         raise RuntimeError("reconstruction receipt does not match the final page")
+    accepted_source = value.get("accepted_source_body")
+    worker_source = value.get("worker_source_body")
+    if (
+        not isinstance(accepted_source, dict)
+        or not isinstance(worker_source, dict)
+        or final.get("accepted_source_body") != accepted_source
+        or final.get("worker_source_body") != worker_source
+        or _source_seal(
+            project,
+            project / str(accepted_source.get("path", "")),
+            sealed_path=str(accepted_source.get("path", "")),
+        ) != accepted_source
+        or _source_seal(
+            project,
+            project / str(worker_source.get("path", "")),
+            sealed_path=str(worker_source.get("path", "")),
+        ) != worker_source
+        or worker_source.get("normalized_pixel_sha256") != accepted_source.get("normalized_pixel_sha256")
+    ):
+        raise RuntimeError("reconstruction receipt does not match the accepted image pixels")
     return {**value, "recovered": True}
 
 
@@ -387,17 +442,25 @@ def reconstruct_accepted_page(
         body.relative_to(page_dir.resolve())
     except ValueError as exc:
         raise RuntimeError("Codex page worker output is outside its page directory") from exc
+    page_request = json.loads((page_dir / "page_request.json").read_text(encoding="utf-8"))
+    receipt_path = run_dir / "reconstruction.json"
+    if receipt_path.exists():
+        raise RuntimeError("interrupted reconstruction receipt must be inspected before resubmission")
     final = finalize_reconstructed_page(
         project,
         page_number=page_number,
         reconstructed_body=body,
         authority_mode="sealed_reconstruction",
+        commit_state=False,
     )
     receipt = {
         "artifact_version": "accepted-image-worker-reconstruction-v1",
         "page_number": page_number,
         "accepted_receipt": reconstruction_request["accepted_receipt"],
         "accepted_image_sha256": reconstruction_request["source_body"]["sha256"],
+        "accepted_image_pixel_sha256": reconstruction_request["source_body"]["normalized_pixel_sha256"],
+        "accepted_source_body": reconstruction_request["source_body"],
+        "worker_source_body": page_request["worker_source_body"],
         "reconstruction_mode": mode,
         "page_worker_calls": worker_calls,
         "paddle_calls": paddle_calls,
@@ -405,11 +468,21 @@ def reconstruct_accepted_page(
         "final_page_sha256": final["sha256"],
         "recovered": False,
     }
-    receipt_path = run_dir / "reconstruction.json"
     encoded = json.dumps(receipt, ensure_ascii=False, indent=2) + "\n"
     if receipt_path.exists() and receipt_path.read_text(encoding="utf-8") != encoded:
         raise RuntimeError("reconstruction receipt already contains different authority")
-    receipt_path.write_text(encoded, encoding="utf-8")
+    try:
+        _atomic_json(project, receipt_path, receipt)
+        commit_reconstructed_page(project, page_number=page_number)
+    except Exception:
+        for path in (
+            project / "06_v6/pages" / f"page_{page_number:03d}" / "page.pptx",
+            project / "06_v6/pages" / f"page_{page_number:03d}" / "page.json",
+            receipt_path,
+        ):
+            if path.is_file():
+                path.unlink()
+        raise
     return receipt
 
 
