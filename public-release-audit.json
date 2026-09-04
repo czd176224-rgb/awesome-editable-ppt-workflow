@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "consulting-page-director-v3-compact-page-plan",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "e2c7aca7c1b9a3d23eabc6245ccab63445a0fdcff1064fc16b059c4a1e1358f2",
+  "sourceManifestSha256": "c6836559b124a8acb58eface21a48c2b0b81244a29c804768d00cf87d8e5796c",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -568,13 +568,13 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/complex_page_experiment/consulting_prompt.py",
-      "bytes": 20486,
-      "sha256": "cb727a21e10d6c6a8d4ccf5532a11a151c6d6b21a102295d1e3b61c34cab379b"
+      "bytes": 20070,
+      "sha256": "93a34ec6ac3a57bff760a40a0afd18892d1dff37790bbd891e52e068b614d4e9"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/complex_page_experiment/director.py",
-      "bytes": 20711,
-      "sha256": "a2535dc0f20a3ac60aad824e67cf9d44426b4d5b9d34e8c6389f6f0abe0ede7f"
+      "bytes": 21073,
+      "sha256": "aca8cb67f7953157c0d02829b50ce6aa0932b3d16a3d29e2aeb1b42df2021942"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/complex_page_experiment/evidence.py",
@@ -608,8 +608,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/complex_page_experiment/review.py",
-      "bytes": 39234,
-      "sha256": "989d29c0ba770f8bc886e0d3dfe18b05fa9385c309b94d994b984d3c2f61eee3"
+      "bytes": 39087,
+      "sha256": "a15e5334631af928eb9a2ceeca52b1bd2cdf350b023d4196e4027997bca36952"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/complex_page_experiment/workspace.py",
@@ -913,13 +913,13 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_consulting_prompt.py",
-      "bytes": 41859,
-      "sha256": "5f6bd0e9bf947e791626725096ed389a9bbcc90bb254a5e4ab315a7d733ba018"
+      "bytes": 44927,
+      "sha256": "c01674597fc30485e1508cba461b172cd4270e12b07718918d1cd151c92bafde"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_director.py",
-      "bytes": 55382,
-      "sha256": "ba5917f69b5e14fe0670a3a31b4b9f7ddad5b02ec39833e3e6fdfd680e7004ea"
+      "bytes": 56280,
+      "sha256": "2c7d4124d225e1c8bec140ac1a0d5d32799c2f7801fb85bfc42347bb12cf30a2"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_evidence.py",
@@ -953,8 +953,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_review.py",
-      "bytes": 24501,
-      "sha256": "6b5adba0aa7e9f75c08db5b74a49c1df7a84beddbbc25fb0b226ff351b935d0b"
+      "bytes": 25119,
+      "sha256": "7aaed762012298ea9138e295578d2a302ec4e8ef95b2b1b82fa0e399eb6f0779"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment/test_task12_runtime_schema.py",
@@ -1048,8 +1048,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_consulting_director_regressions.py",
-      "bytes": 7038,
-      "sha256": "e627d9ffa9d67da47ed941155ecf5574e1ffcc0431243a36773ca1b03c906a7a"
+      "bytes": 7480,
+      "sha256": "5cfc132f95def4128febc3e9b67ed0296dbde64423f93765d771f9491bb8bbe4"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_current_runtime_scanner.py",
@@ -1204,7 +1204,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 48581,
-      "sha256": "e2c7aca7c1b9a3d23eabc6245ccab63445a0fdcff1064fc16b059c4a1e1358f2"
+      "sha256": "c6836559b124a8acb58eface21a48c2b0b81244a29c804768d00cf87d8e5796c"
     },
     {
       "path": "README.md",
