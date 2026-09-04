@@ -389,6 +389,7 @@ def test_release_gate_validates_export_from_clean_public_development_checkout(tm
         cwd=checkout,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=600,
         env={**os.environ, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"},
     )
