@@ -402,9 +402,14 @@ def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
         assert not any(term in compiler_owned for term in ("红色", "scarlet", "crimson"))
 
 
-def test_compile_prompt_preserves_non_color_source_names():
+def test_compile_prompt_deduplicates_owned_color_contract_without_deleting_facts():
     view = _compiler_material_view(secondary_color="#1F5AA6")
     value = _director_value()
+    positive, prohibited = _color_constraints(view)
+    value["page_plan"]["page_purpose"] += " " + positive
+    value["page_plan"]["primary_relationship"]["visual_instruction"] += (
+        " " + prohibited
+    )
     source_fact = (
         "Source fact: Red Beacon, 红色标识, Scarlet Ledger, and Crimson Record are exact names."
     )
@@ -412,6 +417,8 @@ def test_compile_prompt_preserves_non_color_source_names():
 
     prompt = compile_consulting_six_part_prompt(value, view)
 
+    assert prompt.count(positive) == 1
+    assert prompt.count(prohibited) == 1
     assert prompt.count(source_fact) == 1
 
 
