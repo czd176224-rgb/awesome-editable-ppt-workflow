@@ -210,13 +210,26 @@ def test_one_confirmation_completes_and_assembles_every_confirmed_role(tmp_path:
     assert native_pages == [1, 2, 3, 6]
     assert content_pages == [4, 5]
     assert set(assembled_outcomes[0]) == set(range(1, len(result["confirmed_pages"]) + 1))
-    assemble_v6_deck(project)
+    assembly = assemble_v6_deck(project)
     composition = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
-    assembly = json.loads((project / "08_final/assembly.json").read_text(encoding="utf-8"))
-    deck = Presentation(project / "08_final/deck.pptx")
+    persisted_assembly = json.loads(
+        (project / assembly["assembly_report"]).read_text(encoding="utf-8")
+    )
+    deck_path = (
+        project / assembly["output"]
+        if assembly["release_ready"]
+        else project / assembly["candidate_output"]["relative_path"]
+    )
+    deck = Presentation(deck_path)
     assert all(page["state"] == "page_complete" for page in load(project)["pages"])
+    assert persisted_assembly == assembly
     assert len(deck.slides) == composition["page_count"] == assembly["page_count"]
     assert assembly["page_order"] == list(range(1, composition["page_count"] + 1))
+    if not assembly["release_ready"]:
+        assert assembly["status"] == "validation_incomplete"
+        assert assembly["release_status"] == "not_release_ready"
+        assert assembly["final_output"] is None
+        assert "output" not in assembly
     expected_number_visibility = {
         "cover": False, "toc": True, "section": True,
         "content": True, "appendix": True, "closing": False,
