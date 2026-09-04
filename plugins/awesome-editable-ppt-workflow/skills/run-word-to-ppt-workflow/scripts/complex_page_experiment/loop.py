@@ -394,7 +394,15 @@ def load_accepted_image_seal(workspace: ExperimentWorkspace) -> AcceptedImageSea
             migrated = _copied_state_without_material_reads(workspace)
             migrated_page = migrated["pages"][workspace.page_number - 1]
             current = migrated_page.get("selected_candidate")
-            if not isinstance(current, Mapping) or dict(current) != legacy_candidate:
+            if (
+                migrated["source_identity"] != value["source_identity"]
+                or migrated["confirmed_ui_revision"] != value["ui_revision"]
+                or migrated["confirmed_ui_digest"] != value["ui_digest"]
+                or migrated["geometry"] != value["fixed_frame"]
+                or migrated_page.get("state") not in {"accepted", "page_complete"}
+                or not isinstance(current, Mapping)
+                or dict(current) != legacy_candidate
+            ):
                 raise ValueError("copied accepted state changed during operation migration")
             migrated_page["selected_candidate"] = dict(state_candidate)
             migrated["pages"][workspace.page_number - 1] = migrated_page
