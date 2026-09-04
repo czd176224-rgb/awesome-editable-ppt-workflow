@@ -85,11 +85,33 @@ def test_explicit_native_direct_requires_no_candidate_or_receipt(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    "defect",
-    ["stale_binding", "pixel_binding", "worker_pixel_binding", "replaced", "deleted"],
+    ("defect", "error", "message"),
+    [
+        (
+            "stale_binding",
+            RuntimeError,
+            "reconstruction receipt does not match the sealed page authority",
+        ),
+        (
+            "pixel_binding",
+            RuntimeError,
+            "reconstruction receipt does not match the sealed page authority",
+        ),
+        (
+            "worker_pixel_binding",
+            RuntimeError,
+            "reconstruction receipt does not match the sealed page authority",
+        ),
+        (
+            "replaced",
+            ValueError,
+            "V6 sealed acceptance receipt relationship is invalid",
+        ),
+        ("deleted", ValueError, "V6 sealed acceptance receipt is missing"),
+    ],
 )
 def test_completed_recovery_rejects_stale_replaced_or_deleted_acceptance_receipt(
-    tmp_path: Path, defect: str,
+    tmp_path: Path, defect: str, error: type[Exception], message: str,
 ) -> None:
     project, _receipt = _relationship_project(tmp_path)
     reconstruct_accepted_page(
@@ -123,7 +145,7 @@ def test_completed_recovery_rejects_stale_replaced_or_deleted_acceptance_receipt
     outcome = _accepted_outcome(project) if receipt_path.is_file() else SimpleNamespace(
         status="accepted", accepted=SimpleNamespace(candidate=SimpleNamespace(path="unused")),
     )
-    with pytest.raises(RuntimeError, match="acceptance receipt|accepted image pixels"):
+    with pytest.raises(error, match=message):
         reconstruct_accepted_page(
             _workspace(project),
             outcome,
