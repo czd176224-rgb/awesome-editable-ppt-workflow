@@ -496,6 +496,35 @@ def test_all_color_rules_compile_only_inside_visual_style_and_color() -> None:
             assert color_rule not in section
 
 
+@pytest.mark.parametrize(
+    "directive",
+    (
+        "Use secondary color for the main path.",
+        "Draw the main path in #CD202A.",
+    ),
+)
+def test_compiler_rejects_director_authored_color_directives(directive: str) -> None:
+    module = _load_compiler_module()
+    value = _director_value()
+    value["page_plan"]["primary_relationship"]["visual_instruction"] = directive
+
+    with pytest.raises(ValueError, match="color.*Visual Style and Color"):
+        module.compile_consulting_six_part_prompt(value, _material_view())
+
+
+def test_compiler_rejects_color_directives_in_reference_instructions() -> None:
+    module = _load_compiler_module()
+    value = _director_value()
+    value["selected_references"] = [{
+        "material_id": "word-image:source-photo",
+        "use": "Use #CD202A for the focal border.",
+        "preserve": "Preserve recognizable identity.",
+    }]
+
+    with pytest.raises(ValueError, match="color.*Visual Style and Color"):
+        module.compile_consulting_six_part_prompt(value, _material_view())
+
+
 @pytest.mark.parametrize("invalid", ["", "   ", 123])
 def test_optional_highlight_color_must_be_nonempty_text(invalid: object) -> None:
     module = _load_compiler_module()

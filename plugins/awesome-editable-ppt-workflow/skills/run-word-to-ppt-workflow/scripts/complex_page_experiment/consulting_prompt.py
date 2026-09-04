@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -370,6 +371,21 @@ def _page_plan_architecture(
             raise ValueError("selected reference instructions must not repeat complete Word facts")
         reference_lines.append(
             f"Reference {reference['material_id']}: use: {reference['use']}; preserve: {reference['preserve']}"
+        )
+    lowered = "\n".join((_canonical_text(normalized), *reference_lines)).casefold()
+    if re.search(r"#[0-9a-f]{3}(?:[0-9a-f]{3})?\b", lowered) or any(
+        role in lowered
+        for role in (
+            "background color",
+            "primary color",
+            "secondary color",
+            "highlight color",
+            "accent color",
+            "color palette",
+        )
+    ):
+        raise ValueError(
+            "director-authored color directives belong only in Visual Style and Color"
         )
     return "\n".join(("\n".join(lines), *reference_lines))
 
