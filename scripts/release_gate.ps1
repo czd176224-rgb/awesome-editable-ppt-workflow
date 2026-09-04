@@ -54,7 +54,8 @@ try {
     $parseErrors = @()
     Get-ChildItem -Recurse -Filter *.ps1 -File | ForEach-Object {
         $tokens = $null; $errors = $null
-        [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+        $source = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8)
+        [void][System.Management.Automation.Language.Parser]::ParseInput($source, $_.FullName, [ref]$tokens, [ref]$errors)
         $parseErrors += $errors
     }
     if ($parseErrors.Count) { $parseErrors | Format-List; throw "PowerShell parsing failed." }
