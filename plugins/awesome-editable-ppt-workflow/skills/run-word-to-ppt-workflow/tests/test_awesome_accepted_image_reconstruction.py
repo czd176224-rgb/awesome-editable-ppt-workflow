@@ -115,7 +115,14 @@ def test_finalize_and_assemble_continue_after_transient_pre_acceptance_authoriti
 
     assert request["sealed_image_edits"] == []
     assert (project / page["page_pptx"]).is_file()
-    assert (project / deck["output"]).is_file()
+    if deck["release_ready"]:
+        assert (project / deck["output"]).is_file()
+    else:
+        assert deck["status"] == "validation_incomplete"
+        assert deck["release_status"] == "not_release_ready"
+        assert deck["final_output"] is None
+        assert "output" not in deck
+        assert (project / deck["candidate_output"]["relative_path"]).is_file()
     persisted = json.loads((project / "workflow_v6.json").read_text(encoding="utf-8"))
     assert persisted["pages"][0]["state"] == "page_complete"
 

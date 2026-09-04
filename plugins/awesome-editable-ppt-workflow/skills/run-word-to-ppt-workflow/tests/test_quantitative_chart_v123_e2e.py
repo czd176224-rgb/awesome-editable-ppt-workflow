@@ -76,6 +76,23 @@ def _production_worker(manifest_factory, calls: list[dict], post_validate=None):
             assert completed.returncode == 0, completed.stderr
         validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
         assert validation["passed"] is True
+        Image.new("RGB", (8, 8), "white").save(
+            request.page_dir / "split_assets_contact.png"
+        )
+        (request.page_dir / "page_result.json").write_text("{}\n", encoding="utf-8")
+        recorded = subprocess.run(
+            [
+                sys.executable,
+                str(RUNTIME / "record_manifest_page_result.py"),
+                str(request.run_dir),
+                "--page", "page_001",
+                "--agent-id", "deterministic-worker",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert recorded.returncode == 0, recorded.stderr or recorded.stdout
         if post_validate is not None:
             post_validate(request.page_dir / "page.pptx")
         calls.append({"request": page_request, "prompt": request.prompt_file.read_text(encoding="utf-8"), "manifest": manifest, "page_dir": request.page_dir})

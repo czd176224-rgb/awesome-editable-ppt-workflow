@@ -17,11 +17,11 @@ from workflow_v6_reconstruction import (
     build_reconstruction_request,
     commit_reconstructed_page,
     finalize_reconstructed_page,
+    verify_completed_page_authority,
 )
 from workflow_v6_media import normalized_raster_pixel_seal
 import workflow_v6_secure_io as secure_io
 from workflow_v6_state import load
-from complex_page_experiment import open_live_page_workspace, verify_signed_acceptance_receipt
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -322,55 +322,10 @@ def _recovery(project: Path, page_number: int) -> dict[str, Any] | None:
     page = state["pages"][page_number - 1]
     if page.get("state") != "page_complete":
         return None
-    final_receipt = project / "06_v6" / "pages" / f"page_{page_number:03d}" / "page.json"
-    reconstruction_receipt = project / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}" / "reconstruction.json"
-    if not final_receipt.is_file() or not reconstruction_receipt.is_file():
+    verified = verify_completed_page_authority(project, page_number)
+    value = verified.get("reconstruction_receipt")
+    if not isinstance(value, dict):
         raise RuntimeError("completed reconstruction authority is incomplete")
-    final = json.loads(final_receipt.read_text(encoding="utf-8"))
-    value = json.loads(reconstruction_receipt.read_text(encoding="utf-8"))
-    accepted = value.get("accepted_receipt")
-    if not isinstance(accepted, dict) or accepted != final.get("accepted_receipt"):
-        raise RuntimeError("reconstruction receipt does not match the current acceptance receipt")
-    accepted_path = project / str(accepted.get("path", ""))
-    if not accepted_path.is_file():
-        raise RuntimeError("current signed acceptance receipt is missing")
-    accepted_bytes = accepted_path.read_bytes()
-    try:
-        verified = verify_signed_acceptance_receipt(
-            open_live_page_workspace(project, page_number), accepted_bytes,
-        )
-    except (KeyError, OSError, ValueError) as exc:
-        raise RuntimeError("current signed acceptance receipt is invalid") from exc
-    if (
-        verified.get("page_number") != page_number
-        or accepted.get("sha256") != hashlib.sha256(accepted_bytes).hexdigest()
-    ):
-        raise RuntimeError("reconstruction receipt does not match the current acceptance receipt")
-    page_pptx = project / str(final.get("page_pptx", ""))
-    if not page_pptx.is_file() or hashlib.sha256(page_pptx.read_bytes()).hexdigest() != final.get("sha256"):
-        raise RuntimeError("completed reconstructed page changed")
-    if value.get("final_page_sha256") != final.get("sha256"):
-        raise RuntimeError("reconstruction receipt does not match the final page")
-    accepted_source = value.get("accepted_source_body")
-    worker_source = value.get("worker_source_body")
-    if (
-        not isinstance(accepted_source, dict)
-        or not isinstance(worker_source, dict)
-        or final.get("accepted_source_body") != accepted_source
-        or final.get("worker_source_body") != worker_source
-        or _source_seal(
-            project,
-            project / str(accepted_source.get("path", "")),
-            sealed_path=str(accepted_source.get("path", "")),
-        ) != accepted_source
-        or _source_seal(
-            project,
-            project / str(worker_source.get("path", "")),
-            sealed_path=str(worker_source.get("path", "")),
-        ) != worker_source
-        or worker_source.get("normalized_pixel_sha256") != accepted_source.get("normalized_pixel_sha256")
-    ):
-        raise RuntimeError("reconstruction receipt does not match the accepted image pixels")
     return {**value, "recovered": True}
 
 

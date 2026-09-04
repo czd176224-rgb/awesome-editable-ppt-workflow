@@ -6,7 +6,9 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 import uuid
 import zipfile
 import copy
@@ -16,7 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from xml.etree import ElementTree
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageFilter
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -36,6 +38,8 @@ from complex_page_experiment import (
     open_live_page_workspace,
     verify_signed_acceptance_receipt,
 )
+from complex_page_experiment.loop import _candidate_from_receipt
+from workflow_v6_special_pages import SPECIAL_ROLES
 
 
 _EDITPPT_CLI = (
@@ -54,11 +58,351 @@ from editppt.runtime.validate_pptx import (  # noqa: E402
 from editppt.runtime.build_pptx_from_manifest import (  # noqa: E402
     apply_native_charts,
     normalize_manifest,
+    officecli_executable,
 )
 
 
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _RELATIONSHIP_ATTRIBUTES = {f"{{{_R}}}embed", f"{{{_R}}}id", f"{{{_R}}}link"}
+_VISUAL_QA_SIZE = (128, 64)
+_VISUAL_QA_MIN_FOREGROUND_RETENTION = 0.30
+_VISUAL_QA_MIN_ACTIVE_TILE_COVERAGE = 0.50
+
+
+def _foreground_mask(path: Path) -> Image.Image:
+    image = Image.open(path).convert("RGB")
+    image.thumbnail((512, 512), Image.Resampling.LANCZOS)
+    width, height = image.size
+    border = []
+    for x in range(0, width, max(1, width // 100)):
+        border.extend((image.getpixel((x, 0)), image.getpixel((x, height - 1))))
+    for y in range(0, height, max(1, height // 100)):
+        border.extend((image.getpixel((0, y)), image.getpixel((width - 1, y))))
+    background = tuple(
+        sorted(pixel[channel] for pixel in border)[len(border) // 2]
+        for channel in range(3)
+    )
+    difference = ImageChops.difference(
+        image, Image.new("RGB", image.size, background),
+    ).convert("L").point(lambda value: 255 if value > 18 else 0)
+    return difference.resize(
+        _VISUAL_QA_SIZE, Image.Resampling.BILINEAR,
+    ).point(lambda value: 255 if value > 25 else 0).filter(ImageFilter.MaxFilter(3))
+
+
+def _compare_body_images(source: Path, reconstruction: Path) -> dict[str, Any]:
+    source_mask = _foreground_mask(source)
+    reconstruction_mask = _foreground_mask(reconstruction)
+    pixel_count = _VISUAL_QA_SIZE[0] * _VISUAL_QA_SIZE[1]
+    source_pixels = source_mask.histogram()[255]
+    reconstructed_pixels = reconstruction_mask.histogram()[255]
+    thresholds = {
+        "minimum_foreground_retention": _VISUAL_QA_MIN_FOREGROUND_RETENTION,
+        "minimum_active_tile_coverage": _VISUAL_QA_MIN_ACTIVE_TILE_COVERAGE,
+    }
+    if source_pixels < 32:
+        return {
+            "passed": True,
+            "reason": "source_has_no_measurable_foreground",
+            "metrics": {
+                "source_foreground_fraction": source_pixels / pixel_count,
+                "reconstruction_foreground_fraction": reconstructed_pixels / pixel_count,
+                "foreground_retention": 1.0,
+                "active_tile_coverage": 1.0,
+            },
+            "thresholds": thresholds,
+        }
+    active_tiles = 0
+    retained_tiles = 0
+    tile_width = _VISUAL_QA_SIZE[0] // 8
+    tile_height = _VISUAL_QA_SIZE[1] // 4
+    for row in range(4):
+        for column in range(8):
+            box = (
+                column * tile_width,
+                row * tile_height,
+                (column + 1) * tile_width,
+                (row + 1) * tile_height,
+            )
+            source_fraction = source_mask.crop(box).histogram()[255] / (tile_width * tile_height)
+            if source_fraction < 0.03:
+                continue
+            active_tiles += 1
+            reconstruction_fraction = (
+                reconstruction_mask.crop(box).histogram()[255] / (tile_width * tile_height)
+            )
+            retained_tiles += reconstruction_fraction >= 0.015
+    foreground_retention = reconstructed_pixels / source_pixels
+    tile_coverage = retained_tiles / max(active_tiles, 1)
+    passed = (
+        foreground_retention >= _VISUAL_QA_MIN_FOREGROUND_RETENTION
+        and tile_coverage >= _VISUAL_QA_MIN_ACTIVE_TILE_COVERAGE
+    )
+    return {
+        "passed": passed,
+        "reason": "body_structure_retained" if passed else "severe_body_content_loss",
+        "metrics": {
+            "source_foreground_fraction": source_pixels / pixel_count,
+            "reconstruction_foreground_fraction": reconstructed_pixels / pixel_count,
+            "foreground_retention": foreground_retention,
+            "active_tile_coverage": tile_coverage,
+            "active_source_tiles": active_tiles,
+        },
+        "thresholds": thresholds,
+    }
+
+
+def _crop_rendered_slide_body(rendered_slide: Path, body_preview: Path) -> None:
+    contract = geometry_contract()
+    slide = contract["slide_cm"]
+    body = contract["body_cm"]
+    with Image.open(rendered_slide) as rendered:
+        width, height = rendered.size
+        crop = rendered.crop((
+            round(width * body["x"] / slide["w"]),
+            round(height * body["y"] / slide["h"]),
+            round(width * (body["x"] + body["w"]) / slide["w"]),
+            round(height * (body["y"] + body["h"]) / slide["h"]),
+        ))
+        crop.resize((1904, 896), Image.Resampling.LANCZOS).save(body_preview)
+
+
+def _render_reconstructed_body(pptx: Path, preview: Path) -> dict[str, Any]:
+    """Render the actual PPTX with PowerPoint and crop the fixed body region."""
+    if os.name != "nt":
+        return {
+            "available": False,
+            "status": "unavailable",
+            "backend": None,
+            "detail": "PowerPoint rendering is available only on Windows",
+        }
+    full_slide = preview.with_name(f".{preview.stem}.full.png")
+    script = r"""
+import json, sys
+import win32com.client
+app = presentation = None
+try:
+    app = win32com.client.DispatchEx('PowerPoint.Application')
+    presentation = app.Presentations.Open(sys.argv[1], WithWindow=False)
+    presentation.Slides(1).Export(sys.argv[2], 'PNG', 1904, 1071)
+    print(json.dumps({'version': str(app.Version), 'slides': int(presentation.Slides.Count)}))
+finally:
+    if presentation is not None: presentation.Close()
+    if app is not None: app.Quit()
+"""
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(pptx), str(full_slide)],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=90,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "available": True,
+            "status": "failed",
+            "backend": "powerpoint_com",
+            "detail": f"PowerPoint render timed out after {exc.timeout} seconds",
+        }
+    if completed.returncode != 0 or not full_slide.is_file():
+        detail = (completed.stderr.strip() or completed.stdout.strip())[:2000]
+        missing = "No module named 'win32com'" in detail or "Invalid class string" in detail
+        return {
+            "available": not missing,
+            "status": "unavailable" if missing else "failed",
+            "backend": None if missing else "powerpoint_com",
+            "detail": detail or "PowerPoint did not produce a slide image",
+        }
+    try:
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+        _crop_rendered_slide_body(full_slide, preview)
+    except (IndexError, KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return {
+            "available": True,
+            "status": "failed",
+            "backend": "powerpoint_com",
+            "detail": f"PowerPoint render result was invalid: {exc}",
+        }
+    finally:
+        full_slide.unlink(missing_ok=True)
+    return {
+        "available": True,
+        "status": "passed",
+        "backend": "powerpoint_com",
+        "detail": f"PowerPoint {payload['version']} rendered the actual reconstructed slide",
+    }
+
+
+def _run_post_reconstruction_visual_qa(
+    root: Path,
+    source: Path,
+    reconstructed_pptx: Path,
+    preview: Path,
+) -> dict[str, Any]:
+    rendering = _render_reconstructed_body(reconstructed_pptx, preview)
+    if rendering["status"] != "passed":
+        return {
+            "status": rendering["status"],
+            "passed": False,
+            "reason": "actual_pptx_render_unavailable" if not rendering["available"] else "actual_pptx_render_failed",
+            "rendering": rendering,
+            "source": source.relative_to(root).as_posix(),
+            "source_sha256": _sha256(source),
+            "preview": None,
+            "preview_sha256": None,
+            "algorithm": "actual-pptx-render-background-relative-foreground-retention-v1",
+        }
+    comparison = _compare_body_images(source, preview)
+    return {
+        "status": "passed" if comparison["passed"] else "failed",
+        **comparison,
+        "source": source.relative_to(root).as_posix(),
+        "source_sha256": _sha256(source),
+        "preview": preview.relative_to(root).as_posix(),
+        "preview_sha256": _sha256(preview),
+        "rendering": rendering,
+        "algorithm": "actual-pptx-render-background-relative-foreground-retention-v1",
+    }
+
+
+def _validate_final_openxml(pptx: Path, expected_pages: int) -> dict[str, Any]:
+    validator = _EDITPPT_CLI / "editppt" / "runtime" / "validate_pptx.py"
+    completed = subprocess.run(
+        [sys.executable, str(validator), str(pptx)],
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+    try:
+        raw = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        raw = {}
+    passed = bool(
+        raw.get("zip_ok") is True
+        and raw.get("slides") == expected_pages
+        and not raw.get("missing_parts")
+        and not raw.get("missing_relationship_targets")
+        and not any("Unable to read pptx" in warning for warning in raw.get("warnings", []))
+    )
+    return {
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "validator": str(validator),
+        "zip_ok": raw.get("zip_ok") is True,
+        "slides": raw.get("slides", 0),
+        "expected_slides": expected_pages,
+        "missing_parts": raw.get("missing_parts", []),
+        "missing_relationship_targets": raw.get("missing_relationship_targets", []),
+        "reason": None if passed else (
+            completed.stderr.strip() or completed.stdout.strip() or "OpenXML package validation failed"
+        ),
+    }
+
+
+def _officecli_validation(pptx: Path) -> dict[str, Any]:
+    try:
+        executable = officecli_executable()
+    except (OSError, RuntimeError) as exc:
+        return {"available": False, "status": "skipped", "detail": str(exc)}
+    validation_root = Path(tempfile.mkdtemp(prefix="editable-ppt-officecli-validation-"))
+    validation_input = validation_root / "deck.pptx"
+    shutil.copyfile(pptx, validation_input)
+    try:
+        completed = subprocess.run(
+            [executable, "validate", str(validation_input), "--json"],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        shutil.rmtree(validation_root, ignore_errors=True)
+        return {"available": True, "status": "failed", "detail": str(exc)}
+    result = {
+        "available": True,
+        "status": "passed" if completed.returncode == 0 else "failed",
+        "detail": (completed.stdout.strip() or completed.stderr.strip())[:2000],
+    }
+    shutil.rmtree(validation_root, ignore_errors=True)
+    return result
+
+
+def _render_powerpoint_deck(
+    pptx: Path, expected_pages: int, render_dir: Path,
+) -> dict[str, Any]:
+    if os.name != "nt":
+        return {"available": False, "status": "skipped", "detail": "PowerPoint COM is Windows only"}
+    validation_root = Path(tempfile.mkdtemp(prefix="editable-ppt-powerpoint-render-"))
+    render_dir.mkdir(parents=True, exist_ok=True)
+    validation_input = validation_root / "deck.pptx"
+    shutil.copyfile(pptx, validation_input)
+    script = """
+import json, os, sys
+import win32com.client
+app = presentation = None
+try:
+    app = win32com.client.DispatchEx('PowerPoint.Application')
+    presentation = app.Presentations.Open(sys.argv[1], WithWindow=False)
+    for index in range(1, int(presentation.Slides.Count) + 1):
+        presentation.Slides(index).Export(
+            os.path.join(sys.argv[2], 'page-%03d.png' % index), 'PNG', 1904, 1071
+        )
+    print(json.dumps({
+        'version': str(app.Version),
+        'slides': int(presentation.Slides.Count),
+        'rendered_slides': len([name for name in os.listdir(sys.argv[2]) if name.lower().endswith('.png')]),
+    }))
+finally:
+    if presentation is not None: presentation.Close()
+    if app is not None: app.Quit()
+"""
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(validation_input), str(render_dir)],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        shutil.rmtree(validation_root, ignore_errors=True)
+        return {"available": True, "status": "failed", "detail": f"timed out after {exc.timeout} seconds"}
+    if completed.returncode != 0:
+        detail = (completed.stderr.strip() or completed.stdout.strip())[:2000]
+        missing = "No module named 'win32com'" in detail or "Invalid class string" in detail
+        shutil.rmtree(validation_root, ignore_errors=True)
+        return {"available": not missing, "status": "skipped" if missing else "failed", "detail": detail}
+    try:
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+        slides = int(payload["slides"])
+        rendered_slides = int(payload["rendered_slides"])
+    except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        shutil.rmtree(validation_root, ignore_errors=True)
+        return {"available": True, "status": "failed", "detail": f"invalid PowerPoint result: {exc}"}
+    passed = slides == expected_pages and rendered_slides == expected_pages
+    result = {
+        "available": True,
+        "status": "passed" if passed else "failed",
+        "detail": f"PowerPoint {payload['version']} opened and rendered {rendered_slides} of {slides} slides",
+        "slides": slides,
+        "rendered_slides": rendered_slides,
+    }
+    shutil.rmtree(validation_root, ignore_errors=True)
+    return result
+
+
+def _powerpoint_validation(pptx: Path, expected_pages: int) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="editable-ppt-powerpoint-validation-") as directory:
+        return _render_powerpoint_deck(pptx, expected_pages, Path(directory) / "rendered")
 
 
 def _require_current_fixed_frame(slide) -> None:
@@ -329,7 +673,7 @@ def build_reconstruction_request(project: Path, *, page_number: int) -> dict[str
             "object_level_editable": True,
             "body_only": True,
             "fixed_layers_added_after_reconstruction": True,
-            "post_reconstruction_visual_qa": False,
+            "post_reconstruction_visual_qa": True,
             "exact_reference_material_custody": False,
         },
     }
@@ -633,6 +977,77 @@ def _inside(point: tuple[int, int], shape: object) -> bool:
     )
 
 
+def _confirmed_page_role(root: Path, page_number: int) -> str:
+    composition = load_composition_authority(root)
+    if composition is None:
+        return "content"
+    matches = [
+        page for page in composition["pages"]
+        if page.get("output_page_number") == page_number
+    ]
+    if len(matches) != 1:
+        raise ValueError("V6 confirmed page composition authority is invalid")
+    role = matches[0].get("page_role")
+    if not isinstance(role, str):
+        raise ValueError("V6 confirmed page role authority is invalid")
+    return role
+
+
+def _require_recorded_worker_output(
+    run_dir: Path,
+    job: Mapping[str, Any],
+    manifest_path: Path,
+    page_pptx: Path,
+) -> None:
+    result = job.get("result")
+    artifacts = result.get("artifacts") if isinstance(result, Mapping) else None
+    hashes = result.get("sha256") if isinstance(result, Mapping) else None
+    expected = {
+        "page_manifest": manifest_path.relative_to(run_dir).as_posix(),
+        "page_pptx": page_pptx.relative_to(run_dir).as_posix(),
+    }
+    if (
+        job.get("status") != "recorded"
+        or not isinstance(artifacts, Mapping)
+        or not isinstance(hashes, Mapping)
+        or any(artifacts.get(name) != path for name, path in expected.items())
+        or hashes.get("page_manifest") != _sha256(manifest_path)
+        or hashes.get("page_pptx") != _sha256(page_pptx)
+    ):
+        raise ValueError("V6 recorded worker artifact authority is invalid")
+
+    validator = _EDITPPT_CLI / "editppt" / "runtime" / "validate_pptx.py"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(Path(__file__).resolve().parent), env.get("PYTHONPATH"))
+        if value
+    )
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(validator),
+            str(page_pptx),
+            "--manifest",
+            str(manifest_path),
+        ],
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    try:
+        report = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        report = None
+    if completed.returncode != 0 or not isinstance(report, Mapping) or report.get("passed") is not True:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "page validation failed"
+        raise ValueError(f"V6 recorded worker PPTX failed deterministic validation: {detail}")
+
+
 def _require_final_authority(
     root: Path,
     page_number: int,
@@ -672,9 +1087,9 @@ def _require_final_authority(
     if not receipt_path.is_file():
         raise ValueError("V6 sealed acceptance receipt is missing")
     receipt_bytes = secure_io.read_bytes(root, receipt_path.relative_to(root))
-    receipt = verify_signed_acceptance_receipt(
-        open_live_page_workspace(root, page_number), receipt_bytes,
-    )
+    workspace = open_live_page_workspace(root, page_number)
+    receipt = verify_signed_acceptance_receipt(workspace, receipt_bytes)
+    candidate = _candidate_from_receipt(workspace, receipt)
     if (
         accepted.get("sha256") != hashlib.sha256(receipt_bytes).hexdigest()
         or receipt.get("page_number") != page_number
@@ -708,27 +1123,39 @@ def _require_final_authority(
         or page_request.get("accepted_source_body") != request.get("source_body")
     ):
         raise ValueError("V6 sealed reconstruction request relationship is invalid")
-    source_body = request.get("source_body")
+    candidate_bytes = secure_io.read_bytes(root, candidate.path.resolve().relative_to(root))
+    signed_source_body = {
+        "path": candidate.path.resolve().relative_to(root).as_posix(),
+        "sha256": hashlib.sha256(candidate_bytes).hexdigest(),
+        **normalized_raster_pixel_seal(candidate_bytes),
+    }
+    selected = _load_reconstruction_state(root)["pages"][page_number - 1].get(
+        "selected_candidate"
+    )
+    signed_candidate = receipt.get("candidate")
+    if (
+        not isinstance(selected, Mapping)
+        or not isinstance(signed_candidate, Mapping)
+        or any(selected.get(field) != signed_candidate.get(field) for field in ("path", "attempt", "operation"))
+        or request.get("source_body") != signed_source_body
+        or canonical_request.get("source_body") != signed_source_body
+        or page_request.get("accepted_source_body") != signed_source_body
+    ):
+        raise ValueError("V6 sealed accepted source does not match the signed candidate")
+    source_body = signed_source_body
     worker_source = page_request.get("worker_source_body")
     if not isinstance(source_body, Mapping) or not isinstance(worker_source, Mapping):
         raise ValueError("V6 sealed accepted-image authority is incomplete")
-    accepted_image = root / str(source_body.get("path", ""))
     worker_image = reconstructed_body.parent / "source.png"
-    if not accepted_image.is_file() or not worker_image.is_file():
+    if not worker_image.is_file():
         raise ValueError("V6 sealed accepted-image authority is missing")
-    accepted_bytes = secure_io.read_bytes(root, accepted_image.relative_to(root))
     worker_bytes = secure_io.read_bytes(root, worker_image.relative_to(root))
-    accepted_seal = {
-        "path": source_body.get("path"),
-        "sha256": hashlib.sha256(accepted_bytes).hexdigest(),
-        **normalized_raster_pixel_seal(accepted_bytes),
-    }
     current_worker_seal = {
         "path": worker_source.get("path"),
         "sha256": hashlib.sha256(worker_bytes).hexdigest(),
         **normalized_raster_pixel_seal(worker_bytes),
     }
-    if accepted_seal != source_body or current_worker_seal != worker_source:
+    if current_worker_seal != worker_source:
         raise ValueError("V6 sealed accepted-image digest changed")
     if worker_source.get("normalized_pixel_sha256") != source_body.get("normalized_pixel_sha256"):
         raise ValueError("V6 worker source pixels do not match the accepted image")
@@ -789,10 +1216,151 @@ def _require_final_authority(
         violations = quantitative_chart_readback_violations(reconstructed_body, [manifest])
         if violations:
             raise ValueError("V6 sealed numeric authority failed readback: " + json.dumps(violations, ensure_ascii=False))
+    _require_recorded_worker_output(
+        reconstructed_body.parents[2], job, manifest_path, reconstructed_body,
+    )
     return {
         "accepted_receipt": dict(accepted),
         "accepted_source_body": dict(source_body),
         "worker_source_body": dict(worker_source),
+    }
+
+
+def verify_completed_page_authority(project: Path, page_number: int) -> dict[str, Any]:
+    """Revalidate the published page and every sealed input used to create it."""
+    root = Path(project).resolve()
+    state = _load_reconstruction_state(root)
+    page = state["pages"][page_number - 1]
+    if page.get("state") != "page_complete":
+        raise RuntimeError("completed reconstruction authority is not complete")
+    package_dir = root / "06_v6" / "pages" / f"page_{page_number:03d}"
+    final_path = package_dir / "page.json"
+    if not final_path.is_file():
+        raise RuntimeError("completed reconstruction authority is incomplete")
+    final = _read_json(final_path)
+    artifact_version = final.get("artifact_version")
+    page_role = _confirmed_page_role(root, page_number)
+    expected_artifact_version = (
+        "special-page-v6" if page_role in SPECIAL_ROLES else "final-page-v6"
+    )
+    expected_page = package_dir / "page.pptx"
+    expected_relative = expected_page.relative_to(root).as_posix()
+    if (
+        artifact_version != expected_artifact_version
+        or final.get("page_pptx") != expected_relative
+    ):
+        raise RuntimeError("completed page receipt authority is invalid")
+    page_pptx = expected_page
+    if (
+        final.get("page_number") != page_number
+        or not page_pptx.is_file()
+        or _sha256(page_pptx) != final.get("sha256")
+    ):
+        raise RuntimeError("completed reconstructed page changed")
+    if artifact_version == "final-page-v6":
+        style = state["style_confirmation"]["contract"]
+        fixed = final.get("fixed_frame")
+        current_fixed = inspect_fixed_frame(
+            page_pptx,
+            expected_title=page["title"],
+            expected_page_number=page_number,
+            style_execution=_fixed_frame_style(style),
+            logo_svg=root / state["logo_source"]["path"],
+        )
+        if (
+            not isinstance(fixed, Mapping)
+            or fixed.get("passed") is not True
+            or current_fixed.get("passed") is not True
+        ):
+            raise RuntimeError("completed page fixed-frame authority is invalid")
+
+    run_dir = root / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
+    reconstruction_path = run_dir / "reconstruction.json"
+    sealed = (
+        page.get("selected_candidate") is not None
+        or final.get("accepted_receipt") is not None
+        or (root / "04_v6" / "images" / f"page_{page_number:03d}.json").is_file()
+    )
+    if not sealed:
+        if (
+            artifact_version == "final-page-v6"
+            and state.get("word_source", {}).get("authority_mode") != "legacy_non_word"
+        ):
+            raise RuntimeError("native-direct page requires legacy_non_word authority")
+        visual_qa = final.get("post_reconstruction_visual_qa")
+        if artifact_version == "special-page-v6" and visual_qa is None:
+            visual_qa = {
+                "status": "skipped",
+                "passed": None,
+                "reason": "special_page_is_outside_normal_body_visual_qa",
+            }
+        if not isinstance(visual_qa, Mapping) or visual_qa.get("status") != "skipped":
+            raise RuntimeError("native-direct page visual QA status is invalid")
+        return {
+            "status": "verified",
+            "authority_mode": "native_direct",
+            "visual_qa": dict(visual_qa),
+        }
+    if not reconstruction_path.is_file():
+        raise RuntimeError("completed reconstruction authority is incomplete")
+    reconstruction = _read_json(reconstruction_path)
+    worker_body = run_dir / "pages" / "page_001" / "page.pptx"
+    if not worker_body.is_file():
+        raise RuntimeError("completed reconstruction worker output is missing")
+    sealed_authority = _require_final_authority(
+        root, page_number, worker_body, Presentation(worker_body), "sealed_reconstruction",
+    )
+    accepted = reconstruction.get("accepted_receipt")
+    accepted_source = sealed_authority.get("accepted_source_body")
+    if (
+        reconstruction.get("artifact_version") != "accepted-image-worker-reconstruction-v1"
+        or reconstruction.get("page_number") != page_number
+        or not isinstance(accepted, Mapping)
+        or accepted != final.get("accepted_receipt")
+        or accepted != sealed_authority.get("accepted_receipt")
+        or not isinstance(accepted_source, Mapping)
+        or reconstruction.get("accepted_image_sha256") != accepted_source.get("sha256")
+        or reconstruction.get("accepted_image_pixel_sha256") != accepted_source.get("normalized_pixel_sha256")
+        or reconstruction.get("accepted_source_body") != accepted_source
+        or reconstruction.get("worker_source_body") != sealed_authority.get("worker_source_body")
+        or final.get("accepted_source_body") != accepted_source
+        or final.get("worker_source_body") != sealed_authority.get("worker_source_body")
+        or reconstruction.get("final_page") != final.get("page_pptx")
+        or reconstruction.get("final_page_sha256") != final.get("sha256")
+    ):
+        raise RuntimeError("reconstruction receipt does not match the sealed page authority")
+    visual_qa = final.get("post_reconstruction_visual_qa")
+    if (
+        not isinstance(visual_qa, Mapping)
+        or visual_qa.get("status") not in {"passed", "unavailable"}
+    ):
+        raise RuntimeError("completed sealed page visual QA is missing or failed")
+    if visual_qa.get("status") == "unavailable":
+        return {
+            "status": "verified",
+            "authority_mode": "sealed_reconstruction",
+            "reconstruction_receipt": reconstruction,
+            "visual_qa": dict(visual_qa),
+        }
+    source_value = visual_qa.get("source")
+    preview_value = visual_qa.get("preview")
+    if not isinstance(source_value, str) or not isinstance(preview_value, str):
+        raise RuntimeError("completed sealed page visual QA evidence is incomplete")
+    source_path = root / source_value
+    preview_path = root / preview_value
+    if (
+        not source_path.is_file()
+        or not preview_path.is_file()
+        or _sha256(source_path) != visual_qa.get("source_sha256")
+        or _sha256(preview_path) != visual_qa.get("preview_sha256")
+        or _compare_body_images(source_path, preview_path).get("passed") is not True
+    ):
+        raise RuntimeError("completed sealed page visual QA evidence changed")
+    return {
+        "status": "verified",
+        "authority_mode": "sealed_reconstruction",
+        "reconstruction_receipt": reconstruction,
+        "visual_qa": dict(visual_qa),
     }
 
 
@@ -906,13 +1474,33 @@ def finalize_reconstructed_page(
         )
         if fixed.get("passed") is not True:
             raise ValueError("V6 fixed-layer validation failed: " + "; ".join(fixed.get("issues", [])))
+        visual_qa: dict[str, Any] = {
+            "status": "skipped",
+            "passed": None,
+            "reason": "native_direct_page_has_no_accepted_image_authority",
+        }
+        if sealed_authority is not None:
+            source_path = root / sealed_authority["accepted_source_body"]["path"]
+            preview_path = finalization_output.with_name("post_reconstruction_preview.png")
+            visual_qa = _run_post_reconstruction_visual_qa(
+                root, source_path, finalization_output, preview_path,
+            )
+            if visual_qa.get("status") not in {"passed", "unavailable"}:
+                raise ValueError(
+                    "V6 post-reconstruction visual QA failed: "
+                    + str(visual_qa.get("reason", "unknown visual QA failure"))
+                )
+            if visual_qa.get("status") == "passed":
+                visual_qa["preview"] = (
+                    output_dir / "post_reconstruction_preview.png"
+                ).relative_to(root).as_posix()
         report = {
             "artifact_version": "final-page-v6",
             "page_number": page_number,
             "page_pptx": output.relative_to(root).as_posix(),
             "sha256": _sha256(finalization_output),
             "fixed_frame": fixed,
-            "post_reconstruction_visual_qa": False,
+            "post_reconstruction_visual_qa": visual_qa,
         }
         if sealed_authority is not None:
             report.update(sealed_authority)
@@ -949,6 +1537,83 @@ def finalize_reconstructed_page(
             os.replace(backup_dir, output_dir)
 
 
+def _write_staged_json(root: Path, path: Path, value: Mapping[str, Any]) -> None:
+    secure_io.atomic_write_bytes(
+        root,
+        path.relative_to(root),
+        (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        replace=path.exists(),
+    )
+
+
+def _publish_staged_package(staged: Path, target: Path) -> None:
+    backup: Path | None = None
+    if target.exists():
+        backup = target.parent / f".{target.name}.{uuid.uuid4().hex}.bak"
+        os.replace(target, backup)
+    try:
+        os.replace(staged, target)
+    except Exception:
+        if backup is not None and backup.exists():
+            os.replace(backup, target)
+        raise
+    if backup is not None:
+        shutil.rmtree(backup, ignore_errors=True)
+
+
+def _assembled_visual_qa(
+    root: Path,
+    page_authority: list[dict[str, Any]],
+    render_dir: Path,
+) -> dict[str, Any]:
+    sealed = [
+        item for item in page_authority
+        if item["authority_mode"] == "sealed_reconstruction"
+    ]
+    if not sealed:
+        return {
+            "status": "skipped",
+            "passed": None,
+            "reason": "no_sealed_normal_pages_required_visual_comparison",
+            "sealed_page_count": 0,
+            "pages": [],
+        }
+    results = []
+    for item in sealed:
+        page_number = item["page_number"]
+        page_report = _read_json(
+            root / "06_v6" / "pages" / f"page_{page_number:03d}" / "page.json"
+        )
+        source_value = page_report.get("accepted_source_body", {}).get("path")
+        if not isinstance(source_value, str):
+            raise ValueError(f"sealed page {page_number} accepted source is missing")
+        source = root / source_value
+        rendered_slide = render_dir / f"page-{page_number:03d}.png"
+        rendered_body = render_dir / f"page-{page_number:03d}-body.png"
+        if not rendered_slide.is_file():
+            raise ValueError(f"PowerPoint render for assembled page {page_number} is missing")
+        _crop_rendered_slide_body(rendered_slide, rendered_body)
+        comparison = _compare_body_images(source, rendered_body)
+        results.append({
+            "page_number": page_number,
+            "status": "passed" if comparison["passed"] else "failed",
+            "source": source.relative_to(root).as_posix(),
+            "source_sha256": _sha256(source),
+            "rendered_body": (Path("08_final") / "previews" / rendered_body.name).as_posix(),
+            "rendered_body_sha256": _sha256(rendered_body),
+            **comparison,
+        })
+    passed = all(item["passed"] for item in results)
+    return {
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "reason": "all_sealed_pages_passed" if passed else "assembled_deck_has_severe_body_content_loss",
+        "sealed_page_count": len(sealed),
+        "pages": results,
+        "algorithm": "assembled-powerpoint-render-background-relative-foreground-retention-v1",
+    }
+
+
 def assemble_v6_deck(project: Path) -> dict[str, Any]:
     secure_io.reject_reparse_chain(Path(project))
     root = Path(project).resolve()
@@ -971,7 +1636,15 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
     if any(not path.is_file() for path in pages):
         raise ValueError("a V6 finalized page package is missing")
     chart_manifests = []
+    page_authority = []
     for page_number, page in enumerate(state["pages"], start=1):
+        verified = verify_completed_page_authority(root, page_number)
+        page_authority.append({
+            "page_number": page_number,
+            "status": verified["status"],
+            "authority_mode": verified["authority_mode"],
+            "visual_qa": verified["visual_qa"],
+        })
         manifest_path = (
             root / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}"
             / "pages" / "page_001" / "manifest.json"
@@ -1001,16 +1674,19 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
             normalized["charts"] = []
         chart_manifests.append(normalized)
     output_dir = root / "08_final"
-    output = output_dir / "deck.pptx"
-    temporary = output_dir / f".deck-v6-{uuid.uuid4().hex[:8]}.tmp"
+    candidate_dir = root / "08_candidate"
+    staged = root / f".08_final.{uuid.uuid4().hex}.tmp"
+    staged_output = staged / "deck.pptx"
+    render_dir = staged / "previews"
     deck = Presentation(pages[0])
     layout = deck.slides[0].slide_layout
     for page_number, path in enumerate(pages[1:], start=2):
         _copy_page_slide(path, deck, layout, page_number)
-    with secure_io.hold_parent(root, temporary.relative_to(root), create=True):
-        deck.save(temporary)
-        apply_native_charts(temporary, chart_manifests)
-        reopened = Presentation(temporary)
+    try:
+        with secure_io.hold_parent(root, staged_output.relative_to(root), create=True):
+            deck.save(staged_output)
+        apply_native_charts(staged_output, chart_manifests)
+        reopened = Presentation(staged_output)
         if len(reopened.slides) != len(pages):
             raise ValueError("assembled V6 slide count is incorrect")
         style = state["style_confirmation"]["contract"]
@@ -1035,28 +1711,106 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
             for slide in reopened.slides
         ):
             raise ValueError("assembled V6 slide has no editable text or table object")
-        reopened.save(temporary)
-        if not zipfile.is_zipfile(temporary):
+        reopened.save(staged_output)
+        if not zipfile.is_zipfile(staged_output):
             raise ValueError("assembled V6 output is not an OpenXML package")
-        temporary_bytes = temporary.read_bytes()
-    secure_io.atomic_write_bytes(root, output.relative_to(root), temporary_bytes, replace=output.exists())
-    temporary.unlink(missing_ok=True)
-    report = {
-        "artifact_version": "final-assembly-v6",
-        "workflow_contract_version": "awesome-word-ppt-workflow-v1",
-        "status": "complete",
-        "page_count": len(pages),
-        "page_order": [page["page_number"] for page in state["pages"]],
-        "output": output.relative_to(root).as_posix(),
-        "sha256": _sha256(output),
-        "mechanical_validation": {
-            "openxml_package": True,
-            "slide_count": True,
-            "fixed_layers": True,
-            "editable_objects": True,
-        },
-        "office_render_required": False,
-        "post_reconstruction_visual_qa": False,
-    }
-    _write_json(output_dir / "assembly.json", report)
-    return report
+        openxml_validation = _validate_final_openxml(staged_output, len(pages))
+        if openxml_validation.get("passed") is not True:
+            raise ValueError(
+                "V6 final OpenXML validation failed: "
+                + str(openxml_validation.get("reason", "unknown OpenXML failure"))
+            )
+        powerpoint_validation = _render_powerpoint_deck(
+            staged_output, len(pages), render_dir,
+        )
+        enhanced_validation = {
+            "officecli": _officecli_validation(staged_output),
+            "powerpoint": powerpoint_validation,
+        }
+        failed_enhanced = [
+            name for name, result in enhanced_validation.items()
+            if result.get("available") is True and result.get("status") == "failed"
+        ]
+        if failed_enhanced:
+            raise ValueError(
+                "V6 enhanced final validation failed: " + ", ".join(failed_enhanced)
+            )
+        if powerpoint_validation.get("status") != "passed":
+            candidate_output = candidate_dir / "deck.pptx"
+            candidate_digest = _sha256(staged_output)
+            visual_summary = {
+                "status": "unavailable",
+                "passed": False,
+                "reason": "actual_assembled_deck_render_unavailable",
+                "sealed_page_count": sum(
+                    item["authority_mode"] == "sealed_reconstruction"
+                    for item in page_authority
+                ),
+                "pages": [],
+            }
+            candidate_report = {
+                "artifact_version": "final-assembly-v6",
+                "workflow_contract_version": "awesome-word-ppt-workflow-v1",
+                "status": "validation_incomplete",
+                "release_status": "not_release_ready",
+                "release_ready": False,
+                "page_count": len(pages),
+                "page_order": [page["page_number"] for page in state["pages"]],
+                "candidate_output": {
+                    "path": str(candidate_output),
+                    "relative_path": candidate_output.relative_to(root).as_posix(),
+                    "sha256": candidate_digest,
+                },
+                "final_output": None,
+                "assembly_report": (candidate_dir / "assembly.json").relative_to(root).as_posix(),
+                "page_authority": page_authority,
+                "openxml_validation": openxml_validation,
+                "enhanced_validation": enhanced_validation,
+                "assembled_visual_qa": visual_summary,
+                "reason": "actual_office_render_validation_unavailable",
+            }
+            _write_staged_json(root, staged / "assembly.json", candidate_report)
+            _publish_staged_package(staged, candidate_dir)
+            staged = None
+            return candidate_report
+
+        visual_summary = _assembled_visual_qa(root, page_authority, render_dir)
+        if visual_summary.get("status") == "failed":
+            raise ValueError("V6 assembled deck visual QA failed: severe body content loss")
+        final_output = output_dir / "deck.pptx"
+        final_digest = _sha256(staged_output)
+        report = {
+            "artifact_version": "final-assembly-v6",
+            "workflow_contract_version": "awesome-word-ppt-workflow-v1",
+            "status": "complete",
+            "release_status": "release_ready",
+            "release_ready": True,
+            "page_count": len(pages),
+            "page_order": [page["page_number"] for page in state["pages"]],
+            "output": final_output.relative_to(root).as_posix(),
+            "sha256": final_digest,
+            "final_output": {
+                "path": str(final_output),
+                "relative_path": final_output.relative_to(root).as_posix(),
+                "sha256": final_digest,
+            },
+            "assembly_report": (output_dir / "assembly.json").relative_to(root).as_posix(),
+            "page_authority": page_authority,
+            "mechanical_validation": {
+                "openxml_package": True,
+                "slide_count": True,
+                "fixed_layers": True,
+                "editable_objects": True,
+            },
+            "openxml_validation": openxml_validation,
+            "enhanced_validation": enhanced_validation,
+            "assembled_visual_qa": visual_summary,
+            "post_reconstruction_visual_qa": visual_summary,
+        }
+        _write_staged_json(root, staged / "assembly.json", report)
+        _publish_staged_package(staged, output_dir)
+        staged = None
+        return report
+    finally:
+        if staged is not None and staged.is_dir():
+            shutil.rmtree(staged, ignore_errors=True)

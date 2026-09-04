@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+from pptx import Presentation
+from pptx.util import Inches
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +33,8 @@ from workflow_v6_reconstruction_worker import (  # noqa: E402
     PageWorkerResult,
     reconstruct_accepted_page,
 )
+from workflow_v6_reconstruction import assemble_v6_deck  # noqa: E402
+from workflow_v6_media import normalized_raster_pixel_seal  # noqa: E402
 from workflow_v6_state import load, save  # noqa: E402
 from test_quantitative_chart_v123_e2e import (  # noqa: E402
     _production_worker,
@@ -116,6 +120,7 @@ def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_cal
         page_worker=lambda request: pytest.fail("recovery called the page worker"),
         paddle_runner=lambda request: pytest.fail("recovery called Paddle"),
     )
+    assembly = assemble_v6_deck(project)
 
     assert first["reconstruction_mode"] == "codex_direct_reconstruction"
     assert recovered["recovered"] is True
@@ -140,6 +145,240 @@ def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_cal
     assert final["accepted_source_body"] == accepted_request["source_body"]
     assert reconstruction["accepted_source_body"] == accepted_request["source_body"]
     assert reconstruction["worker_source_body"] == page_request["worker_source_body"]
+    assert [
+        {key: item[key] for key in ("page_number", "status", "authority_mode")}
+        for item in assembly["page_authority"]
+    ] == [{
+        "page_number": 1, "status": "verified", "authority_mode": "sealed_reconstruction",
+    }]
+    assert assembly["page_authority"][0]["visual_qa"]["status"] in {
+        "passed", "unavailable",
+    }
+    if assembly["release_ready"]:
+        assert assembly["assembled_visual_qa"]["status"] == "passed"
+        assert assembly["sha256"] == hashlib.sha256(
+            (project / assembly["output"]).read_bytes()
+        ).hexdigest()
+    else:
+        assert assembly["status"] == "validation_incomplete"
+        assert assembly["release_status"] == "not_release_ready"
+        assert assembly["final_output"] is None
+        assert "output" not in assembly
+        assert (project / assembly["candidate_output"]["relative_path"]).is_file()
+
+
+@pytest.mark.parametrize(
+    "target,mutate",
+    [
+        (
+            "accepted_reconstruction_request.json",
+            lambda value: value["page_plan"].update({"page_purpose": "tampered"}),
+        ),
+        (
+            "page_request.json",
+            lambda value: value["page_plan"].update({"page_purpose": "tampered"}),
+        ),
+        (
+            "page_jobs.json",
+            lambda value: value["pages"][0]["dispatch"].update(
+                {"page_request_sha256": "0" * 64}
+            ),
+        ),
+        (
+            "manifest.json",
+            lambda value: value.update({"shapes": []}),
+        ),
+        (
+            "reconstruction.json",
+            lambda value: value.update({"final_page_sha256": "0" * 64}),
+        ),
+        (
+            "acceptance_receipt",
+            lambda value: value["page_plan"].update({"page_purpose": "tampered"}),
+        ),
+        (
+            "final_page_receipt",
+            lambda value: value.update({"artifact_version": "tampered"}),
+        ),
+        (
+            "final_page_receipt",
+            lambda value: value.update({"page_pptx": "06_v6/pages/page_999/page.pptx"}),
+        ),
+        (
+            "final_page_receipt",
+            lambda value: value["fixed_frame"].update({"passed": False}),
+        ),
+    ],
+)
+def test_assembly_revalidates_the_complete_sealed_page_authority_chain(
+    tmp_path: Path, target: str, mutate,
+):
+    project = _project(tmp_path, 1)
+    calls: list = []
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker(calls),
+    )
+    run_dir = project / "05_v6/reconstruction_runs/page_001"
+    path = {
+        "acceptance_receipt": project / "04_v6/images/page_001.json",
+        "final_page_receipt": project / "06_v6/pages/page_001/page.json",
+        "reconstruction.json": run_dir / "reconstruction.json",
+        "page_jobs.json": run_dir / "page_jobs.json",
+    }.get(target, run_dir / "pages/page_001" / target)
+    value = json.loads(path.read_text(encoding="utf-8"))
+    mutate(value)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        (RuntimeError, ValueError),
+        match="authority|receipt|request|relationship|edge|signature|artifact",
+    ):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
+
+
+def test_assembly_rejects_changed_final_page_bytes(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    page = project / "06_v6/pages/page_001/page.pptx"
+    page.write_bytes(page.read_bytes() + b"tampered")
+
+    with pytest.raises(RuntimeError, match="completed reconstructed page changed"):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
+
+
+@pytest.mark.parametrize("page_role", ["content", "appendix"])
+def test_assembly_rejects_non_special_page_disguised_as_special_page(
+    tmp_path: Path, page_role: str,
+):
+    project = _project(tmp_path, 1)
+    composition_path = project / "02_v6/page_composition.json"
+    composition = json.loads(composition_path.read_text(encoding="utf-8"))
+    composition["pages"][0]["page_role"] = page_role
+    composition_path.write_text(
+        json.dumps(composition, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    receipt_path = project / "06_v6/pages/page_001/page.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["artifact_version"] = "special-page-v6"
+    receipt_path.write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="artifact|role|authority"):
+        assemble_v6_deck(project)
+
+
+def test_assembly_rejects_unsigned_source_chain_swapped_away_from_signed_candidate(
+    tmp_path: Path,
+):
+    project = _project(tmp_path, 1)
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    swapped_path = project / "04_v6/images/swapped.png"
+    Image.new("RGB", (1904, 896), "black").save(swapped_path)
+    swapped_bytes = swapped_path.read_bytes()
+    accepted_source = {
+        "path": swapped_path.relative_to(project).as_posix(),
+        "sha256": hashlib.sha256(swapped_bytes).hexdigest(),
+        **normalized_raster_pixel_seal(swapped_bytes),
+    }
+    run_dir = project / "05_v6/reconstruction_runs/page_001"
+    page_dir = run_dir / "pages/page_001"
+    worker_path = page_dir / "source.png"
+    worker_path.write_bytes(swapped_bytes)
+    worker_source = {
+        "path": worker_path.relative_to(project).as_posix(),
+        "sha256": hashlib.sha256(swapped_bytes).hexdigest(),
+        **normalized_raster_pixel_seal(swapped_bytes),
+    }
+    request_paths = [
+        project / "05_v6/reconstruction_requests/page_001.json",
+        page_dir / "accepted_reconstruction_request.json",
+    ]
+    for path in request_paths:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["source_body"] = accepted_source
+        path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    page_request_path = page_dir / "page_request.json"
+    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    page_request["accepted_source_body"] = accepted_source
+    page_request["worker_source_body"] = worker_source
+    page_request_path.write_text(
+        json.dumps(page_request, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    jobs_path = run_dir / "page_jobs.json"
+    jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
+    jobs["pages"][0]["dispatch"]["page_request_sha256"] = hashlib.sha256(
+        page_request_path.read_bytes()
+    ).hexdigest()
+    jobs_path.write_text(json.dumps(jobs, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    reconstruction_path = run_dir / "reconstruction.json"
+    reconstruction = json.loads(reconstruction_path.read_text(encoding="utf-8"))
+    reconstruction.update({
+        "accepted_image_sha256": accepted_source["sha256"],
+        "accepted_image_pixel_sha256": accepted_source["normalized_pixel_sha256"],
+        "accepted_source_body": accepted_source,
+        "worker_source_body": worker_source,
+    })
+    reconstruction_path.write_text(
+        json.dumps(reconstruction, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    final_path = project / "06_v6/pages/page_001/page.json"
+    final = json.loads(final_path.read_text(encoding="utf-8"))
+    final["accepted_source_body"] = accepted_source
+    final["worker_source_body"] = worker_source
+    final_path.write_text(json.dumps(final, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises((RuntimeError, ValueError), match="accepted|candidate|source|authority"):
+        assemble_v6_deck(project)
+
+
+def test_assembly_rejects_manifest_bytes_changed_after_worker_record(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    manifest_path = project / "05_v6/reconstruction_runs/page_001/pages/page_001/manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["harmless_note"] = "changed after record"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+
+    with pytest.raises((RuntimeError, ValueError), match="manifest|record|authority|digest"):
+        assemble_v6_deck(project)
+
+
+def test_assembly_rejects_worker_pptx_with_undeclared_shape_after_record(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    worker_path = project / "05_v6/reconstruction_runs/page_001/pages/page_001/page.pptx"
+    deck = Presentation(worker_path)
+    deck.slides[0].shapes.add_textbox(Inches(1), Inches(1), Inches(2), Inches(1)).text = (
+        "undeclared"
+    )
+    deck.save(worker_path)
+
+    with pytest.raises((RuntimeError, ValueError), match="worker|record|authority|digest|PPTX"):
+        assemble_v6_deck(project)
 
 
 def test_page_worker_prompt_enforces_sealed_text_repairs(tmp_path: Path):

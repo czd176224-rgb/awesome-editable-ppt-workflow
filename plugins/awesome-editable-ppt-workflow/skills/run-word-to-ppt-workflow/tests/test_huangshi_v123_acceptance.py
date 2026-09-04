@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
+import hmac
+import html
 import json
 import os
 import shutil
@@ -27,6 +30,7 @@ sys.path[:0] = [str(SCRIPTS), str(RUNTIME)]
 from awesome_page_materials import publish_page_materials  # noqa: E402
 from codex_subscription_runtime import CodexStructuredResult  # noqa: E402
 from complex_page_experiment.director import direct_page  # noqa: E402
+from complex_page_experiment.loop import load_accepted_image_seal  # noqa: E402
 from complex_page_experiment.materials import build_complete_page_material_view  # noqa: E402
 from complex_page_experiment.workspace import open_live_page_workspace  # noqa: E402
 from director_taskbook import taskbook_digest  # noqa: E402
@@ -40,10 +44,14 @@ from workflow_v6_reconstruction import (  # noqa: E402
 )
 from workflow_v6_reconstruction_worker import PageWorkerResult, reconstruct_accepted_page  # noqa: E402
 from workflow_v6_state import create, load  # noqa: E402
+from provider_keyring import signing_key  # noqa: E402
 from test_quantitative_chart_v123_e2e import (  # noqa: E402
     _connector_endpoints,
 )
 from test_workflow_v6_reconstruction import _write_signed_receipt  # noqa: E402
+
+
+pytestmark = pytest.mark.huangshi_release
 
 
 DESKTOP = Path.home() / "Desktop"
@@ -65,6 +73,241 @@ PAGE_CONTRACTS = {
     40: ("flow", ("0—30天", "31—60天", "61—90天", "12个月")),
     41: ("analytical_table", ("资本形成", "产业投资", "科技转化", "企业成长", "绿色转型", "退出循环")),
 }
+
+
+def _resign_real_receipt_without_mutating_provider_evidence(
+    source_project: Path,
+    project: Path,
+    page_number: int,
+    receipt: dict,
+) -> dict:
+    authority = receipt["provider_authority"]
+    test_payloads = {
+        b'{"trace":"test"}\n',
+        b'{"capability":"test"}\n',
+        b'{"event":"test"}\n',
+    }
+    for name in ("trace", "capability", "journal"):
+        relative = Path(authority[f"{name}_path"])
+        source_bytes = (source_project / relative).read_bytes()
+        copied_bytes = (project / relative).read_bytes()
+        expected_digest = authority[f"{name}_sha256"]
+        assert copied_bytes == source_bytes
+        assert copied_bytes not in test_payloads
+        assert hashlib.sha256(copied_bytes).hexdigest() == expected_digest
+    unsigned = {
+        key: item for key, item in receipt.items()
+        if key not in {"key_id", "hmac_sha256"}
+    }
+    key_id, key = signing_key()
+    unsigned["key_id"] = key_id
+    payload = json.dumps(
+        unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    signed = {
+        **unsigned,
+        "hmac_sha256": hmac.new(key, payload, hashlib.sha256).hexdigest(),
+    }
+    path = project / "04_v6" / "images" / f"page_{page_number:03d}.json"
+    path.write_text(
+        json.dumps(signed, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return signed
+
+
+def _signed_mapping(value: dict) -> tuple[dict, bytes]:
+    unsigned = {
+        key: item for key, item in value.items()
+        if key not in {"key_id", "hmac_sha256"}
+    }
+    key_id, key = signing_key()
+    unsigned["key_id"] = key_id
+    payload = json.dumps(
+        unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    signed = {
+        **unsigned,
+        "hmac_sha256": hmac.new(key, payload, hashlib.sha256).hexdigest(),
+    }
+    return signed, json.dumps(
+        signed, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode() + b"\n"
+
+
+def _remap_identity(
+    value: object,
+    *,
+    old_experiment: str,
+    new_experiment: str,
+    old_page: int,
+    new_page: int,
+    source_snapshot: str,
+    workspace_identity: str,
+) -> object:
+    if isinstance(value, list):
+        return [
+            _remap_identity(
+                item,
+                old_experiment=old_experiment,
+                new_experiment=new_experiment,
+                old_page=old_page,
+                new_page=new_page,
+                source_snapshot=source_snapshot,
+                workspace_identity=workspace_identity,
+            )
+            for item in value
+        ]
+    if not isinstance(value, dict):
+        return value
+    mapped = {}
+    for key, item in value.items():
+        if key == "experiment_id" and item == old_experiment:
+            mapped[key] = new_experiment
+        elif key == "page_number" and item == old_page:
+            mapped[key] = new_page
+        elif key == "source_snapshot_sha256":
+            mapped[key] = source_snapshot
+        elif key == "workspace_identity_sha256":
+            mapped[key] = workspace_identity
+        else:
+            mapped[key] = _remap_identity(
+                item,
+                old_experiment=old_experiment,
+                new_experiment=new_experiment,
+                old_page=old_page,
+                new_page=new_page,
+                source_snapshot=source_snapshot,
+                workspace_identity=workspace_identity,
+            )
+    return mapped
+
+
+def _remap_real_acceptance_chain(
+    source_project: Path,
+    project: Path,
+    workspace: object,
+    source_page: int,
+    receipt: dict,
+    material_view_sha256: str,
+) -> None:
+    old_experiment = f"live-page-{source_page:03d}"
+    new_experiment = workspace.experiment_id
+    identity_payload = json.dumps(
+        {
+            "experiment_id": new_experiment,
+            "source_snapshot_sha256": workspace.source_snapshot_sha256,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    workspace_identity = hashlib.sha256(identity_payload).hexdigest()
+    source_experiment = source_project / "04_v6" / "experiments" / old_experiment
+    target_experiment = project / "04_v6" / "experiments" / new_experiment
+    if target_experiment.is_dir():
+        shutil.rmtree(target_experiment)
+    target_experiment.mkdir(parents=True)
+
+    original_events = [
+        json.loads(line)
+        for line in (source_experiment / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    mapped_events = [
+        _remap_identity(
+            item,
+            old_experiment=old_experiment,
+            new_experiment=new_experiment,
+            old_page=source_page,
+            new_page=workspace.page_number,
+            source_snapshot=workspace.source_snapshot_sha256,
+            workspace_identity=workspace_identity,
+        )
+        for item in original_events
+    ]
+    old_review_path = Path(receipt["accepted_review"]["authority_path"])
+    old_review = json.loads((source_project / old_review_path).read_text(encoding="utf-8"))
+    old_input_path = Path(old_review["review_input_receipt"]["path"])
+    old_input = json.loads((source_project / old_input_path).read_text(encoding="utf-8"))
+    mapped_input = _remap_identity(
+        old_input,
+        old_experiment=old_experiment,
+        new_experiment=new_experiment,
+        old_page=source_page,
+        new_page=workspace.page_number,
+        source_snapshot=workspace.source_snapshot_sha256,
+        workspace_identity=workspace_identity,
+    )
+    mapped_input["material_view_sha256"] = material_view_sha256
+    for item in mapped_input["ordered_inputs"]:
+        old_path = Path(item["path"])
+        new_path = Path(str(old_path).replace(old_experiment, new_experiment))
+        destination = project / new_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_project / old_path, destination)
+        item["path"] = new_path.as_posix()
+    _signed_input, input_bytes = _signed_mapping(mapped_input)
+    new_input_path = Path(str(old_input_path).replace(old_experiment, new_experiment))
+    (project / new_input_path).parent.mkdir(parents=True, exist_ok=True)
+    (project / new_input_path).write_bytes(input_bytes)
+
+    mapped_review = _remap_identity(
+        old_review,
+        old_experiment=old_experiment,
+        new_experiment=new_experiment,
+        old_page=source_page,
+        new_page=workspace.page_number,
+        source_snapshot=workspace.source_snapshot_sha256,
+        workspace_identity=workspace_identity,
+    )
+    mapped_review["material_view_sha256"] = material_view_sha256
+    mapped_review["review_input_receipt"] = {
+        "path": new_input_path.as_posix(),
+        "sha256": hashlib.sha256(input_bytes).hexdigest(),
+    }
+    signed_review, review_bytes = _signed_mapping(mapped_review)
+    new_review_path = Path(str(old_review_path).replace(old_experiment, new_experiment))
+    (project / new_review_path).parent.mkdir(parents=True, exist_ok=True)
+    (project / new_review_path).write_bytes(review_bytes)
+    receipt["accepted_review"]["authority_path"] = new_review_path.as_posix()
+    receipt["accepted_review"]["authority_sha256"] = hashlib.sha256(review_bytes).hexdigest()
+    for event in mapped_events:
+        if (
+            event.get("event") == "call"
+            and event.get("kind") == "visual_review"
+            and event.get("attempt") == receipt["candidate"]["attempt"]
+        ):
+            event["metadata"]["review_result_sha256"] = receipt["accepted_review"]["authority_sha256"]
+    evidence_bytes = b"".join(
+        json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+        for item in mapped_events
+    )
+    (target_experiment / "evidence.jsonl").write_bytes(evidence_bytes)
+
+    checkpoint = _remap_identity(
+        receipt["evidence_checkpoint"],
+        old_experiment=old_experiment,
+        new_experiment=new_experiment,
+        old_page=source_page,
+        new_page=workspace.page_number,
+        source_snapshot=workspace.source_snapshot_sha256,
+        workspace_identity=workspace_identity,
+    )
+    count = checkpoint["event_count"]
+    checkpoint["evidence_prefix_sha256"] = hashlib.sha256(
+        b"".join(evidence_bytes.splitlines(keepends=True)[:count])
+    ).hexdigest()
+    checkpoint["review_authority_sha256"] = receipt["accepted_review"]["authority_sha256"]
+    checkpoint["causal_events"] = [
+        {"event_index": item["event_index"], "value": mapped_events[item["event_index"]]}
+        for item in checkpoint["causal_events"]
+    ]
+    checkpoint.pop("checkpoint_sha256", None)
+    checkpoint["checkpoint_sha256"] = hashlib.sha256(
+        json.dumps(checkpoint, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    receipt["evidence_checkpoint"] = checkpoint
+    receipt["material_view_sha256"] = material_view_sha256
 
 STRUCTURAL_RELATIONSHIPS = {
     5: (
@@ -110,13 +353,22 @@ def _accepted_outcome(project: Path, page_number: int) -> SimpleNamespace:
     return SimpleNamespace(status="accepted", accepted=SimpleNamespace(candidate=candidate))
 
 
-def _production_worker(manifest: dict, calls: list[dict], director_prompt: str | None = None):
+def _production_worker(
+    manifest: dict,
+    calls: list[dict],
+    director_prompt: str | None = None,
+    source_page_dir: Path | None = None,
+):
     def worker(request):
         page_request = json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
         accepted_request = json.loads((request.page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8"))
         assert page_request == json.loads((request.page_dir / "page_request.json").read_text(encoding="utf-8"))
         assert page_request.get("numeric_authority") == accepted_request.get("numeric_authority")
         manifest_path = request.page_dir / "manifest.json"
+        if source_page_dir is not None and (source_page_dir / "assets").is_dir():
+            shutil.copytree(
+                source_page_dir / "assets", request.page_dir / "assets", dirs_exist_ok=True,
+            )
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         dispatch = subprocess.run(
             [sys.executable, str(RUNTIME / "record_page_dispatch.py"), str(request.run_dir), "--page", "page_001", "--agent-id", "deterministic-worker", "--prompt-file", str(request.prompt_file)],
@@ -131,6 +383,21 @@ def _production_worker(manifest: dict, calls: list[dict], director_prompt: str |
             assert completed.returncode == 0, completed.stdout or completed.stderr
         validation = json.loads((request.page_dir / "validation.json").read_text(encoding="utf-8"))
         assert validation["passed"] is True
+        Image.new("RGB", (8, 8), "white").save(
+            request.page_dir / "split_assets_contact.png"
+        )
+        (request.page_dir / "page_result.json").write_text("{}\n", encoding="utf-8")
+        recorded = subprocess.run(
+            [
+                sys.executable,
+                str(RUNTIME / "record_manifest_page_result.py"),
+                str(request.run_dir),
+                "--page", "page_001",
+                "--agent-id", "deterministic-worker",
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        assert recorded.returncode == 0, recorded.stdout or recorded.stderr
         calls.append({"page_request": page_request, "accepted_request": accepted_request, "manifest": json.loads(manifest_path.read_text(encoding="utf-8")), "prompt": request.prompt_file.read_text(encoding="utf-8")})
         return PageWorkerResult(status="completed", reconstructed_body=request.page_dir / "page.pptx")
 
@@ -625,3 +892,174 @@ def test_huangshi_optional_assembled_powerpoint_preview(tmp_path: Path) -> None:
         assert _preview_has_ink(preview, by_name["fixed-frame-page-number"], deck.slide_width, deck.slide_height)
         label_shapes = [shape for name, shape in by_name.items() if name.startswith(f"page-{source_number}-source-label-")]
         assert all(_preview_has_ink(preview, shape, deck.slide_width, deck.slide_height) for shape in label_shapes)
+
+
+def test_huangshi_real_provider_selected_page_release_evidence() -> None:
+    """Rebuild and publish through the formal route with real selected Image2 bodies."""
+    source_value = os.getenv("EDITPPT_HUANGSHI_REAL_PROJECT")
+    evidence_value = os.getenv("EDITPPT_HUANGSHI_EVIDENCE_DIR")
+    if not source_value or not evidence_value:
+        pytest.skip("set the real Huangshi project and a new evidence directory")
+    source_project = Path(source_value).resolve()
+    evidence_root = Path(evidence_value).resolve()
+    assert source_project.is_dir()
+    assert not evidence_root.exists(), "evidence directory must be new"
+    assert _sha256(source_project / "00_source/source.docx") == WORD_SHA256
+    logo_svg = source_project / "00_source/logo.svg"
+    assert LOGO.is_file() and base64.b64encode(LOGO.read_bytes()) in logo_svg.read_bytes()
+    complete_source = extract(WORD, DEFAULT_MARKER)
+    assert complete_source["page_count"] == 42
+    source_by_page = {page["page_number"]: page for page in complete_source["pages"]}
+    selected_source = copy.deepcopy(complete_source)
+    selected_source["pages"] = []
+    for output_page, source_page in enumerate(SELECTED, start=1):
+        page = copy.deepcopy(source_by_page[source_page])
+        page["source_page_number"] = source_page
+        page["page_number"] = output_page
+        selected_source["pages"].append(page)
+    selected_source["page_count"] = len(SELECTED)
+    project = _build_project(evidence_root, selected_source, logo_svg)
+    actual_state = load(source_project)
+    new_state = load(project)
+    new_state["word_source"] = dict(actual_state["word_source"])
+    new_state["logo_source"] = dict(actual_state["logo_source"])
+    new_state["source_identity"] = actual_state["source_identity"]
+    new_state["confirmed_ui_revision"] = actual_state["confirmed_ui_revision"]
+    new_state["confirmed_ui_digest"] = actual_state["confirmed_ui_digest"]
+    new_state["style_confirmation"] = dict(actual_state["style_confirmation"])
+    new_state["director_confirmation"] = dict(actual_state["director_confirmation"])
+    from workflow_v6_state import save
+    save(project, new_state)
+    shutil.copytree(source_project / "04_v6", project / "04_v6", dirs_exist_ok=True)
+    composition_path = project / "02_v6/page_composition.json"
+    composition = json.loads(composition_path.read_text(encoding="utf-8"))
+    for output_page, source_page in enumerate(SELECTED, start=1):
+        composition["pages"][output_page - 1]["source_page_number"] = source_page
+    composition_path.write_text(json.dumps(composition, ensure_ascii=False), encoding="utf-8")
+    for output_page, source_page in enumerate(SELECTED, start=1):
+        workspace = open_live_page_workspace(project, output_page)
+        receipt = json.loads(
+            (source_project / "04_v6/images" / f"page_{source_page:03d}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        receipt["experiment_id"] = workspace.experiment_id
+        receipt["page_number"] = output_page
+        receipt["source_identity"] = workspace.source_snapshot_sha256
+        receipt["source_snapshot_sha256"] = workspace.source_snapshot_sha256
+        material_digest = new_state["pages"][output_page - 1]["material_receipt"]["digest"]
+        _remap_real_acceptance_chain(
+            source_project,
+            project,
+            workspace,
+            source_page,
+            receipt,
+            material_digest,
+        )
+        signed = _resign_real_receipt_without_mutating_provider_evidence(
+            source_project, project, output_page, receipt,
+        )
+        candidate = signed["candidate"]
+        selected = {
+            "path": candidate["path"],
+            "sha256": candidate["sha256"],
+            "attempt": candidate["attempt"],
+            "operation": candidate["operation"],
+            "receipt_path": f"04_v6/images/page_{output_page:03d}.json",
+        }
+        new_state["pages"][output_page - 1]["first_candidate"] = dict(selected)
+        new_state["pages"][output_page - 1]["selected_candidate"] = dict(selected)
+    save(project, new_state)
+    for output_page in range(1, len(SELECTED) + 1):
+        workspace = open_live_page_workspace(project, output_page)
+        seal = load_accepted_image_seal(workspace)
+        assert seal is not None
+        assert seal.candidate.path.is_file()
+
+    worker_calls: list[dict] = []
+    for output_page, source_page_number in enumerate(SELECTED, start=1):
+        receipt = json.loads(
+            (project / "04_v6/images" / f"page_{output_page:03d}.json").read_text(encoding="utf-8")
+        )
+        candidate = receipt["candidate"]
+        assert candidate["duration_seconds"] > 0
+        assert receipt["provider_authority"]["trace_path"]
+        manifest = json.loads(
+            (
+                source_project / "05_v6/reconstruction_runs" / f"page_{source_page_number:03d}"
+                / "pages/page_001/manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        build_reconstruction_request(project, page_number=output_page)
+        reconstruct_accepted_page(
+            SimpleNamespace(project_copy=project, page_number=output_page),
+            _accepted_outcome(project, output_page),
+            page_worker=_production_worker(
+                manifest,
+                worker_calls,
+                source_page_dir=(
+                    source_project / "05_v6/reconstruction_runs"
+                    / f"page_{source_page_number:03d}/pages/page_001"
+                ),
+            ),
+        )
+
+    assembly = assemble_v6_deck(project)
+    assert assembly["status"] == "complete"
+    assert assembly["release_ready"] is True
+    assert assembly["release_status"] == "release_ready"
+    assert assembly["openxml_validation"]["status"] == "passed"
+    assert assembly["enhanced_validation"]["powerpoint"]["status"] == "passed"
+    assert assembly["page_count"] == len(SELECTED)
+    assert Path(assembly["final_output"]["path"]).is_file()
+    assert assembly["assembled_visual_qa"]["status"] == "passed"
+    assembled_pages = {
+        item["page_number"]: item for item in assembly["assembled_visual_qa"]["pages"]
+    }
+    page_reports = []
+    for output_page, source_page_number in enumerate(SELECTED, start=1):
+        page_report = json.loads(
+            (project / "06_v6/pages" / f"page_{output_page:03d}/page.json").read_text(encoding="utf-8")
+        )
+        visual = page_report["post_reconstruction_visual_qa"]
+        assert visual["status"] == "passed"
+        assert visual["rendering"]["backend"] == "powerpoint_com"
+        assembled_visual = assembled_pages[output_page]
+        assert assembled_visual["status"] == "passed"
+        assert (project / assembled_visual["rendered_body"]).is_file()
+        accepted_relative = (project / assembled_visual["source"]).relative_to(evidence_root).as_posix()
+        reconstructed_relative = (
+            project / assembled_visual["rendered_body"]
+        ).relative_to(evidence_root).as_posix()
+        page_reports.append({
+            "page_number": source_page_number,
+            "output_page_number": output_page,
+            "accepted": accepted_relative,
+            "reconstructed": reconstructed_relative,
+            "visual_qa": assembled_visual,
+        })
+    rows = "\n".join(
+        "<section><h2>Word page {page}</h2><div class='pair'>"
+        "<figure><figcaption>Accepted Image2 body</figcaption><img src='{accepted}'></figure>"
+        "<figure><figcaption>Actual assembled editable deck render</figcaption><img src='{reconstructed}'></figure>"
+        "</div><pre>{metrics}</pre></section>".format(
+            page=item["page_number"],
+            accepted=html.escape(item["accepted"]),
+            reconstructed=html.escape(item["reconstructed"]),
+            metrics=html.escape(json.dumps(item["visual_qa"]["metrics"], ensure_ascii=False, indent=2)),
+        )
+        for item in page_reports
+    )
+    html_path = evidence_root / "huangshi-selected-page-comparison.html"
+    html_path.write_text(
+        "<!doctype html><meta charset='utf-8'><title>Huangshi selected-page release evidence</title>"
+        "<style>body{font-family:Arial,sans-serif;margin:32px;background:#f3f5f7;color:#17365d}"
+        "section{background:white;padding:20px;margin:0 0 24px;border-radius:8px}.pair{display:grid;"
+        "grid-template-columns:1fr 1fr;gap:16px}img{width:100%;border:1px solid #ccd5df}"
+        "figcaption{font-weight:700;margin-bottom:8px}pre{white-space:pre-wrap}</style>"
+        + rows,
+        encoding="utf-8",
+    )
+    for item in page_reports:
+        assert (html_path.parent / item["accepted"]).is_file()
+        assert (html_path.parent / item["reconstructed"]).is_file()

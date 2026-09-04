@@ -370,6 +370,7 @@ def load_accepted_image_seal(workspace: ExperimentWorkspace) -> AcceptedImageSea
         raise ValueError("accepted-image receipts do not match")
     value = verify_signed_acceptance_receipt(workspace, experiment_bytes)
     _validate_sealed_checkpoint(workspace, value)
+    candidate = _candidate_from_receipt(workspace, value)
     state = _copied_state_without_material_reads(workspace)
     page = state["pages"][workspace.page_number - 1]
     candidate_value = cast(Mapping[str, object], value["candidate"])
@@ -378,8 +379,37 @@ def load_accepted_image_seal(workspace: ExperimentWorkspace) -> AcceptedImageSea
         raise ValueError("copied workflow identity does not match the accepted-image seal")
     state_candidate = {
         "path": candidate_value["path"], "sha256": candidate_value["sha256"],
-        "attempt": candidate_value["attempt"], "receipt_path": canonical_receipt.as_posix(),
+        "attempt": candidate_value["attempt"], "operation": candidate_value["operation"],
+        "receipt_path": canonical_receipt.as_posix(),
     }
+    legacy_candidate = {
+        key: item for key, item in state_candidate.items() if key != "operation"
+    }
+    if (
+        page.get("state") in {"accepted", "page_complete"}
+        and isinstance(selected, Mapping)
+        and dict(selected) == legacy_candidate
+    ):
+        with mutation_lock(workspace.project_copy):
+            migrated = _copied_state_without_material_reads(workspace)
+            migrated_page = migrated["pages"][workspace.page_number - 1]
+            current = migrated_page.get("selected_candidate")
+            if (
+                migrated["source_identity"] != value["source_identity"]
+                or migrated["confirmed_ui_revision"] != value["ui_revision"]
+                or migrated["confirmed_ui_digest"] != value["ui_digest"]
+                or migrated["geometry"] != value["fixed_frame"]
+                or migrated_page.get("state") not in {"accepted", "page_complete"}
+                or not isinstance(current, Mapping)
+                or dict(current) != legacy_candidate
+            ):
+                raise ValueError("copied accepted state changed during operation migration")
+            migrated_page["selected_candidate"] = dict(state_candidate)
+            migrated["pages"][workspace.page_number - 1] = migrated_page
+            save(workspace.project_copy, migrated)
+        state = _copied_state_without_material_reads(workspace)
+        page = state["pages"][workspace.page_number - 1]
+        selected = page.get("selected_candidate")
     if page.get("state") != "accepted":
         _transition_copied_page(workspace, state_candidate, cast(int, candidate_value["attempt"]))
         state = _copied_state_without_material_reads(workspace)
@@ -387,7 +417,6 @@ def load_accepted_image_seal(workspace: ExperimentWorkspace) -> AcceptedImageSea
         selected = page.get("selected_candidate")
     if not isinstance(selected, Mapping) or dict(selected) != state_candidate:
         raise ValueError("copied accepted state does not match the accepted-image seal")
-    candidate = _candidate_from_receipt(workspace, value)
     return AcceptedImageSeal(experiment_path, candidate, _digest(experiment_bytes), True)
 
 
@@ -513,7 +542,11 @@ def seal_accepted_image(workspace: ExperimentWorkspace, *, material_view: Comple
     verify_signed_acceptance_receipt(workspace, read_bytes(workspace.project_copy, experiment_relative))
     verify_signed_acceptance_receipt(workspace, read_bytes(workspace.project_copy, canonical_receipt))
     candidate_value = cast(Mapping[str, object], value["candidate"])
-    state_candidate = {"path": candidate_value["path"], "sha256": candidate_value["sha256"], "attempt": candidate_value["attempt"], "receipt_path": canonical_receipt.as_posix()}
+    state_candidate = {
+        "path": candidate_value["path"], "sha256": candidate_value["sha256"],
+        "attempt": candidate_value["attempt"], "operation": candidate_value["operation"],
+        "receipt_path": canonical_receipt.as_posix(),
+    }
     _transition_copied_page(workspace, state_candidate, len(attempts))
     loaded = load_accepted_image_seal(workspace)
     assert loaded is not None

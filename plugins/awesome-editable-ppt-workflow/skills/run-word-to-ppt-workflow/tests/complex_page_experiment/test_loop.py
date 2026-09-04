@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+import complex_page_experiment.loop as loop_module
 from codex_subscription_runtime import CodexStructuredResult
 from complex_page_experiment import (
     build_complete_page_material_view,
@@ -189,10 +190,91 @@ def test_first_valid_candidate_accepts_without_default_extra_candidates(
     assert outcome.correction_count == 0
     assert outcome.accepted is not None and outcome.accepted.candidate.attempt == 1
     assert load_accepted_image_seal(workspace).candidate.path == outcome.attempts[0].path
+    assert (
+        load(workspace.project_copy)["pages"][0]["selected_candidate"]["operation"]
+        == outcome.attempts[0].operation
+    )
     summary = recorder.finalize()
     assert summary["call_totals"]["image2"] == 1
     assert summary["call_totals"]["visual_review"] == 1
     assert summary["call_totals"]["correction_decision"] == 0
+
+
+def test_loader_migrates_only_legacy_selected_candidate_missing_operation(
+    provider_fixture, monkeypatch,
+):
+    workspace, _view, _recorder, outcome = _run(
+        provider_fixture, monkeypatch, [_review_result("accept")]
+    )
+    assert outcome.accepted is not None
+    state = load(workspace.project_copy)
+    state["pages"][0]["selected_candidate"].pop("operation")
+    save(workspace.project_copy, state)
+
+    recovered = load_accepted_image_seal(workspace)
+
+    assert recovered is not None
+    assert (
+        load(workspace.project_copy)["pages"][0]["selected_candidate"]["operation"]
+        == outcome.attempts[0].operation
+    )
+
+
+def test_loader_rejects_existing_selected_candidate_with_wrong_operation(
+    provider_fixture, monkeypatch,
+):
+    workspace, _view, _recorder, outcome = _run(
+        provider_fixture, monkeypatch, [_review_result("accept")]
+    )
+    assert outcome.accepted is not None
+    state = load(workspace.project_copy)
+    actual = outcome.attempts[0].operation
+    state["pages"][0]["selected_candidate"]["operation"] = (
+        "generate" if actual == "edit" else "edit"
+    )
+    save(workspace.project_copy, state)
+
+    with pytest.raises(ValueError, match="accepted state does not match"):
+        load_accepted_image_seal(workspace)
+
+
+@pytest.mark.parametrize("race", ["identity", "state"])
+def test_legacy_operation_migration_rejects_raced_state_without_overwriting_it(
+    provider_fixture, monkeypatch, race,
+):
+    workspace, _view, _recorder, outcome = _run(
+        provider_fixture, monkeypatch, [_review_result("accept")]
+    )
+    assert outcome.accepted is not None
+    state = load(workspace.project_copy)
+    state["pages"][0]["selected_candidate"].pop("operation")
+    save(workspace.project_copy, state)
+    original_load = loop_module._copied_state_without_material_reads
+    calls = 0
+    raced_bytes = None
+
+    def race_before_locked_reload(current_workspace):
+        nonlocal calls, raced_bytes
+        calls += 1
+        if calls == 2:
+            changed = load(current_workspace.project_copy)
+            if race == "identity":
+                changed["confirmed_ui_digest"] = "0" * 64
+            else:
+                changed["pages"][0]["state"] = "reconstructing"
+            save(current_workspace.project_copy, changed)
+            raced_bytes = (current_workspace.project_copy / "workflow_v6.json").read_bytes()
+        return original_load(current_workspace)
+
+    monkeypatch.setattr(
+        loop_module, "_copied_state_without_material_reads", race_before_locked_reload,
+    )
+    with pytest.raises(ValueError, match="changed during operation migration"):
+        load_accepted_image_seal(workspace)
+
+    assert raced_bytes is not None
+    assert (workspace.project_copy / "workflow_v6.json").read_bytes() == raced_bytes
+    assert "operation" not in load(workspace.project_copy)["pages"][0]["selected_candidate"]
 
 
 @pytest.mark.parametrize(
