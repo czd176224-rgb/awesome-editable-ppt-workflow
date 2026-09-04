@@ -135,61 +135,50 @@ def _color_constraints(
     soft = _mix_hex(secondary, (255, 255, 255), 0.70)
     wash = _mix_hex(secondary, (255, 255, 255), 0.88)
     highlight = colors.get("highlight_color")
-    if highlight is not None:
-        positive = (
-            "Treat the confirmed background color as the canvas base; "
-            f"use primary color {colors['primary_color']} for long body text, ordinary labels, deep headings, and the core exhibit. "
-            f"Use secondary color {secondary} for the main path, main option, and main data series. "
-            "Short structural labels on ordinary pages may use the secondary color sparingly, while "
-            "Long body text remains primary or neutral. "
-            f"Use highlight color {highlight} only for source-supported targets, differences, key numbers, and final nodes. "
-            f"Use light or neutral treatments for supporting evidence; available secondary-family support tones are "
-            f"support {support}, soft {soft}, and wash {wash}. "
-            "Risk red or positive green is allowed only when the source explicitly assigns that business meaning. "
-            "Color supports labels, legends, numbering, and spatial structure; it must not invent a classification, "
-            "conclusion, order, magnitude, risk, status, rating, or positive/negative meaning."
-        )
-        if font_accent_allowed is True:
-            positive += (
-                " This is a user-confirmed emphasis page: important short text may use the secondary or highlight "
-                "color more strongly, while long body text remains primary or neutral."
-            )
-        return positive, ""
-    positive = (
+    constraints = (
         "Treat the confirmed background color as the canvas base; "
-        f"use primary color {colors['primary_color']} for primary text and neutral structure. "
-        f"Use derived shades of secondary color {secondary} when color has a source-grounded "
-        f"structural duty: strong {strong}, the confirmed secondary as base, support {support}, "
+        f"use primary color {colors['primary_color']} for long body text, ordinary labels, deep headings, and neutral structure. "
+        f"Use secondary color {secondary} for the main path, main option, and main data series, "
+        f"with derived shades when color has a source-grounded structural duty: strong {strong}, "
+        f"the confirmed secondary as base, support {support}, "
         f"soft {soft}, and wash {wash}. "
-        "The same hue communicates parallel items, the same "
-        "category, or common membership. Ordered light-to-dark shades may communicate only a "
+        "Use light or neutral treatments for supporting evidence. "
+        "Parallel peers and same-category items use the same tone. "
+        "Ordered light-to-dark shades may communicate only a "
         "source-explicit process, hierarchy, stage, or visual focus. Cross-hue colors may be used "
         "only for source-explicit risk, status, rating, or positive/negative business meaning. "
         "Labels, legends, numbering, and spatial structure remain primary; color is supporting "
-        "evidence and never invents meaning. When the source contains any of these relationships, "
+        "evidence and must not invent order, magnitude, classification, risk, status, rating, or "
+        "positive/negative meaning. When the source contains any of these relationships, "
         "use at least two visibly distinct tones from this family across the analytical backbone, "
         "not merely one accent line or colored text; parallel peers keep the same tone while their "
         "shared group, axis, stage, or focal node may use another tone. A page with no color duty "
         "may remain black, white, and gray."
     )
+    if highlight is not None:
+        constraints += (
+            f" Use highlight color {highlight} only for source-supported targets, differences, "
+            "key numbers, and final nodes. Risk red or positive green is allowed only when the "
+            "source explicitly assigns that business meaning."
+        )
     if font_accent_allowed is True:
-        positive += (
-            " This is a user-confirmed emphasis page: secondary-color-family shades may be used "
-            "selectively for important text, but they are optional and must remain restrained."
+        constraints += (
+            " This is a user-confirmed emphasis page: important short text may selectively use "
+            "secondary or highlight colors. Long body text remains primary or neutral."
         )
     elif font_accent_allowed is False:
-        positive += (
-            " This is not a user-confirmed emphasis page. Do not use any secondary-color-family "
-            "shade for any text object. Use primary or neutral text color plus weight, size, "
-            "position, shape, or hierarchy for local emphasis. Secondary-color-family shades "
-            "remain allowed for text-box fills, shapes, borders, nodes, and connectors."
+        constraints += (
+            " This is not a user-confirmed emphasis page: text objects may not use secondary-family "
+            "or highlight-family colors. Use primary or neutral text color plus weight, size, "
+            "position, shape, or hierarchy for local emphasis. Those colors remain allowed for "
+            "non-text structural marks: text-box fills, shapes, borders, nodes, and connectors."
         )
     prohibited = (
         "Do not use color as the sole carrier of a fact or relationship, assign ordered color "
         "depth to merely parallel categories, or introduce cross-hue business semantics absent "
         "from complete_word_content."
     )
-    return positive, prohibited
+    return constraints, prohibited
 
 
 def _background_constraint(material_view: object) -> str:
@@ -420,6 +409,7 @@ def compile_consulting_six_part_prompt(
             sections["visual_style_and_color"],
             _background_constraint(material_view),
             positive_color,
+            prohibited_color,
         )
     )
     sections["text_and_typography"] = _join(
@@ -430,7 +420,6 @@ def compile_consulting_six_part_prompt(
             sections["strict_prohibitions"],
             _FIXED_AND_SOURCE_PROHIBITION,
             _QUANTITATIVE_CONTENT_CONSTRAINT,
-            prohibited_color,
             _QUALITATIVE_PROHIBITION,
         )
     )

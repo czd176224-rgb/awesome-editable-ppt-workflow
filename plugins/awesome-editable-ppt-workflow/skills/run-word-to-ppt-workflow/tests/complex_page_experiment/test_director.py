@@ -368,9 +368,9 @@ def test_compile_prompt_injects_confirmed_color_roles_and_budgets_once():
     assert prompt.count(positive) == 1
     assert prompt.count(prohibited) == 1
     assert positive in sections["Visual Style and Color"]
-    assert prohibited in sections["Strict Prohibitions"]
-    assert "primary color #161616 for primary text and neutral structure" in positive
-    assert "derived shades of secondary color #CD202A" in positive
+    assert prohibited in sections["Visual Style and Color"]
+    assert "primary color #161616 for long body text" in positive
+    assert "secondary color #CD202A" in positive
     assert "This is a user-confirmed emphasis page" in positive
     for obsolete_quota in ("70%-85%", "15%-25%", "3%-7%", "never above 10%"):
         assert obsolete_quota not in positive + prohibited
