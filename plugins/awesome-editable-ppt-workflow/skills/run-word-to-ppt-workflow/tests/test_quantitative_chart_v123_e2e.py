@@ -427,35 +427,39 @@ def _relationship_project(tmp_path: Path) -> tuple[Path, dict]:
     return project, receipt
 
 
-@pytest.mark.parametrize("defect", ["missing_node", "wrong_direction", "non_line"])
-def test_finalization_rejects_broken_sealed_relationship(
-    tmp_path: Path, defect: str,
+@pytest.mark.parametrize("defect,error", [
+    ("missing_node", "V6 sealed relationship node is missing or duplicated: destination"),
+    ("wrong_direction", "V6 sealed relationship edge direction is invalid: edge:source->destination"),
+    ("non_line", "V6 sealed relationship edge is not a real line: edge:source->destination"),
+])
+def test_host_finalization_rejects_tampered_sealed_relationship(
+    tmp_path: Path, defect: str, error: str,
 ) -> None:
     project, _receipt = _relationship_project(tmp_path / defect)
 
-    def manifest_factory(page_request: dict) -> dict:
-        manifest = _relationship_manifest(page_request)
+    def tamper_built_pptx(path: Path) -> None:
+        deck = Presentation(path)
+        slide = deck.slides[0]
         if defect == "missing_node":
-            manifest["shapes"] = [item for item in manifest["shapes"] if item["object_id"] != "destination"]
+            node = next(item for item in slide.shapes if item.name == "destination")
+            node._element.getparent().remove(node._element)
         elif defect == "wrong_direction":
-            edge = next(item for item in manifest["shapes"] if item["object_id"] == "edge:source->destination")
-            x1, y1, x2, y2 = edge["points_px"]
-            edge["points_px"] = [x2, y2, x1, y1]
+            edge = next(item for item in slide.shapes if item.name == "edge:source->destination")
+            edge._element.xpath(".//a:xfrm")[0].set("flipH", "1")
         else:
-            edge = next(item for item in manifest["shapes"] if item["object_id"] == "edge:source->destination")
-            points = edge.pop("points_px")
-            edge["type"] = "rect"
-            edge["box_px"] = [points[0], points[1], points[2] - points[0], 4]
-        return manifest
+            edge = next(item for item in slide.shapes if item.name == "edge:source->destination")
+            edge._element.xpath(".//a:prstGeom")[0].set("prst", "rect")
+        deck.save(path)
 
-    with pytest.raises((AssertionError, ValueError), match="sealed (?:directed edge|relationship)"):
+    with pytest.raises(ValueError) as exc_info:
         reconstruct_accepted_page(
             SimpleNamespace(project_copy=project, page_number=1),
             _accepted_outcome(project),
             page_worker=_production_worker(
-                manifest_factory, [],
+                _relationship_manifest, [], post_validate=tamper_built_pptx,
             ),
         )
+    assert str(exc_info.value) == error
 
 
 @pytest.mark.parametrize("shape_name", [

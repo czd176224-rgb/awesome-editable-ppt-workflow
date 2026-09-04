@@ -32,7 +32,6 @@ DEFAULT_TEXT_FIT_SAFETY = 0.9
 DEFAULT_TEXT_LINE_HEIGHT = 1.22
 DEFAULT_MIN_FONT_SIZE = 4.0
 SPECIAL_CHART_PRIMITIVES = {"cumulative_bridge", "time_interval", "variable_rectangle"}
-EDGE_BOUNDARY_INSET_PX = 1 / 1024
 
 
 def emu(value):
@@ -179,7 +178,7 @@ def normalize_position_item(manifest, item):
     return item
 
 
-def _snap_edge_endpoint(point, node, role):
+def _snap_edge_endpoint(point, node, role, inset_x, inset_y):
     box = node.get("box_px")
     if not isinstance(box, (list, tuple)) or len(box) != 4:
         raise ValueError(f"sealed directed edge {role} node is missing box_px")
@@ -188,6 +187,8 @@ def _snap_edge_endpoint(point, node, role):
         left, top, width, height = map(float, box)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"sealed directed edge {role} geometry is invalid") from exc
+    if width <= 0 or height <= 0:
+        raise ValueError(f"sealed directed edge {role} node box_px must have positive dimensions")
     right, bottom = left + width, top + height
     if left <= x <= right and top <= y <= bottom:
         return x, y
@@ -196,13 +197,13 @@ def _snap_edge_endpoint(point, node, role):
     if math.hypot(x - snapped_x, y - snapped_y) > 1:
         raise ValueError(f"sealed directed edge endpoint is outside {role} node by more than 1 source pixel")
     if x < left:
-        snapped_x = left + min(EDGE_BOUNDARY_INSET_PX, width / 2)
+        snapped_x = left + min(inset_x, width / 2)
     elif x > right:
-        snapped_x = right - min(EDGE_BOUNDARY_INSET_PX, width / 2)
+        snapped_x = right - min(inset_x, width / 2)
     if y < top:
-        snapped_y = top + min(EDGE_BOUNDARY_INSET_PX, height / 2)
+        snapped_y = top + min(inset_y, height / 2)
     elif y > bottom:
-        snapped_y = bottom - min(EDGE_BOUNDARY_INSET_PX, height / 2)
+        snapped_y = bottom - min(inset_y, height / 2)
     return snapped_x, snapped_y
 
 
@@ -214,6 +215,7 @@ def _normalize_directed_edges(manifest):
         if isinstance(item, dict) and isinstance(item.get("object_id"), str)
     ]
     by_id = {}
+    insets = None
     for item in objects:
         by_id.setdefault(item["object_id"], []).append(item)
     for edge in manifest.get("shapes", []):
@@ -232,11 +234,29 @@ def _normalize_directed_edges(manifest):
         source_id, target_id = matches[0]
         if len(by_id[source_id]) != 1 or len(by_id[target_id]) != 1 or len(by_id[edge_id]) != 1:
             raise ValueError(f"sealed directed edge nodes are missing or duplicated: {edge_id}")
+        if (
+            edge.get("type") != "line"
+            or edge.get("preset") not in (None, "line")
+            or edge.get("polygon_px") is not None
+        ):
+            raise ValueError(f"sealed directed edge must be a real line: {edge_id}")
+        stroke = edge.get("stroke", "#000000")
+        if not isinstance(stroke, str) or not re.fullmatch(r"#?[0-9A-Fa-f]{6}", stroke.strip()):
+            raise ValueError(f"sealed directed edge stroke must be serializable: {edge_id}")
         points = edge.get("points_px")
         if not isinstance(points, (list, tuple)) or len(points) != 4:
             raise ValueError(f"sealed directed edge points_px is required: {edge_id}")
-        start = _snap_edge_endpoint(points[:2], by_id[source_id][0], "source")
-        end = _snap_edge_endpoint(points[2:], by_id[target_id][0], "target")
+        if insets is None:
+            source_width, source_height = source_size_px(manifest)
+            content_box = effective_content_box_for_manifest(manifest)
+            # Two EMUs cover the one-EMU drift from independently rounded node and line geometry.
+            insets = (
+                2 * source_width / (content_box["width"] * EMU_PER_INCH),
+                2 * source_height / (content_box["height"] * EMU_PER_INCH),
+            )
+        inset_x, inset_y = insets
+        start = _snap_edge_endpoint(points[:2], by_id[source_id][0], "source", inset_x, inset_y)
+        end = _snap_edge_endpoint(points[2:], by_id[target_id][0], "target", inset_x, inset_y)
         edge["points_px"] = [*start, *end]
         edge["_sealed_directed_edge"] = True
 

@@ -45,3 +45,23 @@
 ## Concerns
 
 - None. The required fresh real-page Task 2 rerun remains a separate downstream task.
+
+## Review repair
+
+- Review verdict: `CHANGES_REQUESTED`; all Important 1-3 and Minor findings were addressed in follow-up commit subject `fix: harden sealed edge serialization`.
+- Replaced the fixed `1/1024` source-pixel inset with a dynamic inset derived from the actual source-pixel-to-EMU scale. A snapped endpoint moves two EMUs inward, covering the one-EMU discrepancy caused by independently rounded node offsets/extents and connector endpoints.
+- Added the reviewer-provided `34000x16000` regression with target box `[3, 100, 12, 100]` and a right-side 1px miss; PPTX readback is strictly within the target box.
+- Sealed edges now reject non-`line` types, non-line presets/polygons, `stroke=none` or empty stroke, missing points, non-positive node boxes, unresolved/duplicate/ambiguous IDs, and misses over one source pixel.
+- Added `flipV`, high-resolution, no-stroke, rect-with-points, missing-node, duplicate-node, and zero-size regression coverage. Missing and duplicate coverage is intentionally minimal: one endpoint-missing case exercises directed-edge resolution, while duplicate IDs remain governed by the existing editable-image-v3 global uniqueness gate. Zero-size nodes are rejected at the directed-edge trust boundary.
+- Split builder rejection from host authority evidence. The host test now builds and validates a legal PPTX, then independently tampers the readback artifact (missing node, reversed direction, non-line geometry) and requires the exact finalization `ValueError` message. Removing the host check would make all three cases fail.
+- Host authority implementation, accepted Image2 authority, page director, prompt contract, dependencies, schemas, and reconstruction routes remain unchanged.
+
+## Review repair verification
+
+- RED builder command: `py -m pytest plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_v4_manifest_runtime.py -q` -> `4 failed, 13 passed`; failures were high-resolution EMU containment, `stroke=none`, rect-with-points, and zero-size node acceptance.
+- Pre-change host isolation command: `py -m pytest plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_quantitative_chart_v123_e2e.py::test_host_finalization_rejects_tampered_sealed_relationship -q` -> `3 passed`, proving the unchanged host check rejected post-validation tampering independently of the builder.
+- GREEN builder command: `py -m pytest plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests/test_v4_manifest_runtime.py -q` -> `17 passed in 0.76s`.
+- Exact host finalization command: `py -m pytest plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_quantitative_chart_v123_e2e.py::test_host_finalization_rejects_tampered_sealed_relationship -q` -> `3 passed in 12.00s`.
+- Focused builder/validator suites: same three files documented above -> `30 passed in 0.87s`.
+- Impacted workflow suites: same four files documented above -> `37 passed, 1 skipped in 228.74s`.
+- Final post-review rerun after strict RGB-stroke validation and exact host error assertions: focused builder/validator -> `30 passed in 0.84s`; impacted workflow -> `37 passed, 1 skipped in 247.29s`; exact host tamper cases -> `3 passed in 12.51s`.
