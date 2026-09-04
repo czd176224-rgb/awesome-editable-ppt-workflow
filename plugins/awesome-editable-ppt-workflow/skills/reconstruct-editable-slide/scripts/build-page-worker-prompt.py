@@ -120,7 +120,9 @@ def build_prompt(run_dir: Path, page: dict, page_dir: Path) -> str:
         edges = relationship.get("edges")
         if not isinstance(nodes, list) or not isinstance(edges, list):
             raise SystemExit("page_request page_plan relationship nodes and edges must be arrays")
+        node_ids = [node["node_id"] for node in nodes]
         directions = []
+        edge_ids = []
         for edge in edges:
             if (
                 not isinstance(edge, dict)
@@ -129,6 +131,7 @@ def build_prompt(run_dir: Path, page: dict, page_dir: Path) -> str:
             ):
                 raise SystemExit("page_request page_plan edge endpoints must be strings")
             directions.append(f"{edge['from_node']} -> {edge['to_node']}")
+            edge_ids.append(f"edge:{edge['from_node']}->{edge['to_node']}")
         relationship_contract = (
             "SEALED PAGE PLAN RELATIONSHIP AUTHORITY\n"
             "The accepted source image owns composition and style. This sealed page plan owns "
@@ -137,6 +140,14 @@ def build_prompt(run_dir: Path, page: dict, page_dir: Path) -> str:
             + json.dumps({"nodes": nodes, "edges": edges}, ensure_ascii=False, sort_keys=True)
             + "\nExplicit edge direction: "
             + ", ".join(directions)
+            + "\nRequired node object_id values (verbatim, one object each): "
+            + json.dumps(node_ids, ensure_ascii=False)
+            + "\nRequired connector object_id values (verbatim, one connector each): "
+            + json.dumps(edge_ids, ensure_ascii=False)
+            + "\nDo not alias, rename, prefix, suffix, or split any required ID. "
+            "Before reporting success, verify each required ID appears exactly once in "
+            "manifest.json as object_id and exactly once in page.pptx cNvPr descr as "
+            "object_id:<ID>."
         )
     replacements = {
         "{{RUN_DIR}}": str(run_dir),

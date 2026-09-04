@@ -221,3 +221,17 @@ def test_page_worker_prompt_contains_sealed_relationship_nodes_edges_and_directi
     assert '"from_node": "regional-resources"' in prompt
     assert '"to_node": "fund-platform"' in prompt
     assert "regional-resources -> fund-platform" in prompt
+    assert (
+        'Required node object_id values (verbatim, one object each): '
+        '["regional-resources", "fund-platform"]'
+    ) in prompt
+    assert (
+        'Required connector object_id values (verbatim, one connector each): '
+        '["edge:regional-resources->fund-platform"]'
+    ) in prompt
+    assert "Do not alias, rename, prefix, suffix, or split any required ID" in prompt
+    assert (
+        "Before reporting success, verify each required ID appears exactly once in "
+        "manifest.json as object_id and exactly once in page.pptx cNvPr descr as "
+        "object_id:<ID>."
+    ) in prompt
