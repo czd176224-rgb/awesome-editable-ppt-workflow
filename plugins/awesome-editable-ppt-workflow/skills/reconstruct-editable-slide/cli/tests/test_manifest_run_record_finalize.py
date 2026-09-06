@@ -5,12 +5,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
+from pptx import Presentation
 
 
 RUNTIME = Path(__file__).resolve().parents[1] / "editppt" / "runtime"
 sys.path.insert(0, str(RUNTIME))
 
+import build_pptx_from_manifest  # noqa: E402
+import finalize_manifest_deck_run  # noqa: E402
 from build_pptx_from_manifest import render_preview, write_pptx  # noqa: E402
 from deck_run_state import sha256_file  # noqa: E402
 from finalize_manifest_deck_run import finalize_manifest_run  # noqa: E402
@@ -194,3 +198,101 @@ def test_record_rejects_changed_request_and_failed_worker_validation(tmp_path: P
         assert "passed: true" in str(exc)
     else:
         raise AssertionError("failed validation must not be recorded")
+
+
+def test_native_chart_manifest_survives_final_assembly_without_officecli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, page_dir = _prepared_run(tmp_path)
+    monkeypatch.setattr(
+        build_pptx_from_manifest,
+        "officecli_executable",
+        lambda: (_ for _ in ()).throw(RuntimeError("OfficeCLI unavailable")),
+    )
+    monkeypatch.setenv("EDITPPT_OPTIONAL_OFFICECLI_VALIDATION", "1")
+    authority = {
+        "rendering_primitive": "column_bar",
+        "categories": ["2023", "2024", "2025"],
+        "series": [{"name": "Revenue", "values": [100, 125, 150]}],
+        "unit": "USD m",
+    }
+    request_path = page_dir / "page_request.json"
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request["numeric_authority"] = authority
+    _write(request_path, request)
+    jobs_path = run / "page_jobs.json"
+    jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
+    jobs["pages"][0]["dispatch"]["page_request_sha256"] = sha256_file(request_path)
+    _write(jobs_path, jobs)
+
+    manifest_path = page_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["charts"] = [
+        {
+            "object_id": "chart1",
+            "name": "Revenue chart",
+            "box_px": [120, 80, 1200, 640],
+            "rendering_primitive": "column_bar",
+            "chart_variant": "column",
+            "title": "Revenue",
+            "unit": "USD m",
+            "period": "FY2025",
+            "basis": "same portfolio companies",
+            "legend": "none",
+            "series": [{**authority["series"][0], "categories": authority["categories"]}],
+        }
+    ]
+    _write(manifest_path, manifest)
+    write_pptx(manifest, page_dir / "page.pptx", manifest_path)
+    render_preview(
+        manifest,
+        manifest_path,
+        page_dir / "preview.png",
+        pptx_path=page_dir / "page.pptx",
+    )
+    preview = Image.open(page_dir / "preview.png").convert("RGB")
+    assert preview.width / preview.height == 16 / 9
+    colors = preview.getcolors(maxcolors=preview.width * preview.height)
+    assert colors is not None
+    assert any(color == (68, 114, 196) for _, color in colors)
+
+    page_slide = Presentation(page_dir / "page.pptx").slides[0]
+    page_chart = next(shape.chart for shape in page_slide.shapes if shape.has_chart)
+    assert [item.label for item in page_chart.plots[0].categories] == authority["categories"]
+    assert list(page_chart.series[0].values) == authority["series"][0]["values"]
+    assert page_chart.chart_title.text_frame.text == "Revenue"
+    page_text = {shape.name: shape.text for shape in page_slide.shapes if shape.has_text_frame}
+    assert page_text["Revenue chart Basis"] == "same portfolio companies"
+
+    record_manifest_page(run, page_id="page_001", agent_id="worker-1")
+    summary = finalize_manifest_run(run)
+    assert summary["officecli_validation"]["status"] == "skipped"
+    assert summary["officecli_validation"]["detail"] == "OfficeCLI unavailable"
+    final_slide = Presentation(summary["output"]).slides[0]
+    final_chart = next(shape.chart for shape in final_slide.shapes if shape.has_chart)
+    assert [item.label for item in final_chart.plots[0].categories] == authority["categories"]
+    assert list(final_chart.series[0].values) == authority["series"][0]["values"]
+    assert final_chart.chart_title.text_frame.text == "Revenue"
+    final_text = {shape.name: shape.text for shape in final_slide.shapes if shape.has_text_frame}
+    assert final_text["Revenue chart Basis"] == "same portfolio companies"
+    assert json.loads(Path(summary["validation"]).read_text(encoding="utf-8"))["passed"] is True
+
+
+def test_optional_officecli_validation_times_out_as_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    timeouts = []
+
+    def timeout_run(command, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+
+    monkeypatch.setenv("EDITPPT_OPTIONAL_OFFICECLI_VALIDATION", "1")
+    monkeypatch.setattr(build_pptx_from_manifest, "officecli_executable", lambda: "officecli")
+    monkeypatch.setattr(finalize_manifest_deck_run.subprocess, "run", timeout_run)
+
+    result = finalize_manifest_deck_run._optional_officecli_validation(tmp_path / "deck.pptx")
+
+    assert timeouts == [30]
+    assert result["status"] == "warning"
+    assert "timed out" in result["detail"]

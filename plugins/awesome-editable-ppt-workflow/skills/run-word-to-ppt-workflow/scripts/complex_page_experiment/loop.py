@@ -7,7 +7,7 @@ import hmac
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
 
@@ -22,13 +22,17 @@ from workflow_v6_contract import transition_page, validate_project
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 from workflow_v6_state import mutation_lock, save
 
-from .director import CorrectionDecision, DirectorArtifact, decide_correction, direct_page
+from .director import (
+    DirectorArtifact, direct_page, reuse_published_director_authority,
+)
 from .evidence import EvidenceRecorder, RECOVERY_CALLS
 from .materials import CompletePageMaterialView, build_complete_page_material_view
 from .provider import (
     CandidateArtifact,
     build_experiment_image_request,
     run_provider_attempt,
+    validate_completed_candidate_authority,
+    validate_recovery_authority,
 )
 from .review import (
     ReviewProblem, VisualReview, load_signed_review_authority, preflight_candidate,
@@ -40,12 +44,6 @@ from .workspace import ExperimentWorkspace, verify_source_unchanged
 SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "complex_page_acceptance_v1.schema.json"
 EXPERIMENT_RECEIPT = "accepted_image.json"
 FAILED_RECEIPT = "failed_outcome.json"
-_MECHANICAL_REVIEW_CATEGORIES = frozenset({
-    "fixed_layer_violation",
-    "misleading_fabrication",
-    "ai_heavy_reporting_style",
-    "semantic_color_misuse",
-})
 _EXACT_TEXT_REPAIR = re.compile(
     r"将[^“\"]{0,24}[“\"](?P<find>[^”\"]{1,100})[”\"]"
     r"[^。；]{0,48}?(?:修正|改为|更正)[^“\"]{0,12}[“\"]"
@@ -116,11 +114,18 @@ def _copied_state_without_material_reads(workspace: ExperimentWorkspace) -> dict
     return cast(dict[str, Any], value)
 
 
-def _verify_signed_receipt(workspace: ExperimentWorkspace, data: bytes) -> dict[str, object]:
+def verify_signed_acceptance_receipt(workspace: ExperimentWorkspace, data: bytes) -> dict[str, object]:
     value = _json(data, "accepted-image receipt")
     errors = sorted(Draft202012Validator(_schema()).iter_errors(value), key=lambda error: list(error.absolute_path))
     if errors:
         raise ValueError(f"accepted-image receipt schema is invalid: {errors[0].message}")
+    checkpoint = value.get("evidence_checkpoint")
+    if (
+        workspace.recovery_round is not None
+        and isinstance(checkpoint, Mapping)
+        and checkpoint.get("candidate_origin") not in {"image2", "adopted_candidate"}
+    ):
+        raise ValueError("recovery accepted-image receipt lacks candidate origin")
     unsigned = dict(value)
     signature = str(unsigned.pop("hmac_sha256"))
     key = verification_key(str(unsigned.get("key_id")))
@@ -231,10 +236,82 @@ def _publish_failed_outcome(
     return LoopOutcome("failed", tuple(attempts), None, tuple(problems), correction_count)
 
 
+def _resolve_failed_candidate_authority(
+    workspace: ExperimentWorkspace, candidate: CandidateArtifact,
+) -> tuple[ExperimentWorkspace, CandidateArtifact]:
+    """Resolve a logical failed-round candidate to its actual Provider archive."""
+    try:
+        return workspace, validate_completed_candidate_authority(workspace, candidate)
+    except ValueError:
+        if candidate.attempt != 1 or workspace.recovery_round is None:
+            raise
+    authority = validate_recovery_authority(workspace)
+    bound = cast(Mapping[str, object], authority["candidate"])
+    if (
+        bound.get("path") != candidate.path.relative_to(workspace.project_copy).as_posix()
+        or bound.get("sha256") != _digest(read_bytes(
+            workspace.project_copy,
+            candidate.path.relative_to(workspace.project_copy),
+        ))
+        or bound.get("request_identity") != candidate.request_identity
+        or authority.get("provider_archive_path")
+        != candidate.prompt_path.relative_to(workspace.project_copy).as_posix()
+    ):
+        raise ValueError("adopted failed candidate differs from signed recovery authority")
+    provider_id = str(authority["provider_experiment_id"])
+    provider_attempt = cast(int, authority["provider_attempt"])
+    match = re.fullmatch(
+        rf"live-page-{workspace.page_number:03d}-recovery-(?P<round>[0-9]{{3}})",
+        provider_id,
+    )
+    provider_round = int(match.group("round")) if match is not None else None
+    provider_workspace = ExperimentWorkspace(
+        experiment_id=provider_id,
+        source_project=workspace.project_copy,
+        experiment_root=(
+            workspace.project_copy / "04_v6" / "experiments" / provider_id
+        ).resolve(strict=True),
+        project_copy=workspace.project_copy,
+        page_number=workspace.page_number,
+        source_snapshot_sha256=workspace.source_snapshot_sha256,
+        recovery_round=provider_round,
+        prior_experiment_id=(
+            None if provider_round is None
+            else f"live-page-{workspace.page_number:03d}" if provider_round == 1
+            else f"live-page-{workspace.page_number:03d}-recovery-{provider_round - 1:03d}"
+        ),
+    )
+    actual = replace(candidate, attempt=provider_attempt)
+    return provider_workspace, validate_completed_candidate_authority(
+        provider_workspace, actual,
+    )
+
+
+def _recovery_adopted_candidate(workspace: ExperimentWorkspace) -> CandidateArtifact:
+    prior = _prior_recovery_workspace(workspace)
+    prior_recorder = EvidenceRecorder(
+        prior.experiment_root,
+        project_copy=prior.project_copy,
+        experiment_id=prior.experiment_id,
+        page_number=prior.page_number,
+        source_identity=prior.source_snapshot_sha256,
+    )
+    failed = _load_failed_outcome(prior, prior_recorder)
+    if failed is None or not failed.attempts:
+        raise ValueError("recovery adoption has no signed prior failed candidate")
+    _origin_workspace, origin = _resolve_failed_candidate_authority(
+        prior, failed.attempts[-1],
+    )
+    return replace(origin, attempt=1)
+
+
 def _recover_existing_attempts(workspace: ExperimentWorkspace) -> tuple[CandidateArtifact, ...]:
-    recovered: list[CandidateArtifact] = []
+    recovered: list[CandidateArtifact] = (
+        [_recovery_adopted_candidate(workspace)]
+        if workspace.recovery_round is not None else []
+    )
     root = workspace.project_copy
-    for attempt in range(1, 4):
+    for attempt in range(2 if workspace.recovery_round is not None else 1, 4):
         relative = PurePosixPath("04_v6", "experiments", workspace.experiment_id, f"attempt_{attempt}.json")
         if not (root / Path(*relative.parts)).exists():
             break
@@ -305,6 +382,116 @@ def _load_failed_outcome(workspace: ExperimentWorkspace, recorder: EvidenceRecor
     return LoopOutcome("failed", attempts, None, tuple(problems), corrections)
 
 
+def _prior_recovery_workspace(workspace: ExperimentWorkspace) -> ExperimentWorkspace:
+    if workspace.recovery_round is None or workspace.prior_experiment_id is None:
+        raise ValueError("failed-page recovery requires an explicit prior experiment identity")
+    root = workspace.project_copy.resolve(strict=True)
+    experiment_root = root / "04_v6" / "experiments" / workspace.prior_experiment_id
+    match = re.fullmatch(
+        rf"live-page-{workspace.page_number:03d}-recovery-(?P<round>[0-9]{{3}})",
+        workspace.prior_experiment_id,
+    )
+    prior_round = int(match.group("round")) if match is not None else None
+    return ExperimentWorkspace(
+        experiment_id=workspace.prior_experiment_id,
+        source_project=root, experiment_root=experiment_root.resolve(strict=True),
+        project_copy=root, page_number=workspace.page_number,
+        source_snapshot_sha256=workspace.source_snapshot_sha256,
+        recovery_round=prior_round,
+        prior_experiment_id=(
+            None if prior_round is None
+            else f"live-page-{workspace.page_number:03d}" if prior_round == 1
+            else f"live-page-{workspace.page_number:03d}-recovery-{prior_round - 1:03d}"
+        ),
+    )
+
+
+def _prior_review(
+    workspace: ExperimentWorkspace, candidate: CandidateArtifact,
+) -> tuple[VisualReview | None, str | None, str | None]:
+    relative = PurePosixPath(
+        "04_v6", "experiments", workspace.experiment_id,
+        "review_inputs", f"attempt_{candidate.attempt}", "review_result.json",
+    )
+    path = workspace.project_copy / Path(*relative.parts)
+    if not path.is_file():
+        return None, None, None
+    payload = read_bytes(workspace.project_copy, relative, max_bytes=4 * 1024 * 1024)
+    digest = _digest(payload)
+    value = load_signed_review_authority(
+        workspace, authority_path=relative.as_posix(), authority_sha256=digest,
+    )
+    candidate_value = cast(Mapping[str, object], value["candidate"])
+    candidate_path = candidate.path.relative_to(workspace.project_copy).as_posix()
+    problems = cast(Sequence[Mapping[str, object]], value["problems"])
+    if (
+        value["decision"] != "correct" or len(problems) != 1
+        or candidate_value.get("attempt") != candidate.attempt
+        or candidate_value.get("path") != candidate_path
+        or candidate_value.get("sha256") != _digest(read_bytes(workspace.project_copy, PurePosixPath(candidate_path)))
+        or candidate_value.get("request_identity") != candidate.request_identity
+    ):
+        raise ValueError("prior failed review does not bind the terminal candidate")
+    records = tuple(
+        ReviewProblem(str(item["category"]), str(item["detail"]))
+        for item in problems
+    )
+    return VisualReview(
+        decision="correct", problems=tuple(item.detail for item in records),
+        model=str(value["model"]), effort=cast(str | None, value["effort"]),
+        duration_seconds=float(cast(float, value["duration_seconds"])),
+        problem_records=records, authority_path=path, authority_sha256=digest,
+    ), relative.as_posix(), digest
+
+
+def _publish_recovery_authority(
+    workspace: ExperimentWorkspace, prior: ExperimentWorkspace,
+    failed: LoopOutcome, material_view: CompletePageMaterialView,
+    candidate: CandidateArtifact, *, prior_review_path: str | None,
+    prior_review_sha256: str | None,
+) -> tuple[str, str]:
+    failed_relative = _failed_relative(prior)
+    failed_payload = read_bytes(prior.project_copy, failed_relative, max_bytes=4 * 1024 * 1024)
+    director_relative = PurePosixPath(
+        "02_v6", "experiments", prior.experiment_id, "director_v2.json",
+    )
+    director_payload = read_bytes(prior.project_copy, director_relative, max_bytes=4 * 1024 * 1024)
+    value: dict[str, object] = {
+        "schema_version": "awesome-failed-page-recovery-authority-v1",
+        "experiment_id": workspace.experiment_id,
+        "prior_experiment_id": prior.experiment_id,
+        "recovery_round": workspace.recovery_round,
+        "page_number": workspace.page_number,
+        "source_snapshot_sha256": workspace.source_snapshot_sha256,
+        "material_view_sha256": material_view.sha256,
+        "failed_outcome": {"path": failed_relative.as_posix(), "sha256": _digest(failed_payload)},
+        "director_authority": {"path": director_relative.as_posix(), "sha256": _digest(director_payload)},
+        "candidate": {
+            "attempt": candidate.attempt,
+            "path": candidate.path.relative_to(workspace.project_copy).as_posix(),
+            "sha256": _digest(read_bytes(workspace.project_copy, candidate.path.relative_to(workspace.project_copy))),
+            "request_identity": candidate.request_identity,
+        },
+        "prior_review": (
+            None if prior_review_path is None else
+            {"path": prior_review_path, "sha256": prior_review_sha256}
+        ),
+        "failure_problems": list(failed.failure_problems),
+        "prior_correction_count": failed.correction_count,
+    }
+    key_id, key = signing_key()
+    signed = {**value, "key_id": key_id}
+    signed["hmac_sha256"] = hmac.new(
+        key, _canonical(signed).rstrip(b"\n"), hashlib.sha256,
+    ).hexdigest()
+    payload = _canonical(signed)
+    relative = PurePosixPath(
+        "04_v6", "experiments", workspace.experiment_id, "recovery_authority.json",
+    )
+    _publish_same_or_new(workspace.project_copy, relative, payload)
+    return _digest(payload), _digest(director_payload)
+
+
 def _validate_sealed_checkpoint(workspace: ExperimentWorkspace, value: Mapping[str, object]) -> None:
     checkpoint = cast(Mapping[str, object], value["evidence_checkpoint"])
     candidate = cast(Mapping[str, object], value["candidate"])
@@ -364,18 +551,19 @@ def load_accepted_image_seal(workspace: ExperimentWorkspace) -> AcceptedImageSea
         return None
     if present == (True, False):
         experiment_bytes = read_bytes(root, experiment_relative, max_bytes=4 * 1024 * 1024)
-        _verify_signed_receipt(workspace, experiment_bytes)
+        verify_signed_acceptance_receipt(workspace, experiment_bytes)
         atomic_write_bytes(root, canonical_receipt, experiment_bytes)
     elif present == (False, True):
         canonical_bytes = read_bytes(root, canonical_receipt, max_bytes=4 * 1024 * 1024)
-        _verify_signed_receipt(workspace, canonical_bytes)
+        verify_signed_acceptance_receipt(workspace, canonical_bytes)
         atomic_write_bytes(root, experiment_relative, canonical_bytes)
     experiment_bytes = read_bytes(root, experiment_relative, max_bytes=4 * 1024 * 1024)
     canonical_bytes = read_bytes(root, canonical_receipt, max_bytes=4 * 1024 * 1024)
     if experiment_bytes != canonical_bytes:
         raise ValueError("accepted-image receipts do not match")
-    value = _verify_signed_receipt(workspace, experiment_bytes)
+    value = verify_signed_acceptance_receipt(workspace, experiment_bytes)
     _validate_sealed_checkpoint(workspace, value)
+    candidate = _candidate_from_receipt(workspace, value)
     state = _copied_state_without_material_reads(workspace)
     page = state["pages"][workspace.page_number - 1]
     candidate_value = cast(Mapping[str, object], value["candidate"])
@@ -384,8 +572,37 @@ def load_accepted_image_seal(workspace: ExperimentWorkspace) -> AcceptedImageSea
         raise ValueError("copied workflow identity does not match the accepted-image seal")
     state_candidate = {
         "path": candidate_value["path"], "sha256": candidate_value["sha256"],
-        "attempt": candidate_value["attempt"], "receipt_path": canonical_receipt.as_posix(),
+        "attempt": candidate_value["attempt"], "operation": candidate_value["operation"],
+        "receipt_path": canonical_receipt.as_posix(),
     }
+    legacy_candidate = {
+        key: item for key, item in state_candidate.items() if key != "operation"
+    }
+    if (
+        page.get("state") in {"accepted", "page_complete"}
+        and isinstance(selected, Mapping)
+        and dict(selected) == legacy_candidate
+    ):
+        with mutation_lock(workspace.project_copy):
+            migrated = _copied_state_without_material_reads(workspace)
+            migrated_page = migrated["pages"][workspace.page_number - 1]
+            current = migrated_page.get("selected_candidate")
+            if (
+                migrated["source_identity"] != value["source_identity"]
+                or migrated["confirmed_ui_revision"] != value["ui_revision"]
+                or migrated["confirmed_ui_digest"] != value["ui_digest"]
+                or migrated["geometry"] != value["fixed_frame"]
+                or migrated_page.get("state") not in {"accepted", "page_complete"}
+                or not isinstance(current, Mapping)
+                or dict(current) != legacy_candidate
+            ):
+                raise ValueError("copied accepted state changed during operation migration")
+            migrated_page["selected_candidate"] = dict(state_candidate)
+            migrated["pages"][workspace.page_number - 1] = migrated_page
+            save(workspace.project_copy, migrated)
+        state = _copied_state_without_material_reads(workspace)
+        page = state["pages"][workspace.page_number - 1]
+        selected = page.get("selected_candidate")
     if page.get("state") != "accepted":
         _transition_copied_page(workspace, state_candidate, cast(int, candidate_value["attempt"]))
         state = _copied_state_without_material_reads(workspace)
@@ -393,7 +610,6 @@ def load_accepted_image_seal(workspace: ExperimentWorkspace) -> AcceptedImageSea
         selected = page.get("selected_candidate")
     if not isinstance(selected, Mapping) or dict(selected) != state_candidate:
         raise ValueError("copied accepted state does not match the accepted-image seal")
-    candidate = _candidate_from_receipt(workspace, value)
     return AcceptedImageSeal(experiment_path, candidate, _digest(experiment_bytes), True)
 
 
@@ -447,6 +663,7 @@ def _acceptance_value(workspace: ExperimentWorkspace, material_view: CompletePag
         "source_snapshot_sha256": workspace.source_snapshot_sha256,
         "source_identity": archive["source_identity"], "ui_revision": archive["ui_revision"],
         "ui_digest": archive["ui_digest"], "material_view_sha256": archive["page_material_digest"],
+        "page_plan": director.page_plan,
         "candidate": candidate_value,
         "candidate_history_sha256": _history_digest(workspace, attempts, prompt=False),
         "prompt_history_sha256": _history_digest(workspace, attempts, prompt=True),
@@ -474,7 +691,7 @@ def _acceptance_value(workspace: ExperimentWorkspace, material_view: CompletePag
     key_id, key = signing_key()
     value["key_id"] = key_id
     value["hmac_sha256"] = hmac.new(key, _canonical(value).rstrip(b"\n"), hashlib.sha256).hexdigest()
-    _verify_signed_receipt(workspace, _canonical(value))
+    verify_signed_acceptance_receipt(workspace, _canonical(value))
     return value
 
 
@@ -515,10 +732,14 @@ def seal_accepted_image(workspace: ExperimentWorkspace, *, material_view: Comple
     experiment_path = _publish_same_or_new(workspace.project_copy, experiment_relative, payload)
     canonical_receipt = _canonical_receipt(workspace)
     _publish_same_or_new(workspace.project_copy, canonical_receipt, payload)
-    _verify_signed_receipt(workspace, read_bytes(workspace.project_copy, experiment_relative))
-    _verify_signed_receipt(workspace, read_bytes(workspace.project_copy, canonical_receipt))
+    verify_signed_acceptance_receipt(workspace, read_bytes(workspace.project_copy, experiment_relative))
+    verify_signed_acceptance_receipt(workspace, read_bytes(workspace.project_copy, canonical_receipt))
     candidate_value = cast(Mapping[str, object], value["candidate"])
-    state_candidate = {"path": candidate_value["path"], "sha256": candidate_value["sha256"], "attempt": candidate_value["attempt"], "receipt_path": canonical_receipt.as_posix()}
+    state_candidate = {
+        "path": candidate_value["path"], "sha256": candidate_value["sha256"],
+        "attempt": candidate_value["attempt"], "operation": candidate_value["operation"],
+        "receipt_path": canonical_receipt.as_posix(),
+    }
     _transition_copied_page(workspace, state_candidate, len(attempts))
     loaded = load_accepted_image_seal(workspace)
     assert loaded is not None
@@ -529,12 +750,8 @@ def _record_director(recorder: EvidenceRecorder, director: DirectorArtifact) -> 
     recorder.record_call(kind="page_director", attempt=1, model=director.model, effort=director.effort, operation="page_creative_direction", duration_seconds=director.duration_seconds, status="ok", metadata={"selected_reference_count": len(director.selected_reference_ids), "quality": director.quality})
 
 
-def _record_correction(recorder: EvidenceRecorder, decision: CorrectionDecision, attempt: int) -> None:
-    recorder.record_call(kind="correction_decision", attempt=attempt, model=decision.model, effort=decision.effort, operation=decision.strategy, duration_seconds=decision.duration_seconds, status="ok", metadata={"problem_count": len(decision.problem_addressed), "selected_reference_count": len(decision.selected_reference_ids)})
-
-
-def _record_mechanical_correction(
-    recorder: EvidenceRecorder, review: VisualReview, attempt: int,
+def _record_local_correction(
+    recorder: EvidenceRecorder, attempt: int,
 ) -> None:
     recorder.record_call(
         kind="correction_decision",
@@ -544,27 +761,208 @@ def _record_mechanical_correction(
         operation="edit_previous",
         duration_seconds=0.0,
         status="ok",
-        metadata={"problem_count": len(review.problems), "quota_bearing": False},
+        metadata={"problem_count": 1, "quota_bearing": False},
     )
 
 
-def _mechanical_correction(
+def _local_correction(
     review: VisualReview,
     director: DirectorArtifact,
     *,
     next_attempt: int,
-) -> tuple[str, tuple[str, ...], Literal["edit_previous"]] | None:
-    categories = {problem.category for problem in review.problem_records}
-    if not categories or not categories <= _MECHANICAL_REVIEW_CATEGORIES:
-        return None
-    fixes = "; ".join(review.problems)
+) -> tuple[str, tuple[str, ...], Literal["edit_previous"]]:
+    if len(review.problem_records) != 1 or review.problems != (
+        review.problem_records[0].detail,
+    ):
+        raise ValueError("local correction requires exactly one signed review problem")
+    problem = review.problem_records[0]
+    if not problem.detail.strip():
+        raise ValueError("local correction requires a concrete visible defect")
+    if not director.page_plan:
+        raise ValueError("local correction requires the frozen director page plan")
+    numeric_authorities = director.page_plan.get("numeric_authorities", [])
+    numeric_contract = ""
+    if numeric_authorities:
+        numeric_contract = (
+            "\n\nSEALED NUMERIC AUTHORITIES\n"
+            + json.dumps(
+                numeric_authorities,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\nThese exact per-object authorities remain frozen; do not change, omit, merge, or derive them."
+        )
     prompt = (
-        f"{director.actual_prompt}\n\n"
-        f"Independent-review correction attempt {next_attempt}: edit the previous candidate "
-        f"and fix only these defects: {fixes}. Preserve every unaffected visual relationship. "
-        "Do not add, paraphrase, or expand any visible source text."
+        f"VISIBLE DEFECT\n{problem.category}: {problem.detail.strip()}\n\n"
+        f"REQUIRED REPAIR\nCorrection attempt {next_attempt}: repair exactly this visible defect "
+        "on the previous candidate; make no other change.\n\n"
+        "MUST STAY UNCHANGED\nPreserve the accepted composition, every already-correct region, "
+        "the frozen page plan, all complete facts, the confirmed colors, and the fixed title, "
+        "logo, footer, and page-number boundaries."
+        + numeric_contract
     )
-    return prompt, director.selected_reference_ids, "edit_previous"
+    return prompt, (), "edit_previous"
+
+
+def _run_failed_recovery_owned(
+    workspace: ExperimentWorkspace, *, timeout: int, recorder: EvidenceRecorder,
+    material_view_factory: Callable[[ExperimentWorkspace], CompletePageMaterialView],
+    reviewer_invoke: Callable[..., CodexStructuredResult],
+    provider_runner: Callable[[list[str], int], None], max_corrections: int,
+) -> LoopOutcome:
+    """Run one explicitly numbered recovery round bound to its prior failure."""
+    failed = _load_failed_outcome(workspace, recorder)
+    if failed is not None:
+        return failed
+    if recorder.durable_call_count():
+        return _publish_interrupted_outcome(workspace, recorder)
+    prior = _prior_recovery_workspace(workspace)
+    prior_recorder = EvidenceRecorder(
+        prior.experiment_root, project_copy=prior.project_copy,
+        experiment_id=prior.experiment_id, page_number=prior.page_number,
+        source_identity=prior.source_snapshot_sha256,
+    )
+    prior_failed = _load_failed_outcome(prior, prior_recorder)
+    if prior_failed is None or not prior_failed.attempts:
+        raise ValueError("previous recovery round has no signed candidate failure")
+    material_view = material_view_factory(workspace)
+    prior_material_view = build_complete_page_material_view(prior)
+    prior_semantic = dict(prior_material_view.value)
+    current_semantic = dict(material_view.value)
+    prior_semantic.pop("experiment_id", None)
+    current_semantic.pop("experiment_id", None)
+    if prior_semantic != current_semantic:
+        raise ValueError("recovery material semantics differ from the prior frozen view")
+    director = reuse_published_director_authority(
+        prior, workspace, prior_material_view, material_view,
+    )
+    prior_terminal = prior_failed.attempts[-1]
+    origin_workspace, origin = _resolve_failed_candidate_authority(
+        prior, prior_terminal,
+    )
+    prior_review, prior_review_path, prior_review_sha = _prior_review(
+        prior, prior_terminal,
+    )
+    interrupted = prior_failed.failure_problems == (
+        "interrupted prior candidate run; automatic resubmission blocked",
+    )
+    if prior_review is None and not interrupted:
+        raise ValueError("prior failure lacks a signed correction review")
+    disposition = "correct" if prior_review is not None else "unreviewed"
+    adopted = replace(origin, attempt=1)
+    recovery_sha, prior_director_sha = _publish_recovery_authority(
+        workspace, prior, prior_failed, material_view, prior_terminal,
+        prior_review_path=prior_review_path, prior_review_sha256=prior_review_sha,
+    )
+    current_director_path = PurePosixPath(
+        "02_v6", "experiments", workspace.experiment_id, "director_v2.json",
+    )
+    current_director_sha = _digest(
+        read_bytes(workspace.project_copy, current_director_path, max_bytes=4 * 1024 * 1024)
+    )
+    if not recorder.has_candidate_adoption():
+        recorder.record_candidate_adoption(
+            prior_experiment_id=prior.experiment_id,
+            prior_attempt=prior_terminal.attempt,
+            candidate_sha256=_digest(read_bytes(
+                workspace.project_copy, origin.path.relative_to(workspace.project_copy),
+            )),
+            request_identity=origin.request_identity,
+            material_view_sha256=material_view.sha256,
+            director_authority_sha256=current_director_sha,
+            recovery_authority_sha256=recovery_sha,
+            disposition=disposition,
+        )
+    # The recovery budget numbers an adoption as logical attempt 1, while its
+    # immutable Provider archive retains the originating attempt number.
+    preflight = preflight_candidate(origin)
+    if not recorder.has_candidate_preflight(1):
+        recorder.record_candidate_preflight(
+            attempt=1,
+            candidate_sha256=preflight.sha256 or hashlib.sha256(b"").hexdigest(),
+            request_identity=adopted.request_identity,
+            passed=preflight.passed, problems=preflight.problems,
+        )
+    if not preflight.passed:
+        return _publish_failed_outcome(
+            workspace, attempts=(adopted,), problems=preflight.problems,
+            correction_count=0, recorder=recorder,
+        )
+    attempts = [adopted]
+    corrections = 0
+    if disposition == "unreviewed":
+        review = review_candidate_once(
+            workspace, material_view, director, adopted, preflight,
+            timeout=timeout, recorder=recorder, invoke=reviewer_invoke,
+            adopted_candidate_origin=(origin_workspace, origin),
+        )
+        if review.decision == "accept":
+            seal = seal_accepted_image(
+                workspace, material_view=material_view, candidate=adopted,
+                review=review, director=director, attempts=attempts,
+                recorder=recorder,
+            )
+            return LoopOutcome("accepted", tuple(attempts), seal, (), 0)
+        prior_review = review
+    assert prior_review is not None
+    if max_corrections == 0:
+        return _publish_failed_outcome(
+            workspace, attempts=attempts, problems=prior_review.problems,
+            correction_count=0, recorder=recorder,
+        )
+    prompt, selected, strategy = _local_correction(
+        prior_review, director, next_attempt=2,
+    )
+    _record_local_correction(recorder, 1)
+    corrections = 1
+    while True:
+        attempt = len(attempts) + 1
+        previous = attempts[-1]
+        request = build_experiment_image_request(
+            workspace, material_view, attempt=attempt, prompt=prompt,
+            quality=director.quality, selected_reference_ids=selected,
+            strategy=strategy, previous_candidate=previous,
+            adopted_candidate_origin=(origin_workspace, origin) if attempt == 2 else None,
+        )
+        candidate = run_provider_attempt(
+            workspace, request, attempt=attempt, timeout=timeout,
+            recorder=recorder, runner=provider_runner,
+        )
+        attempts.append(candidate)
+        preflight = preflight_candidate(candidate)
+        recorder.record_candidate_preflight(
+            attempt=attempt,
+            candidate_sha256=preflight.sha256 or hashlib.sha256(b"").hexdigest(),
+            request_identity=candidate.request_identity,
+            passed=preflight.passed, problems=preflight.problems,
+        )
+        if not preflight.passed:
+            return _publish_failed_outcome(
+                workspace, attempts=attempts, problems=preflight.problems,
+                correction_count=corrections, recorder=recorder,
+            )
+        review = review_candidate_once(
+            workspace, material_view, director, candidate, preflight,
+            timeout=timeout, recorder=recorder, invoke=reviewer_invoke,
+        )
+        if review.decision == "accept":
+            seal = seal_accepted_image(
+                workspace, material_view=material_view, candidate=candidate,
+                review=review, director=director, attempts=attempts,
+                recorder=recorder,
+            )
+            return LoopOutcome("accepted", tuple(attempts), seal, (), corrections)
+        if corrections >= max_corrections:
+            return _publish_failed_outcome(
+                workspace, attempts=attempts, problems=review.problems,
+                correction_count=corrections, recorder=recorder,
+            )
+        prompt, selected, strategy = _local_correction(
+            review, director, next_attempt=attempt + 1,
+        )
+        _record_local_correction(recorder, attempt)
+        corrections += 1
 
 
 def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, recorder: EvidenceRecorder, material_view_factory: Callable[[ExperimentWorkspace], CompletePageMaterialView], director_invoke: Callable[..., CodexStructuredResult], reviewer_invoke: Callable[..., CodexStructuredResult], provider_runner: Callable[[list[str], int], None], max_corrections: int) -> LoopOutcome:
@@ -576,13 +974,20 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
     if accepted is not None:
         recorder.record_recovery(skipped_calls=RECOVERY_CALLS)
         return LoopOutcome("accepted", (accepted.candidate,), accepted, (), 0)
+    if workspace.recovery_round is not None:
+        return _run_failed_recovery_owned(
+            workspace, timeout=timeout, recorder=recorder,
+            material_view_factory=material_view_factory,
+            reviewer_invoke=reviewer_invoke, provider_runner=provider_runner,
+            max_corrections=max_corrections,
+        )
     director_root = workspace.project_copy / "02_v6" / "experiments" / workspace.experiment_id
     legacy_director = director_root / "director.json"
     v2_director = director_root / "director_v2.json"
     if legacy_director.exists() and not v2_director.exists():
         raise ValueError(
             "unfinished v1 page cannot reuse its legacy director or candidates; "
-            "restart this page from the consulting director v2 in a fresh page run"
+            "restart this page from the compact consulting director v3 in a fresh page run"
         )
     failed = _load_failed_outcome(workspace, recorder)
     if failed is not None:
@@ -600,9 +1005,7 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
         _record_director(recorder, director)
         prompt = director.actual_prompt
         selected = director.selected_reference_ids
-        strategy: Literal["initial", "edit_previous", "regenerate_from_materials"] = "initial"
-        previous_decision: CorrectionDecision | None = None
-        previous_decision_candidate: Path | None = None
+        strategy: Literal["initial", "edit_previous"] = "initial"
         while True:
             attempt = len(attempts) + 1
             previous = attempts[-1] if attempts else None
@@ -631,20 +1034,10 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
                         correction_count=corrections, recorder=recorder,
                     )
                 verify_source_unchanged(workspace)
-                mechanical = _mechanical_correction(
+                prompt, selected, strategy = _local_correction(
                     review, director, next_attempt=attempt + 1,
                 )
-                if mechanical is not None:
-                    prompt, selected, strategy = mechanical
-                    _record_mechanical_correction(recorder, review, attempt)
-                    for problem in review.problem_records:
-                        if problem not in reconstruction_repairs:
-                            reconstruction_repairs.append(problem)
-                else:
-                    decision = decide_correction(workspace, material_view, director, previous_candidate=candidate.path, problems=last_problems, timeout=timeout, invoke=director_invoke, previous_decision=previous_decision, previous_request_candidate=previous_decision_candidate)
-                    _record_correction(recorder, decision, attempt)
-                    previous_decision, previous_decision_candidate = decision, candidate.path
-                    prompt, selected, strategy = decision.actual_prompt, decision.selected_reference_ids, decision.strategy
+                _record_local_correction(recorder, attempt)
             else:
                 last_problems = preflight.problems
                 if corrections >= max_corrections:
@@ -652,8 +1045,16 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
                         workspace, attempts=attempts, problems=last_problems,
                         correction_count=corrections, recorder=recorder,
                     )
-                prompt = prompt + f"\n\nTechnical correction attempt {attempt + 1}: regenerate the same intended content and fix only: {'; '.join(last_problems)}"
-                strategy = "regenerate_from_materials"
+                prompt = (
+                    f"TECHNICAL DEFECT\n{'; '.join(last_problems)}\n\n"
+                    f"REQUIRED REPAIR\nCorrection attempt {attempt + 1}: repair exactly this "
+                    "technical defect on the previous candidate; make no other change.\n\n"
+                    "MUST STAY UNCHANGED\nPreserve the accepted composition, every correct region, "
+                    "the frozen page plan, all complete facts, the confirmed colors, and the fixed "
+                    "title, logo, footer, and page-number boundaries."
+                )
+                selected = ()
+                strategy = "edit_previous"
             corrections += 1
     finally:
         verify_source_unchanged(workspace)

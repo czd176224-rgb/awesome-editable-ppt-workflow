@@ -15,9 +15,17 @@ from typing import Any, Callable, Literal
 from workflow_v6_reconstruction import (
     assemble_v6_deck,
     build_reconstruction_request,
+    commit_reconstructed_page,
     finalize_reconstructed_page,
+    verify_completed_page_authority,
 )
+from workflow_v6_media import normalized_raster_pixel_seal
+import workflow_v6_secure_io as secure_io
 from workflow_v6_state import load
+from awesome_attachment_render import (
+    _page_render_lease, _assign_kill_on_close_job,
+    _resume_suspended_process, _close_native_handle,
+)
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -34,23 +42,49 @@ class PageWorkerRequest:
     page_dir: Path
     source_image: Path
     prompt_file: Path
-    text_hints: Path | None
     timeout: int
 
 
 @dataclass(frozen=True)
 class PageWorkerResult:
-    status: Literal["completed", "needs_paddle", "failed"]
+    status: Literal["completed", "failed"]
     reconstructed_body: Path | None = None
     reason: str | None = None
 
 
 PageWorker = Callable[[PageWorkerRequest], PageWorkerResult]
-PaddleRunner = Callable[[PageWorkerRequest], Path]
 
 
 def _python() -> str:
     return sys.executable
+
+
+def _run_worker_process(command: list[str], *, timeout: int, input: str | None = None,
+                        env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    """Own the Windows process tree before allowing any worker code to execute."""
+    if os.name != "nt":
+        return subprocess.run(command, input=input, env=env, timeout=timeout,
+                              text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
+    child = subprocess.Popen(
+        command, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+        text=True, encoding="utf-8", errors="replace", creationflags=0x00000004,
+    )
+    job = None
+    try:
+        job = _assign_kill_on_close_job(child)
+        if job is None:
+            raise RuntimeError("worker process tree ownership is unavailable")
+        _resume_suspended_process(child)
+        stdout, stderr = child.communicate(input=input, timeout=timeout)
+        return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+    finally:
+        # Closing the job also kills descendants whose original parent already exited.
+        if job is not None:
+            _close_native_handle(job)
+        elif child.poll() is None:
+            child.kill()
+        child.communicate(timeout=15)
 
 
 def _run_script(script: Path, *args: object, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -60,20 +94,33 @@ def _run_script(script: Path, *args: object, timeout: int = 300) -> subprocess.C
             str(RUNTIME), str(Path(__file__).resolve().parent), env.get("PYTHONPATH"),
         ) if value
     )
-    completed = subprocess.run(
+    completed = _run_worker_process(
         [_python(), str(script), *(str(value) for value in args)],
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
         timeout=timeout,
-        check=False,
         env=env,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or script.name
         raise RuntimeError(detail)
     return completed
+
+
+def _atomic_json(root: Path, path: Path, value: dict[str, Any]) -> None:
+    secure_io.atomic_write_bytes(
+        root,
+        path.relative_to(root),
+        (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        replace=path.exists(),
+    )
+
+
+def _source_seal(root: Path, path: Path, *, sealed_path: str) -> dict[str, Any]:
+    data = secure_io.read_bytes(root, path.relative_to(root))
+    return {
+        "path": sealed_path,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        **normalized_raster_pixel_seal(data),
+    }
 
 
 def _prepare_run(project: Path, reconstruction_request: dict[str, Any], page_number: int) -> tuple[Path, Path, Path]:
@@ -107,7 +154,26 @@ def _prepare_run(project: Path, reconstruction_request: dict[str, Any], page_num
     if request_copy.exists() and request_copy.read_bytes() != encoded:
         raise RuntimeError("accepted reconstruction request changed after preparation")
     if not request_copy.exists():
-        request_copy.write_bytes(encoded)
+        secure_io.atomic_write_bytes(project, request_copy.relative_to(project), encoded)
+    page_request_path = page_dir / "page_request.json"
+    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    for authority in ("numeric_authority", "numeric_authorities", "page_plan"):
+        value = reconstruction_request.get(authority)
+        if value is None:
+            page_request.pop(authority, None)
+        else:
+            page_request[authority] = value
+    accepted_source = dict(reconstruction_request["source_body"])
+    worker_source = _source_seal(
+        project,
+        page_dir / "source.png",
+        sealed_path=(page_dir / "source.png").relative_to(project).as_posix(),
+    )
+    if worker_source["normalized_pixel_sha256"] != accepted_source["normalized_pixel_sha256"]:
+        raise RuntimeError("prepared worker source pixels differ from the accepted image")
+    page_request["accepted_source_body"] = accepted_source
+    page_request["worker_source_body"] = worker_source
+    _atomic_json(project, page_request_path, page_request)
     prompt_file = page_dir / "worker-prompt.md"
     _run_script(PROMPT_BUILDER, run_dir, "--page", "page_001", "--out", prompt_file)
     runtime_command = f'"{_python()}" "{RUNTIME / "main.py"}"'
@@ -156,8 +222,6 @@ def _validation_result(page_dir: Path) -> PageWorkerResult:
             return PageWorkerResult("failed", reason="Codex page worker passed without page.pptx")
         return PageWorkerResult("completed", reconstructed_body=body)
     reason = str(validation.get("reason") or validation.get("failure_reason") or "page reconstruction failed")
-    if validation.get("failure_code") == "text_unreadable":
-        return PageWorkerResult("needs_paddle", reason=reason)
     return PageWorkerResult("failed", reason=reason)
 
 
@@ -176,6 +240,13 @@ def _default_page_worker(request: PageWorkerRequest) -> PageWorkerResult:
         raise RuntimeError("reconstruction page is not dispatchable")
 
     prompt = request.prompt_file.read_text(encoding="utf-8")
+    for name in (
+        "validation.json", "manifest.json", "page.pptx", "page_result.json",
+        "preview.png", "split_assets_contact.png", ".record-validation.json",
+    ):
+        path = request.page_dir / name
+        if path.is_file():
+            path.unlink()
     command = [
         _codex_executable(), "exec",
         "-C", str(request.page_dir),
@@ -191,19 +262,17 @@ def _default_page_worker(request: PageWorkerRequest) -> PageWorkerResult:
         value for value in (str(RUNTIME), str(Path(__file__).resolve().parent), env.get("PYTHONPATH")) if value
     )
     try:
-        completed = subprocess.run(
+        completed = _run_worker_process(
             command,
             input=prompt,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
             env=env,
             timeout=request.timeout,
-            check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"Codex page worker could not complete: {exc}") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "Codex page worker failed"
+        return PageWorkerResult("failed", reason=detail)
     result = _validation_result(request.page_dir)
     if result.status == "completed":
         _run_script(
@@ -214,59 +283,8 @@ def _default_page_worker(request: PageWorkerRequest) -> PageWorkerResult:
             timeout=request.timeout,
         )
         return result
-    if result.status == "needs_paddle":
-        return result
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or result.reason
-    else:
-        detail = result.reason or completed.stderr.strip() or completed.stdout.strip()
+    detail = result.reason or completed.stderr.strip() or completed.stdout.strip()
     return PageWorkerResult("failed", reason=detail)
-
-
-def _default_paddle(request: PageWorkerRequest) -> Path:
-    token = _paddle_token()
-    if not token:
-        raise RuntimeError("Paddle token is not configured")
-    out = request.page_dir / "text_hints.json"
-    _run_script(
-        RUNTIME / "paddle_text_hints.py",
-        request.page_dir,
-        "--out", out.name,
-        "--overlay", "text_hints.png",
-        "--token", token,
-        "--timeout", request.timeout,
-        timeout=request.timeout + 30,
-    )
-    if not out.is_file():
-        raise RuntimeError("Paddle did not produce text hints")
-    return out
-
-
-def _paddle_token() -> str | None:
-    value = os.environ.get("PADDLE_OCR_TOKEN", "").strip()
-    if value:
-        return value
-    try:
-        sys.path.insert(0, str(RUNTIME))
-        from runtime_env import config_path, read_config_file
-        value = str(read_config_file(config_path()).get("PADDLE_OCR_TOKEN", "")).strip()
-    except Exception:
-        value = ""
-    return value or None
-
-
-def _paddle_authorized() -> bool:
-    return os.environ.get("EDITABLE_PPT_ALLOW_PADDLE_UPLOAD", "").strip() == "1"
-
-
-def _reset_failed_worker(run_dir: Path) -> None:
-    _run_script(
-        RUNTIME / "reset_page_job.py",
-        run_dir,
-        "--page", "page_001",
-        "--agent-id", "codex-page-worker",
-        "--confirm-lost",
-    )
 
 
 def _recovery(project: Path, page_number: int) -> dict[str, Any] | None:
@@ -274,31 +292,21 @@ def _recovery(project: Path, page_number: int) -> dict[str, Any] | None:
     page = state["pages"][page_number - 1]
     if page.get("state") != "page_complete":
         return None
-    final_receipt = project / "06_v6" / "pages" / f"page_{page_number:03d}" / "page.json"
-    reconstruction_receipt = project / "05_v6" / "reconstruction_runs" / f"page_{page_number:03d}" / "reconstruction.json"
-    if not final_receipt.is_file() or not reconstruction_receipt.is_file():
+    verified = verify_completed_page_authority(project, page_number)
+    value = verified.get("reconstruction_receipt")
+    if not isinstance(value, dict):
         raise RuntimeError("completed reconstruction authority is incomplete")
-    final = json.loads(final_receipt.read_text(encoding="utf-8"))
-    value = json.loads(reconstruction_receipt.read_text(encoding="utf-8"))
-    page_pptx = project / str(final.get("page_pptx", ""))
-    if not page_pptx.is_file() or hashlib.sha256(page_pptx.read_bytes()).hexdigest() != final.get("sha256"):
-        raise RuntimeError("completed reconstructed page changed")
-    if value.get("final_page_sha256") != final.get("sha256"):
-        raise RuntimeError("reconstruction receipt does not match the final page")
     return {**value, "recovered": True}
 
 
-def reconstruct_accepted_page(
+def _reconstruct_accepted_page_owned(
     workspace: Any,
     outcome: Any,
     *,
     page_worker: PageWorker | None = None,
-    paddle_runner: PaddleRunner | None = None,
-    paddle_token: str | None = None,
-    paddle_authorized: bool | None = None,
     timeout: int = 1800,
 ) -> dict[str, Any]:
-    """Reconstruct one accepted page, with at most one explicit Paddle-assisted retry."""
+    """Reconstruct one accepted page with one Codex worker; failures stop the page."""
     project = Path(workspace.project_copy).resolve()
     page_number = int(workspace.page_number)
     if getattr(outcome, "status", None) != "accepted" or getattr(outcome, "accepted", None) is None:
@@ -324,31 +332,9 @@ def reconstruct_accepted_page(
         page_dir=page_dir,
         source_image=page_dir / "source.png",
         prompt_file=prompt_file,
-        text_hints=None,
         timeout=timeout,
     )
     result = worker(request)
-    mode = "codex_direct_reconstruction"
-    paddle_calls = 0
-    worker_calls = 1
-    if result.status == "needs_paddle":
-        token = paddle_token if paddle_token is not None else _paddle_token()
-        authorized = paddle_authorized if paddle_authorized is not None else _paddle_authorized()
-        if not token or not authorized:
-            raise RuntimeError(f"{result.reason or 'text unreadable'}; Paddle is not both configured and authorized")
-        try:
-            hints = (paddle_runner or _default_paddle)(request)
-        except Exception as exc:
-            raise RuntimeError(f"Paddle failed; page reconstruction stopped: {exc}") from exc
-        paddle_calls = 1
-        if not Path(hints).is_file():
-            raise RuntimeError("Paddle failed; page reconstruction stopped without hints")
-        if page_worker is None:
-            _reset_failed_worker(run_dir)
-        request = PageWorkerRequest(**{**request.__dict__, "text_hints": Path(hints)})
-        result = worker(request)
-        worker_calls = 2
-        mode = "paddle_assisted_reconstruction"
     if result.status != "completed" or result.reconstructed_body is None:
         raise RuntimeError(result.reason or "Codex page reconstruction failed")
     body = Path(result.reconstructed_body).resolve()
@@ -356,25 +342,54 @@ def reconstruct_accepted_page(
         body.relative_to(page_dir.resolve())
     except ValueError as exc:
         raise RuntimeError("Codex page worker output is outside its page directory") from exc
-    final = finalize_reconstructed_page(project, page_number=page_number, reconstructed_body=body)
+    page_request = json.loads((page_dir / "page_request.json").read_text(encoding="utf-8"))
+    receipt_path = run_dir / "reconstruction.json"
+    if receipt_path.exists():
+        raise RuntimeError("interrupted reconstruction receipt must be inspected before resubmission")
+    final = finalize_reconstructed_page(
+        project,
+        page_number=page_number,
+        reconstructed_body=body,
+        authority_mode="sealed_reconstruction",
+        commit_state=False,
+    )
     receipt = {
         "artifact_version": "accepted-image-worker-reconstruction-v1",
         "page_number": page_number,
         "accepted_receipt": reconstruction_request["accepted_receipt"],
         "accepted_image_sha256": reconstruction_request["source_body"]["sha256"],
-        "reconstruction_mode": mode,
-        "page_worker_calls": worker_calls,
-        "paddle_calls": paddle_calls,
+        "accepted_image_pixel_sha256": reconstruction_request["source_body"]["normalized_pixel_sha256"],
+        "accepted_source_body": reconstruction_request["source_body"],
+        "worker_source_body": page_request["worker_source_body"],
+        "reconstruction_mode": "codex_direct_reconstruction",
+        "page_worker_calls": 1,
         "final_page": final["page_pptx"],
         "final_page_sha256": final["sha256"],
         "recovered": False,
     }
-    receipt_path = run_dir / "reconstruction.json"
     encoded = json.dumps(receipt, ensure_ascii=False, indent=2) + "\n"
     if receipt_path.exists() and receipt_path.read_text(encoding="utf-8") != encoded:
         raise RuntimeError("reconstruction receipt already contains different authority")
-    receipt_path.write_text(encoded, encoding="utf-8")
+    try:
+        _atomic_json(project, receipt_path, receipt)
+        commit_reconstructed_page(project, page_number=page_number)
+    except Exception:
+        for path in (
+            project / "06_v6/pages" / f"page_{page_number:03d}" / "page.pptx",
+            project / "06_v6/pages" / f"page_{page_number:03d}" / "page.json",
+            receipt_path,
+        ):
+            if path.is_file():
+                path.unlink()
+        raise
     return receipt
+
+
+def reconstruct_accepted_page(workspace: Any, outcome: Any, *,
+                              page_worker: PageWorker | None = None, timeout: int = 1800) -> dict[str, Any]:
+    """Serialize duplicate requests through verification, worker output, and commit."""
+    with _page_render_lease(Path(workspace.project_copy), int(workspace.page_number), timeout=timeout * 2 + 600):
+        return _reconstruct_accepted_page_owned(workspace, outcome, page_worker=page_worker, timeout=timeout)
 
 
 def assemble_reconstructed_project(project: Path, outcomes: dict[int, Any]) -> dict[str, Any]:

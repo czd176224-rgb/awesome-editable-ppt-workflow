@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ from typing import Any
 from awesome_page_materials import validate_page_materials
 from awesome_attachment_render import SUPPORTED_DOCUMENTS, SUPPORTED_IMAGES
 from workflow_v6_contract import validate_material_receipts, validate_project
-from workflow_v6_secure_io import reject_reparse_chain
+from workflow_v6_secure_io import read_bytes, reject_reparse_chain
 from workflow_v6_state import load
 
 
@@ -31,6 +32,8 @@ class ExperimentWorkspace:
     project_copy: Path
     page_number: int
     source_snapshot_sha256: str
+    recovery_round: int | None = None
+    prior_experiment_id: str | None = None
 
 
 def _is_reparse(path: Path, metadata: os.stat_result | None = None) -> bool:
@@ -320,6 +323,94 @@ def open_live_page_workspace(project: Path, page_number: int) -> ExperimentWorks
         project_copy=project_root,
         page_number=page_number,
         source_snapshot_sha256=str(state["source_identity"]),
+    )
+
+
+def open_accepted_page_workspace(project: Path, page_number: int) -> ExperimentWorkspace:
+    """Resolve the canonical accepted receipt to its exact live experiment workspace."""
+    base = open_live_page_workspace(project, page_number)
+    relative = PurePosixPath("04_v6", "images", f"page_{page_number:03d}.json")
+    try:
+        value = json.loads(read_bytes(base.project_copy, relative, max_bytes=4 * 1024 * 1024))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("accepted-page receipt is missing or invalid") from exc
+    experiment_id = value.get("experiment_id") if isinstance(value, dict) else None
+    base_id = f"live-page-{page_number:03d}"
+    if experiment_id == base_id:
+        return base
+    match = re.fullmatch(
+        rf"{re.escape(base_id)}-recovery-(?P<round>[0-9]{{3}})",
+        str(experiment_id),
+    )
+    if match is None:
+        raise ValueError("accepted-page receipt experiment identity is invalid")
+    recovery_round = int(match.group("round"))
+    if not 1 <= recovery_round <= 999:
+        raise ValueError("accepted-page recovery round is invalid")
+    experiment_root = base.project_copy / "04_v6" / "experiments" / str(experiment_id)
+    reject_reparse_chain(experiment_root)
+    if not experiment_root.is_dir():
+        raise ValueError("accepted-page experiment workspace is missing")
+    prior_id = (
+        base_id if recovery_round == 1
+        else f"{base_id}-recovery-{recovery_round - 1:03d}"
+    )
+    return ExperimentWorkspace(
+        experiment_id=str(experiment_id), source_project=base.source_project,
+        experiment_root=experiment_root.resolve(strict=True),
+        project_copy=base.project_copy, page_number=page_number,
+        source_snapshot_sha256=base.source_snapshot_sha256,
+        recovery_round=recovery_round, prior_experiment_id=prior_id,
+    )
+
+
+def open_current_page_workspace(project: Path, page_number: int) -> ExperimentWorkspace:
+    """Open the canonical accepted experiment when present, otherwise the base live page."""
+    base = open_live_page_workspace(project, page_number)
+    canonical = base.project_copy / "04_v6" / "images" / f"page_{page_number:03d}.json"
+    if canonical.is_file():
+        return open_accepted_page_workspace(base.project_copy, page_number)
+    return base
+
+
+def open_live_page_recovery_workspace(
+    project: Path, page_number: int, *, recovery_round: int,
+) -> ExperimentWorkspace:
+    """Open one explicit failed-page recovery round without changing page state."""
+    if type(recovery_round) is not int or not 1 <= recovery_round <= 999:
+        raise ValueError("recovery_round must be an integer from 1 through 999")
+    base = open_live_page_workspace(project, page_number)
+    state = load(base.project_copy)
+    page = state["pages"][page_number - 1]
+    experiment_id = f"live-page-{page_number:03d}-recovery-{recovery_round:03d}"
+    if page["state"] in {"accepted", "reconstructing", "page_complete"}:
+        accepted = open_accepted_page_workspace(base.project_copy, page_number)
+        if accepted.experiment_id != experiment_id:
+            raise ValueError("accepted or page_complete pages cannot open a failed-page recovery round")
+        return accepted
+    prior_experiment_id = (
+        f"live-page-{page_number:03d}"
+        if recovery_round == 1
+        else f"live-page-{page_number:03d}-recovery-{recovery_round - 1:03d}"
+    )
+    prior_failed = (
+        base.project_copy / "04_v6" / "experiments" / prior_experiment_id /
+        "failed_outcome.json"
+    )
+    if not prior_failed.is_file():
+        raise ValueError("previous recovery round has no sealed failed outcome")
+    experiment_root = base.project_copy / "04_v6" / "experiments" / experiment_id
+    experiment_root.mkdir(parents=True, exist_ok=True)
+    reject_reparse_chain(experiment_root)
+    return ExperimentWorkspace(
+        experiment_id=experiment_id,
+        source_project=base.source_project,
+        experiment_root=experiment_root.resolve(strict=True),
+        project_copy=base.project_copy,
+        page_number=page_number,
+        source_snapshot_sha256=base.source_snapshot_sha256,
+        recovery_round=recovery_round,
+        prior_experiment_id=prior_experiment_id,
     )
 
 

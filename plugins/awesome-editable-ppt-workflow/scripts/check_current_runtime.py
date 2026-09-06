@@ -104,6 +104,7 @@ PROHIBITED_PATHS = (
     "tests/test_visual_qa.py",
 )
 PROHIBITED_REPO_PATHS = (
+    "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/editppt/runtime/paddle_text_hints.py",
     "plugins/awesome-editable-ppt-workflow/skills/compile-page-image-prompt",
     "plugins/awesome-editable-ppt-workflow/skills/zhejiang-ppt-v2",
     "plugins/awesome-editable-ppt-workflow/skills/word-to-editable-ppt",
@@ -114,6 +115,8 @@ PROHIBITED_REPO_PATHS = (
     "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/scripts/complex_page_experiment/cli.py",
 )
 PROHIBITED_RUNTIME_PATTERNS = {
+    "retired OCR retry": re.compile(r"needs_paddle|paddle_assisted_reconstruction|PADDLE_OCR_TOKEN|paddle_text_hints|on the one authorized OCR-assisted retry", re.IGNORECASE),
+    "retired standby generation entry": re.compile(r"\b(?:generate_page_body|_generate_page_body_owned)\b"),
     "replaced page-generation entry": re.compile(
         r"compile-page-image-prompt|seal-page-image-prompt|generate-page",
         re.IGNORECASE,
@@ -260,11 +263,22 @@ def _scan_v6_runtime_contract(skill_root: Path, repo_root: Path) -> list[str]:
 def _scan_other_plugin_runtime(repo_root: Path) -> list[str]:
     findings: list[str] = []
     plugin_root = repo_root / f"plugins/{PLUGIN_ID}"
+    reconstruction = plugin_root / "skills/reconstruct-editable-slide"
+    instructions = [reconstruction / "SKILL.md"]
+    for directory in ("prompts", "references"):
+        instructions.extend((reconstruction / directory).rglob("*.md"))
+    for path in instructions:
+        if not path.is_file():
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
+            if PROHIBITED_RUNTIME_PATTERNS["retired OCR retry"].search(line):
+                findings.append(f"{_display(path, repo_root)}:{number}: retired OCR retry: {line.strip()}")
     roots = (
         plugin_root / "skills/generate-slide-body-image/scripts",
         plugin_root / "skills/reconstruct-editable-slide/cli/editppt",
     )
     patterns = {
+        "retired OCR retry": PROHIBITED_RUNTIME_PATTERNS["retired OCR retry"],
         "external PPT Master dependency": re.compile(r"ppt[-_]master", re.IGNORECASE),
         "historical workflow contract": re.compile(r"five[-_]master[-_]v(?:16|17|18)", re.IGNORECASE),
     }

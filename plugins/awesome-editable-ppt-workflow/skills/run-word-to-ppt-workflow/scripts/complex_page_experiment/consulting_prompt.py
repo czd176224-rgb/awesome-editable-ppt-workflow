@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -16,80 +16,104 @@ SECTION_SPECS = (
     ("Strict Prohibitions", "strict_prohibitions"),
 )
 
-_CUSTODY_PATTERNS = (
-    re.compile(r"[A-Za-z]:[\\/]"),
-    re.compile(r"(?:^|\s)/(?:[^/\s]+/)*[^/\s]+"),
-    re.compile(r"(?:^|\s)(?:\.\.?[\\/]|\\\\)"),
-    re.compile(r"\b(?:00_source|01_source_assets|02_v6)[\\/]", re.IGNORECASE),
-    re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE),
-    re.compile(r"\b(?:sha-?256|digest|receipt[_ -]?id)\b", re.IGNORECASE),
-)
-_SENTENCE_PARTS = re.compile(r"[^.!?;。！？；\r\n]+[.!?;。！？；]?")
-_FIXED_TERMS = (
-    re.compile(r"\btitle\b", re.IGNORECASE),
-    re.compile(r"\blogo\b", re.IGNORECASE),
-    re.compile(r"\bfooter\b", re.IGNORECASE),
-    re.compile(r"\bpage(?:[_ -]+)number\b", re.IGNORECASE),
-)
-_SAFE_REGION = re.compile(r"\b(?:central|largest|safe)\b.*\b17:8\b", re.IGNORECASE)
-_CANVAS_BACKGROUND = re.compile(
-    r"(?:\bcanvas\s+background\b|"
-    r"\b(?:canvas|background)\b.*\b(?:color|grid|texture|gradient|glow)\b|"
-    r"\b(?:color|grid|texture|gradient|glow)\b.*\b(?:canvas|background)\b)",
-    re.IGNORECASE,
-)
-_BACKGROUND_EFFECT = re.compile(
-    r"\b(?:texture|gradient|glow|fog|vortex|burlap|linen|paper)\b",
-    re.IGNORECASE,
-)
-_FOREGROUND_CONTEXT = re.compile(
-    r"\b(?:foreground|subject|evidence|person|people|object|arrange|arrangement|relationship|garment)\b",
-    re.IGNORECASE,
-)
-
 _TASK_CONSTRAINT = (
-    "Generate one coherent consulting-report slide body at 1904x896. Regardless of the provider's "
-    "eventual canvas aspect ratio, place all body text, charts, diagrams, tables, annotations, "
-    "connectors, references, and key decoration inside the central largest 17:8 content region; "
-    "leave a visibly empty perimeter on all four sides. Do not generate title, logo, footer, or "
-    "page number; those are supplied as fixed PowerPoint layers."
+    "Generate a 1904x896 slide body. At any output ratio, keep all meaningful content inside the "
+    "central largest 17:8 content region with a visibly empty perimeter on all four sides. "
+    "Give the source-supported main relationship the strongest visual priority."
 )
 
-_ARGUMENT_CONSTRAINT = (
-    "The page must communicate one business proposition and retain explanatory copy that "
-    "connects evidence, interpretation, and conclusion, ending with an explicit takeaway."
+_QUANTITATIVE_CONTENT_CONSTRAINT = (
+    "Use a quantitative form only when source evidence is complete and unambiguous for the "
+    "subject, unit, period, basis, categories, and values required by that form. Preserve every "
+    "source value and label exactly; do not calculate new metrics, infer missing values, or mix "
+    "incompatible subjects, units, periods, or bases. When those dimensions are incomplete, use "
+    "the named qualitative substitute and make the source-stated relationship visibly legible. "
+    "When a page contains financial, valuation, investment, or operating data, preserve subject, "
+    "unit, period, basis, actual/forecast status, source-stated assumptions, and total-to-component "
+    "relationships. Keep facts, assumptions, calculated results, analytical judgments, and "
+    "recommendations distinct."
 )
 
-_VISIBLE_TEXT_CUSTODY = (
-    "business_proposition, explanatory_lead, and takeaway_statement are planning instructions, "
-    "not visible slide copy. Every visible word or label must use exact contiguous spans from "
-    "complete_word_content. Do not paraphrase, summarize, expand, or invent "
-    "visible wording. The prohibition is against text expansion, not visual semantic expansion: "
-    "use color, spatial position, shapes, connectors, and visual hierarchy to make relationships "
-    "already explicit in complete_word_content visible without adding explanatory wording."
+LOCAL_VISUAL_SCOPE = (
+    "Compose the whole slide first: mix prose, tables, diagrams and optional local charts. "
+    "Use charts only when they help; complete data does not require a chart. KPIs, dates and counts may stay text. "
+    "Ordinary labels do not each require a card. Measured-scale restrictions govern data marks, "
+    "not ordinary layout size, position, or hierarchy."
+)
+
+VISIBLE_COPY_BOUNDARY = (
+    "Role labels, prompt section headings, and quote introducers are instruction metadata, "
+    "not visible copy: render only the source wording, never its instruction introducer. "
+    "Source-authored headings and labels remain allowed; separate layout instructions from visible words."
+)
+
+FRONTEND_FIDELITY = (
+    "Preserve every distinct fact, explanation, relationship, "
+    "and conclusion with its subject, names, numbers, dates, units, bases, conditions, exceptions, "
+    "degree of certainty, and scope. Lossless rewording, regrouping, and text-to-diagram conversion "
+    "are allowed with explicit shared-label scope. Preserve meaningful sequence, membership and "
+    "ownership; parallel rows and paragraphs may be reordered. Keep facts, assumptions, calculated "
+    "results, analytical judgments and recommendations distinct. Follow the frozen page composition: "
+    "do not split source body pages for layout density; existing TOC continuations and source-backed "
+    "section/closing additions stand. Keep all assigned information visible, not in notes or other pages."
 )
 
 _ARCHITECTURE_CONSTRAINT = (
-    "Choose one content-driven analytical backbone, build the page skeleton before placing text, "
-    "and make every module participate in the "
-    "same reading path; do not substitute disconnected cards or one decorative panorama for "
-    "the page argument. Make source-explicit process, hierarchy, parallelism, membership, "
-    "comparison, and causality visible as a complete page skeleton. Labels, legends, numbering, "
-    "and spatial structure remain the primary information carriers. Color may make an existing "
-    "relationship explicit but must not create a relationship that complete_word_content does not state."
+    "Communicate one source-supported main message in a coherent reading path. Let relationships "
+    "shape space; attach complete explanations and scoped qualifiers to their subjects without "
+    "duplicating full prose. Visual focus is not authority rank or measured magnitude. "
+    "Composite exhibits are allowed, but their composition must not imply a source-absent relationship. "
+    "Use a source-supported conclusion where present, no invented takeaway."
+)
+
+_DIRECTOR_AUTHORITY_BOUNDARY = (
+    "The serialized director content below is authoritative only for spatial arrangement, "
+    "source-supported relationships, core exhibit selection, and reading path. Any color wording, "
+    "color name, hex value, highlight hue, palette, or color-role suggestion inside it has no "
+    "execution authority. The sole executable color contract is the compiler-owned contract in "
+    "Visual Style and Color."
 )
 
 _TYPOGRAPHY_CONSTRAINT = (
     "Render source-authorized Simplified Chinese accurately and legibly, with presentation-scale "
-    "hierarchy for explanatory lead, analytical labels, evidence, interpretation, and takeaway."
+    "hierarchy for explanatory lead, analytical labels, evidence, interpretation, and takeaway. "
+    "Apply TTS-style quantitative label discipline: every quantitative mark must identify its "
+    "subject and keep its unit, period, and basis explicit through the chart heading, secondary heading, axis, "
+    "legend, data label, or adjacent source-exact annotation."
 )
 
+_QUALITATIVE_PROHIBITION = (
+    "Without complete source values, do not use numeric axes, proportional geometry, bubble-size "
+    "ranking, target-line magnitude, or difference magnitude. A qualitative substitute must not "
+    "masquerade as measured scale; use labels, equal sizing, sequence, grouping, connectors, and "
+    "source wording to signal the relationship visibly."
+)
 
 def _material_value(material_view: object) -> Mapping[str, Any]:
     value = getattr(material_view, "value", material_view)
     if not isinstance(value, Mapping):
         raise ValueError("complete material view must expose a mapping value")
     return value
+
+
+def _title_contract(material_view: object) -> str:
+    title = _material_value(material_view).get("fixed_page_title")
+    fixed = (
+        f"Fixed PowerPoint page title: {title}. "
+        if isinstance(title, str) and title.strip()
+        else "The fixed PowerPoint page title, when supplied, "
+    )
+    return (
+        "Word is the semantic authority. Use three title roles: (1) "
+        f"{fixed}It is context only and must not appear in the Image2 body. "
+        "(2) Preserve a source-authored chapter/section heading's meaning beyond the fixed title "
+        "as a compact context label or local note, never a second page "
+        "title. Do not discard a source block merely because its paragraph style is Heading 1. "
+        "Fixed title meaning is covered externally; do not repeat it as a body note, "
+        "lead, label, or paraphrase. Preserve extra chapter context, facts and qualifiers. "
+        "(3) Local exhibit headings remain allowed beside the exhibit they identify. Do not generate "
+        "title, logo, footer, or page number; those are supplied as fixed PowerPoint layers."
+    )
 
 
 def _visual_contract_colors(material_view: object) -> dict[str, str]:
@@ -106,6 +130,11 @@ def _visual_contract_colors(material_view: object) -> dict[str, str]:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"complete material view {label} color is missing")
         colors[key] = value.strip()
+    highlight = contract.get("highlight_color")
+    if highlight is not None:
+        if not isinstance(highlight, str) or not highlight.strip():
+            raise ValueError("complete material view highlight color is missing")
+        colors["highlight_color"] = highlight.strip()
     return colors
 
 
@@ -129,41 +158,46 @@ def _color_constraints(
     support = _mix_hex(secondary, (255, 255, 255), 0.40)
     soft = _mix_hex(secondary, (255, 255, 255), 0.70)
     wash = _mix_hex(secondary, (255, 255, 255), 0.88)
-    positive = (
-        "Treat the confirmed background color as the canvas base; "
-        f"use primary color {colors['primary_color']} for primary text and neutral structure. "
-        f"Use derived shades of secondary color {secondary} when color has a source-grounded "
-        f"structural duty: strong {strong}, the confirmed secondary as base, support {support}, "
-        f"soft {soft}, and wash {wash}. "
-        "The same hue communicates parallel items, the same "
-        "category, or common membership. Ordered light-to-dark shades may communicate only a "
+    highlight = colors.get("highlight_color")
+    constraints = (
+        f"Use primary color {colors['primary_color']} for long body text, ordinary labels, deep headings, and neutral structure. "
+        f"Use secondary color {secondary} for the main path, main option, and main data series, "
+        f"with source-grounded structural shades: strong {strong}, confirmed secondary as base, "
+        f"support {support}, soft {soft}, and wash {wash}. "
+        "Use light or neutral treatments for supporting evidence. "
+        "Parallel peers and same-category items use the same tone. "
+        "Ordered light-to-dark shades may communicate only a "
         "source-explicit process, hierarchy, stage, or visual focus. Cross-hue colors may be used "
         "only for source-explicit risk, status, rating, or positive/negative business meaning. "
-        "Labels, legends, numbering, and spatial structure remain primary; color is supporting "
-        "evidence and never invents meaning. When the source contains any of these relationships, "
-        "use at least two visibly distinct tones from this family across the analytical backbone, "
-        "not merely one accent line or colored text; parallel peers keep the same tone while their "
-        "shared group, axis, stage, or focal node may use another tone. A page with no color duty "
+        "Labels, legends, numbering, and spatial structure remain primary; color must not invent "
+        "order, magnitude, classification, risk, status, rating, or positive/negative meaning. "
+        "When the source gives color a relationship duty, use at least two visibly distinct tones "
+        "across the analytical backbone; parallel peers keep the same tone. A page with no color duty "
         "may remain black, white, and gray."
     )
+    if highlight is not None:
+        constraints += (
+            f" Use highlight color {highlight} only for source-supported targets, differences, "
+            "key numbers, and final nodes. Risk red or positive green is allowed only when the "
+            "source explicitly assigns that business meaning."
+        )
     if font_accent_allowed is True:
-        positive += (
-            " This is a user-confirmed emphasis page: secondary-color-family shades may be used "
-            "selectively for important text, but they are optional and must remain restrained."
+        constraints += (
+            " This is a user-confirmed emphasis page: important short text may selectively use "
+            "secondary or highlight colors. Long body text remains primary or neutral."
         )
     elif font_accent_allowed is False:
-        positive += (
-            " This is not a user-confirmed emphasis page. Do not use any secondary-color-family "
-            "shade for any text object. Use primary or neutral text color plus weight, size, "
-            "position, shape, or hierarchy for local emphasis. Secondary-color-family shades "
-            "remain allowed for text-box fills, shapes, borders, nodes, and connectors."
+        constraints += (
+            " This is not a user-confirmed emphasis page: text objects may not use secondary-family "
+            "or highlight-family colors. Use primary or neutral text color plus weight, size, "
+            "position, shape, or hierarchy for local emphasis. Those colors remain allowed for "
+            "non-text structural marks: text-box fills, shapes, borders, nodes, and connectors."
         )
     prohibited = (
         "Do not use color as the sole carrier of a fact or relationship, assign ordered color "
-        "depth to merely parallel categories, or introduce cross-hue business semantics absent "
-        "from complete_word_content."
+        "depth to merely parallel categories, or add source-absent business semantics."
     )
-    return positive, prohibited
+    return constraints, prohibited
 
 
 def _background_constraint(material_view: object) -> str:
@@ -174,44 +208,286 @@ def _background_constraint(material_view: object) -> str:
     )
 
 
-def _validated_sections(value: Mapping[str, object]) -> dict[str, str]:
-    raw = value.get("prompt_sections")
-    if not isinstance(raw, Mapping):
-        raise ValueError("consulting prompt sections are missing")
-    expected = {key for _heading, key in SECTION_SPECS}
-    if set(raw) != expected:
-        raise ValueError("prompt sections must have the approved consulting six-part shape")
-    result: dict[str, str] = {}
-    for _heading, key in SECTION_SPECS:
-        text = raw.get(key)
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError(f"consulting prompt section {key} must be non-empty natural language")
-        if any(pattern.search(text) for pattern in _CUSTODY_PATTERNS):
-            raise ValueError("compiled prompt contains a local custody path, digest, or receipt ID")
-        result[key] = " ".join(text.split())
-    return result
+def _render_complete_source_block(block: object) -> str:
+    if not isinstance(block, Mapping):
+        raise ValueError("complete Word content block must be a mapping")
+    block_type = block.get("type")
+    if block_type in {"paragraph", "list"}:
+        text = block.get("text")
+        if not isinstance(text, str):
+            raise ValueError(f"complete Word {block_type} block text is missing")
+        if block_type == "paragraph":
+            return text
+        marker = "1." if block.get("list_kind") == "number" else "-"
+        level = block.get("level", 0)
+        indent = "  " * level if isinstance(level, int) and level > 0 else ""
+        return f"{indent}{marker} {text}"
+    if block_type == "table":
+        rows = block.get("rows")
+        if not isinstance(rows, list) or any(not isinstance(row, list) for row in rows):
+            raise ValueError("complete Word table rows are missing")
+        if any(any(not isinstance(cell, str) for cell in row) for row in rows):
+            raise ValueError("complete Word table cells must be text")
+        return "\n".join(" | ".join(row) for row in rows)
+    raise ValueError(f"unsupported complete Word block type: {block_type}")
 
 
-def _without_compiler_owned_clauses(text: str, *, task_section: bool) -> str:
-    kept: list[str] = []
-    for match in _SENTENCE_PARTS.finditer(text):
-        clause = match.group(0).strip()
-        if not clause:
-            continue
-        task_background_effect = (
-            task_section
-            and _BACKGROUND_EFFECT.search(clause)
-            and not _FOREGROUND_CONTEXT.search(clause)
+def _source_heading_role(block: Mapping[str, Any]) -> str | None:
+    if block.get("type") != "paragraph":
+        return None
+    paragraph_style = block.get("paragraph_style")
+    if not isinstance(paragraph_style, str):
+        return None
+    normalized_style = paragraph_style.strip().casefold()
+    if normalized_style == "heading 1":
+        return (
+            "source-authored chapter heading; preserve only meaning beyond the fixed title as a compact local "
+            "context label or note, never as a second page title"
         )
-        if (
-            any(pattern.search(clause) for pattern in _FIXED_TERMS)
-            or _SAFE_REGION.search(clause)
-            or _CANVAS_BACKGROUND.search(clause)
-            or task_background_effect
-        ):
+    if normalized_style.startswith("heading "):
+        return (
+            "source-authored section heading; preserve only meaning beyond the fixed title as a compact local "
+            "context label, note, or nearby exhibit heading, never as a second page title"
+        )
+    return None
+
+
+def _complete_fact_content(material_view: object) -> str:
+    blocks = _material_value(material_view).get("complete_word_content")
+    if not isinstance(blocks, list):
+        raise ValueError("complete material view Word content is missing")
+    ordered = sorted(
+        enumerate(blocks),
+        key=lambda item: (
+            item[1].get("source_order", item[0])
+            if isinstance(item[1], Mapping)
+            else item[0]
+        ),
+    )
+    rendered: list[str] = []
+    for _index, block in ordered:
+        if not isinstance(block, Mapping):
+            raise ValueError("complete Word content block must be a mapping")
+        source_id = block.get("source_block_id")
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError("complete Word content block source_block_id is missing")
+        role = _source_heading_role(block)
+        role_line = (
+            f"Instruction metadata (not visible copy): {role}.\n" if role is not None else ""
+        )
+        rendered.append(
+            f"Source {source_id}:\n{role_line}{_render_complete_source_block(block)}"
+        )
+    return "\n".join(rendered)
+
+
+def _source_fact_references(material_view: object) -> dict[str, str]:
+    blocks = _material_value(material_view).get("complete_word_content")
+    if not isinstance(blocks, list):
+        raise ValueError("complete material view Word content is missing")
+    references: dict[str, str] = {}
+    for block in blocks:
+        if not isinstance(block, Mapping):
+            raise ValueError("complete Word content block must be a mapping")
+        source_id = str(block.get("source_block_id", "unknown"))
+        if block.get("type") == "table":
+            rows = block.get("rows")
+            if not isinstance(rows, list):
+                raise ValueError("complete Word table rows are missing")
+            for cell in (
+                cell
+                for row in rows
+                if isinstance(row, list)
+                for cell in row
+                if isinstance(cell, str) and cell
+            ):
+                references.setdefault(cell, source_id)
+        else:
+            text = block.get("text")
+            if isinstance(text, str) and text:
+                references.setdefault(text, source_id)
+    return references
+
+
+def _source_fact_matches(
+    text: str, references: Mapping[str, str],
+) -> list[tuple[int, int, str]]:
+    def token_character(character: str) -> bool:
+        return character.isalnum() or character in "_-"
+
+    candidates: list[tuple[int, int, str]] = []
+    for fact, source_id in references.items():
+        start = text.find(fact)
+        while start >= 0:
+            end = start + len(fact)
+            left_bound = (
+                not token_character(fact[0])
+                or start == 0
+                or not token_character(text[start - 1])
+            )
+            right_bound = (
+                not token_character(fact[-1])
+                or end == len(text)
+                or not token_character(text[end])
+            )
+            if left_bound and right_bound:
+                candidates.append((start, end, source_id))
+            start = text.find(fact, start + 1)
+    matches: list[tuple[int, int, str]] = []
+    cursor = 0
+    for start, end, source_id in sorted(
+        candidates, key=lambda item: (item[0], -(item[1] - item[0]))
+    ):
+        if start >= cursor:
+            matches.append((start, end, source_id))
+            cursor = end
+    return matches
+
+
+def _without_repeated_facts(
+    text: str, references: Mapping[str, str],
+) -> tuple[str, list[str]]:
+    matches = _source_fact_matches(text, references)
+    if not matches:
+        return text, []
+    parts: list[str] = []
+    source_ids: list[str] = []
+    cursor = 0
+    for start, end, source_id in matches:
+        parts.append(text[cursor:start])
+        if source_id not in source_ids:
+            source_ids.append(source_id)
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts).strip(" \t:;,."), source_ids
+
+
+def _ids(value: object, extra: Sequence[str] = ()) -> str:
+    assigned = value if isinstance(value, list) else []
+    return ", ".join(dict.fromkeys((*assigned, *extra)))
+
+
+def _text_lines(
+    label: str,
+    text: object,
+    references: Mapping[str, str],
+    *,
+    indent: str = "",
+) -> tuple[list[str], list[str]]:
+    if not isinstance(text, str):
+        return [], []
+    compact, matched_ids = _without_repeated_facts(text, references)
+    return ([f"{indent}{label}: {compact}"] if compact else []), matched_ids
+
+
+def _page_plan_architecture(
+    value: Mapping[str, object], material_view: object,
+) -> str:
+    plan = value.get("page_plan")
+    if not isinstance(plan, Mapping):
+        raise ValueError("consulting page plan is missing")
+    references = _source_fact_references(material_view)
+    lines, purpose_ids = _text_lines(
+        "Page purpose", plan.get("page_purpose"), references
+    )
+    if purpose_ids:
+        lines.append(f"Page purpose sources: {_ids([], purpose_ids)}")
+
+    relationship = plan.get("primary_relationship")
+    if not isinstance(relationship, Mapping):
+        raise ValueError("consulting primary relationship is missing")
+    lines.append(f"Primary relationship ({relationship.get('grammar', '')}):")
+    description_lines, description_ids = _text_lines(
+        "Description", relationship.get("description"), references, indent="  "
+    )
+    instruction_lines, instruction_ids = _text_lines(
+        "Instruction", relationship.get("visual_instruction"), references, indent="  "
+    )
+    lines.extend(description_lines)
+    lines.extend(instruction_lines)
+    lines.append(
+        f"  Sources: {_ids(relationship.get('fact_ids'), (*description_ids, *instruction_ids))}"
+    )
+    lines.append("  Nodes:")
+    for node in relationship.get("nodes", []):
+        if not isinstance(node, Mapping):
             continue
-        kept.append(clause)
-    return " ".join(kept)
+        label, label_ids = _without_repeated_facts(
+            str(node.get("label", "")), references
+        )
+        lines.append(f"  - {node.get('node_id', '')}{f': {label}' if label else ''}")
+        lines.append(f"    Sources: {_ids(node.get('fact_ids'), label_ids)}")
+    lines.append("  Edges:")
+    for edge in relationship.get("edges", []):
+        if not isinstance(edge, Mapping):
+            continue
+        label, label_ids = _without_repeated_facts(
+            str(edge.get("label") or ""), references
+        )
+        lines.append(
+            f"  - {edge.get('from_node', '')} -> {edge.get('to_node', '')}"
+            f"{f': {label}' if label else ''}"
+        )
+        lines.append(f"    Sources: {_ids(edge.get('fact_ids'), label_ids)}")
+
+    exhibit = plan.get("core_exhibit")
+    if not isinstance(exhibit, Mapping):
+        raise ValueError("consulting core exhibit is missing")
+    lines.append(f"Core exhibit ({exhibit.get('grammar', '')}):")
+    exhibit_lines, exhibit_ids = _text_lines(
+        "Description", exhibit.get("description"), references, indent="  "
+    )
+    lines.extend(exhibit_lines)
+    lines.append(f"  Sources: {_ids(exhibit.get('fact_ids'), exhibit_ids)}")
+
+    lines.append("Support groups:")
+    for group in plan.get("support_groups", []):
+        if not isinstance(group, Mapping):
+            continue
+        label, label_ids = _without_repeated_facts(
+            str(group.get("label", "")), references
+        )
+        lines.append(f"- {group.get('role', '')}{f': {label}' if label else ''}")
+        lines.append(f"  Sources: {_ids(group.get('fact_ids'), label_ids)}")
+
+    reading_lines, reading_ids = _text_lines(
+        "Reading path", plan.get("reading_path"), references
+    )
+    lines.extend(reading_lines)
+    if reading_ids:
+        lines.append(f"Reading path sources: {_ids([], reading_ids)}")
+
+    lines.append("Local visuals:")
+    for visual in plan.get("local_visuals", []):
+        if not isinstance(visual, Mapping):
+            continue
+        visual_lines, visual_ids = _text_lines(
+            f"- {visual.get('grammar', '')}", visual.get("instruction"), references
+        )
+        lines.extend(visual_lines)
+        lines.append(f"  Sources: {_ids(visual.get('fact_ids'), visual_ids)}")
+
+    numeric_authorities = plan.get("numeric_authorities")
+    if numeric_authorities:
+        lines.append("Sealed numeric authorities (copy values and source-bound chart IDs exactly):")
+        lines.append(json.dumps(numeric_authorities, ensure_ascii=False, sort_keys=True))
+
+    selected = value.get("selected_references")
+    if not isinstance(selected, list):
+        raise ValueError("selected references are missing")
+    reference_lines: list[str] = []
+    for reference in selected:
+        if not isinstance(reference, Mapping):
+            raise ValueError("selected reference must be a mapping")
+        instructions = (reference.get("use"), reference.get("preserve"))
+        if any(not isinstance(instruction, str) for instruction in instructions):
+            raise ValueError("selected reference use and preserve must be text")
+        if any(_source_fact_matches(instruction, references) for instruction in instructions):
+            raise ValueError("selected reference instructions must not repeat complete Word facts")
+        reference_lines.append(
+            f"Reference {reference['material_id']}: use {reference['use']}; preserve {reference['preserve']}"
+        )
+    return "\n".join(("\n".join(lines), *reference_lines))
 
 
 def _join(parts: Sequence[str]) -> str:
@@ -223,53 +499,48 @@ def compile_consulting_six_part_prompt(
     font_accent_allowed: bool | None = False,
 ) -> str:
     """Compile exactly six consulting-report sections in their sealed order."""
-    if value.get("schema_version") not in {
-        "awesome-consulting-page-director-v2",
-        "awesome-page-correction-v2",
-    }:
-        raise ValueError("consulting prompt requires a v2 director or correction authority")
-    sections = _validated_sections(value)
+    schema_version = value.get("schema_version")
+    if schema_version != "awesome-consulting-page-director-v3":
+        raise ValueError("consulting prompt requires a v3 director authority")
     positive_color, prohibited_color = _color_constraints(
         material_view, font_accent_allowed=font_accent_allowed
     )
-    for _heading, key in SECTION_SPECS:
-        original = sections[key]
-        sections[key] = _without_compiler_owned_clauses(
-            original, task_section=key == "task_and_canvas"
-        )
-        sections[key] = sections[key].replace(positive_color, "").replace(
-            prohibited_color, ""
-        ).strip()
-        fixed_or_safe_restatement = any(
-            pattern.search(original) for pattern in _FIXED_TERMS
-        ) or _SAFE_REGION.search(original)
-        if not sections[key] and (
-            key != "task_and_canvas" or fixed_or_safe_restatement
-        ):
-            raise ValueError(
-                f"consulting prompt section {key} contains only compiler-owned boundary clauses"
+    architecture = _page_plan_architecture(value, material_view)
+    sections = {
+        "task_and_canvas": _TASK_CONSTRAINT,
+        "core_proposition_and_content": _join(
+            (VISIBLE_COPY_BOUNDARY, _complete_fact_content(material_view), FRONTEND_FIDELITY)
+        ),
+        "consulting_information_architecture": _join(
+            (
+                _DIRECTOR_AUTHORITY_BOUNDARY,
+                architecture,
+                _ARCHITECTURE_CONSTRAINT,
+                LOCAL_VISUAL_SCOPE,
             )
-    sections["task_and_canvas"] = _join(
-        (sections["task_and_canvas"], _background_constraint(material_view), _TASK_CONSTRAINT)
-    )
-    sections["core_proposition_and_content"] = _join(
-        (
-            sections["core_proposition_and_content"],
-            _ARGUMENT_CONSTRAINT,
-            _VISIBLE_TEXT_CUSTODY,
-        )
-    )
-    sections["consulting_information_architecture"] = _join(
-        (sections["consulting_information_architecture"], _ARCHITECTURE_CONSTRAINT)
-    )
+        ),
+        "visual_style_and_color": "",
+        "text_and_typography": "",
+        "strict_prohibitions": "",
+    }
     sections["visual_style_and_color"] = _join(
-        (sections["visual_style_and_color"], positive_color)
+        (
+            sections["visual_style_and_color"],
+            _background_constraint(material_view),
+            positive_color,
+            prohibited_color,
+        )
     )
     sections["text_and_typography"] = _join(
         (sections["text_and_typography"], _TYPOGRAPHY_CONSTRAINT)
     )
     sections["strict_prohibitions"] = _join(
-        (sections["strict_prohibitions"], prohibited_color)
+        (
+            sections["strict_prohibitions"],
+            _title_contract(material_view),
+            _QUANTITATIVE_CONTENT_CONSTRAINT,
+            _QUALITATIVE_PROHIBITION,
+        )
     )
     return "\n\n".join(
         f"## {heading}\n{sections[key]}" for heading, key in SECTION_SPECS

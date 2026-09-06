@@ -36,6 +36,20 @@ input[type="color"] { height: 46px; padding: 5px; }
 .actions .primary { border-color: #3157d5; color: #fff; background: #3157d5; }
 .error { padding: 12px 16px; border-radius: 10px; color: #8c1d18; background: #fdecea; }
 .done { text-align: center; }
+#structure { border-top: 1px solid #e0e4ee; padding-top: 20px; }
+#structure > p { line-height: 1.6; }
+#structure fieldset { border: 1px solid #cfd5e2; border-radius: 10px; padding: 14px; }
+#structure-groups { display: flex; flex-wrap: wrap; gap: 16px; }
+#structure label { display: flex; align-items: center; gap: 8px; }
+#structure input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; accent-color: #3157d5; }
+#structure :focus-visible { outline: 3px solid #3157d5; outline-offset: 3px; }
+#structure-pages { list-style: none; padding: 0; }
+#structure-pages li { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; padding: 14px 0; border-bottom: 1px solid #e0e4ee; overflow-wrap: anywhere; }
+#structure-pages small { display: block; margin-top: 6px; color: #657086; }
+#structure-pages li.excluded { background: #f3f5f9; }
+#structure-pages li.excluded strong { text-decoration: line-through; }
+.structure-number { font-size: 14px; color: #3157d5; padding-top: 3px; }
+.structure-preview { margin: 8px 0 0; white-space: pre-wrap; font-size: 13px; line-height: 1.6; color: #657086; }
 [hidden] { display: none !important; }
 @media (max-width: 700px) {
   .template-grid, .settings-grid, .taskbook-grid { grid-template-columns: 1fr; }

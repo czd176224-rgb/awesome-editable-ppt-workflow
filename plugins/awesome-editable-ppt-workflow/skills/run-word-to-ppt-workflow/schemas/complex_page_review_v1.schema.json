@@ -23,7 +23,7 @@
     },
     "problems": {
       "type": "array",
-      "maxItems": 10,
+      "maxItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -32,16 +32,11 @@
           "category": {
             "type": "string",
             "enum": [
-              "technical_output",
-              "fixed_layer_violation",
-              "clear_subject_departure",
-              "misleading_fabrication",
-              "severe_identity_distortion",
-              "core_comment_absent",
-              "unusable_17_8_composition",
-              "consulting_argument_failure",
-              "ai_heavy_reporting_style",
-              "semantic_color_misuse"
+              "fact_integrity",
+              "primary_relationship",
+              "core_exhibit_prominence",
+              "quantitative_truth",
+              "severe_usability"
             ]
           },
           "detail": {

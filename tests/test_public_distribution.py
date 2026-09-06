@@ -40,12 +40,14 @@ def test_uninstaller_only_deletes_an_owned_runtime_when_requested():
     assert "Get-ChildItem -Recurse" not in uninstaller
 
 
-def test_runtime_installer_resumes_completed_dependency_stages():
+def test_runtime_installer_reuses_dependencies_but_refreshes_packaged_code():
     installer = read("plugins/awesome-editable-ppt-workflow/scripts/install_runtime.ps1")
     assert "runtime_install_state.json" in installer
     assert "workflow_dependencies_ready" in installer
     assert "editable_cli_ready" in installer
-    assert "--force-reinstall" not in installer
+    refreshes = [line for line in installer.splitlines() if "--force-reinstall" in line]
+    assert len(refreshes) == 2
+    assert all('--no-deps --force-reinstall (Join-Path $EditableSkill "cli")' in line for line in refreshes)
 
 
 def test_source_metadata_matches_distribution_visibility():
@@ -83,13 +85,14 @@ def test_current_release_metadata_and_user_contract_are_consistent():
     package = json.loads(read("package-info.json"))
     plugin = json.loads(read("plugins/awesome-editable-ppt-workflow/.codex-plugin/plugin.json"))
     marketplace = json.loads(read(".agents/plugins/marketplace.json"))
-    assert package["pluginVersion"] == plugin["version"] == "1.2.2"
-    assert package["releaseTag"] == "v1.2.2"
-    assert marketplace["interface"]["displayName"] == "Awesome Editable PPT Workflow 1.2.2"
-    assert package["promptContractVersion"] == "consulting-page-director-v2-source-text-custody"
+    assert package["pluginVersion"] == plugin["version"] == "1.2.3"
+    assert package["releaseTag"] == "v1.2.3"
+    assert marketplace["interface"]["displayName"] == "Awesome Editable PPT Workflow 1.2.3"
+    assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
     assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert package["designAcceptancePolicy"] == "single-independent-review-with-at-most-two-corrections"
-    assert package["qaPolicyVersion"] == "sole-independent-consulting-visual-review-v2"
+    assert package["qaPolicyVersion"] == "sole-independent-five-hard-error-review-v3"
+    assert package["localRepairEndpoint"] == "deterministic-previous-image-local-edit-no-model-fallback"
     assert package["reconstructionVersion"] == "accepted-image-codex-worker-v2-sealed-text-repairs"
     docs = "\n".join(read(path) for path in (
         "README.md", "docs/RELEASE.md", "docs/USER_GUIDE.zh-CN.md", "docs/TROUBLESHOOTING.zh-CN.md"
@@ -133,15 +136,15 @@ def test_export_creates_public_metadata_and_removes_private_material(tmp_path):
     assert package["marketplace"] == "editable-ppt-public"
     assert package["repository"] == "czd176224-rgb/awesome-editable-ppt-workflow"
     assert package["repositoryVisibility"] == "public"
-    assert package["releaseStatus"] == "published-public-marketplace"
+    assert package["releaseStatus"] == json.loads(read("package-info.json"))["releaseStatus"]
     audit = json.loads((output / "public-release-audit.json").read_text(encoding="utf-8-sig"))
     source_manifest = json.loads((output / "public-source-manifest.json").read_text(encoding="utf-8-sig"))
     assert audit["schemaVersion"] == "public-release-audit-v1"
-    assert audit["promptContractVersion"] == "consulting-page-director-v2-source-text-custody"
+    assert audit["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
     assert audit["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert audit["sourceManifestSha256"]
     assert source_manifest["schemaVersion"] == "public-source-manifest-v1"
-    assert source_manifest["promptContractVersion"] == "consulting-page-director-v2-source-text-custody"
+    assert source_manifest["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
     assert source_manifest["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert audit["root"] == "."
     assert not (output / "docs/superpowers").exists()
@@ -241,7 +244,7 @@ def test_checker_ignores_untracked_git_and_test_cache_files(tmp_path):
     )
     assert export.returncode == 0, export.stdout + export.stderr
     subprocess.run(["git", "init", "-b", "main"], cwd=output, check=True, capture_output=True)
-    subprocess.run(["git", "add", "-A"], cwd=output, check=True, capture_output=True)
+    subprocess.run(["git", "-c", "core.longpaths=true", "add", "-A"], cwd=output, check=True, capture_output=True)
     cache = output / ".pytest_cache/v/cache"
     cache.mkdir(parents=True)
     (cache / "nodeids").write_text("[]", encoding="utf-8")

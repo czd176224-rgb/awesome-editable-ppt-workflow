@@ -26,6 +26,7 @@ jobs:
         shell: pwsh
         run: |
           $package = Get-Content -Raw package-info.json | ConvertFrom-Json
+          if ($package.releaseStatus -ne "release-ready") { throw "Tagged releases require releaseStatus=release-ready after acceptance and release-gate verification." }
           if ($env:GITHUB_REF_NAME -ne $package.releaseTag) { throw "Tag must equal package releaseTag." }
           if ($package.releaseTag -ne ("v" + [string]$package.pluginVersion)) { throw "releaseTag must equal v<pluginVersion>." }
       - name: Complete release gate including Portable clean-install smoke

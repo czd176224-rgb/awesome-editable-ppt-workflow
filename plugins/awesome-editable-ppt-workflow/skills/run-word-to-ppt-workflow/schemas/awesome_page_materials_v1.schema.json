@@ -43,6 +43,7 @@
       "properties": {
         "primary_color": {"type": "string"},
         "secondary_color": {"type": "string"},
+        "highlight_color": {"type": "string"},
         "background_color": {"type": "string"},
         "cjk_font": {"type": "string"},
         "latin_font": {"type": "string"},

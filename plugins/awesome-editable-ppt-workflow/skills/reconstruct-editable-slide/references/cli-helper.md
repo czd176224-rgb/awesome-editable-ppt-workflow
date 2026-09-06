@@ -1,12 +1,12 @@
 # CLI Helper
 
-This is the `editppt` command manual: install check, command tree, and syntax examples. Workflow policy lives in `SKILL.md`; object decisions and text-hints usage live in `references/page-decision-tree.md`; file and field contracts live in `references/manifest-schema.md`.
+This is the `editppt` command manual: install check, command tree, and syntax examples. Workflow policy lives in `SKILL.md`; object decisions and text calibration live in `references/page-decision-tree.md`; file and field contracts live in `references/manifest-schema.md`.
 
 Usage principles:
 
 - If a deterministic action can be completed with `editppt`, call the CLI directly instead of rewriting it as a temporary Python script.
 - When full parameters are needed, read `editppt <command> --help` or `editppt image <command> --help` first.
-- In network-restricted agents, OCR and sealed `editppt image reconstruct-edit` calls need network approval. The approval policy lives in `SKILL.md`.
+- In network-restricted agents, sealed `editppt image reconstruct-edit` calls follow the active network approval policy. The upload contract lives in `SKILL.md`.
 
 ## Command Tree
 
@@ -14,7 +14,6 @@ Usage principles:
 editppt                         - top-level CLI for setup, run orchestration, image assets, and formulas
 |-- setup                       - create or verify the user-level runtime home and config files
 |-- doctor                      - check local runtime health, dependencies, and backend availability
-|-- config                      - write the optional Paddle token
 |-- prepare                     - normalize image/PDF/PPTX inputs into a run directory and page jobs
 |-- run                         - advance run state and coordinate page workers
 |   |-- next                    - read current run state and return the next required action
@@ -99,13 +98,7 @@ editppt doctor
 
 Image generation is subscription-only through Codex OAuth. Do not configure or persist API keys in the project directory, run directory, prompts, manifests, or plugin settings.
 
-Optionally configure a PaddleOCR-VL token. It is used only after a page worker has inspected the accepted image and explicitly reports unreadable text:
-
-```bash
-editppt config --paddle-ocr-token "<token>"
-```
-
-Without a token, direct Codex reconstruction remains the normal path; an unreadable-text page stops rather than using a lower-quality substitute.
+The Codex page worker is the only reconstruction engine. An unreadable-text page stops; there is no OCR token configuration, external OCR service, or alternate reconstruction retry.
 
 ## Run Commands
 

@@ -64,13 +64,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return run_script("runtime_env.py", argv)
 
 
-def cmd_config(args: argparse.Namespace) -> int:
-    argv = ["config"]
-    if getattr(args, "paddle_ocr_token", None):
-        argv.extend(["--paddle-ocr-token", args.paddle_ocr_token])
-    return run_script("runtime_env.py", argv)
-
-
 def cmd_setup(args: argparse.Namespace) -> int:
     doctor_args = ["doctor", "--json"]
     doctor = subprocess.run(
@@ -372,7 +365,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="CLI for preparing, rebuilding, validating, and finalizing editable PPTX runs.",
         formatter_class=HELP_FORMATTER,
         epilog="""Command groups:
-  - setup/doctor/config manage the local editppt environment and optional Paddle token.
+  - setup/doctor check local dependencies and Codex authentication.
   - prepare creates a run directory and writes the unified editppt image backend.
   - run manages deterministic workflow state, dispatch records, result records, and finalization.
   - page builds and validates page artifacts.
@@ -397,11 +390,11 @@ Use '<command> --help' for exact arguments:
 
     setup = sub.add_parser(
         "setup",
-        help="Initialize local config and run doctor.",
+        help="Check the local environment with doctor.",
         description="""Initialize the local editppt environment without installing the Skill.
 
 Use this after installing the CLI, or when checking whether the local runtime can run.
-It creates/checks ~/.editppt/config.yaml, preserves existing values, and runs doctor.
+It checks local dependencies and Codex authentication with doctor.
 It does not call npx, install the Skill, or configure a second image endpoint.
 """,
         formatter_class=HELP_FORMATTER,
@@ -413,10 +406,10 @@ It does not call npx, install the Skill, or configure a second image endpoint.
 
     doctor = sub.add_parser(
         "doctor",
-        help="Check CLI dependencies and config status.",
+        help="Check CLI dependencies and Codex authentication.",
         description="""Check the local editppt environment.
 
-Doctor reports the CLI Python path, importable dependencies, config home/file,
+Doctor reports the CLI Python path, importable dependencies,
 and Codex OAuth readiness. It does not perform a network probe.
 """,
         formatter_class=HELP_FORMATTER,
@@ -428,21 +421,6 @@ and Codex OAuth readiness. It does not perform a network probe.
     doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     doctor.add_argument("--timeout", type=int, help="Reserved timeout value for future network probes.")
     doctor.set_defaults(func=cmd_doctor)
-
-    config = sub.add_parser(
-        "config",
-        help="Write or update ~/.editppt/config.yaml.",
-        description="""Configure the optional Paddle token used only after a page worker requests OCR.
-
-Values are written to ~/.editppt/config.yaml. Environment variables still win at runtime.
-""",
-        formatter_class=HELP_FORMATTER,
-        epilog="""Examples:
-  editppt config --paddle-ocr-token "token"
-""",
-    )
-    config.add_argument("--paddle-ocr-token", metavar="TOKEN", help="PaddleOCR-VL token for content-aware text hints. Apply at https://aistudio.baidu.com/account/accessToken.")
-    config.set_defaults(func=cmd_config)
 
     prepare = sub.add_parser(
         "prepare",

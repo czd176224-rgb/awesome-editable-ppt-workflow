@@ -1,4 +1,4 @@
-"""Internal geometry helpers used to refine Paddle OCR results.
+"""Local image geometry and ink-measurement helpers.
 
 Run BEFORE writing the page manifest. The output is a reference, not a
 mutation: the page author reads `text_hints.json` (or looks at the labeled

@@ -14,6 +14,23 @@ scanner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(scanner)
 
 
+def test_scanner_rejects_reintroduced_standby_generation_and_cloud_ocr(tmp_path: Path):
+    skills = tmp_path / "plugins/awesome-editable-ppt-workflow/skills"
+    workflow = skills / "run-word-to-ppt-workflow"
+    scripts = workflow / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "standby.py").write_text("def generate_page_body(): pass\n", encoding="utf-8")
+    runtime = skills / "reconstruct-editable-slide/cli/editppt/runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "standby.py").write_text('token = "PADDLE_OCR_TOKEN"\n', encoding="utf-8")
+    prompt = skills / "reconstruct-editable-slide/prompts/page-worker.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text("on the one authorized OCR-assisted retry", encoding="utf-8")
+    assert any("retired standby generation entry" in item for item in scanner._scan_tokens(workflow, tmp_path))
+    assert any("retired OCR retry" in item for item in scanner._scan_other_plugin_runtime(tmp_path))
+    assert any("page-worker.md" in item for item in scanner._scan_other_plugin_runtime(tmp_path))
+
+
 def test_scanner_reads_template_gitignore(tmp_path: Path):
     skill_root = tmp_path / "skill"
     template = skill_root / "template"

@@ -18,14 +18,14 @@ def test_public_metadata_exposes_only_the_awesome_v1_product():
     assert manifest == {
         **manifest,
         "name": "awesome-editable-ppt-workflow",
-        "version": "1.2.2",
+        "version": "1.2.3",
     }
     assert package["plugin"] == "awesome-editable-ppt-workflow"
-    assert package["pluginVersion"] == manifest["version"] == "1.2.2"
-    assert package["releaseTag"] == "v1.2.2"
+    assert package["pluginVersion"] == manifest["version"] == "1.2.3"
+    assert package["releaseTag"] == "v1.2.3"
     assert package["workflowContractVersion"] == "awesome-word-ppt-workflow-v1"
-    assert package["promptContractVersion"] == "consulting-page-director-v2-source-text-custody"
-    assert package["qaPolicyVersion"] == "sole-independent-consulting-visual-review-v2"
+    assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
+    assert package["qaPolicyVersion"] == "sole-independent-five-hard-error-review-v3"
     assert marketplace["plugins"] == [{
         **marketplace["plugins"][0],
         "name": "awesome-editable-ppt-workflow",
@@ -47,3 +47,20 @@ def test_packaged_runtime_has_no_legacy_director_schema_or_compiler() -> None:
     assert "def compile_six_part_prompt" not in text
     assert '"awesome-complex-page-director-v1"' not in text
     assert "scene_and_composition" not in text
+
+
+def test_active_workflow_readme_documents_compact_v3_and_exact_hard_errors() -> None:
+    readme = (
+        PLUGIN / "skills" / "run-word-to-ppt-workflow" / "README.md"
+    ).read_text(encoding="utf-8")
+
+    assert "consulting director v2" not in readme
+    assert "compact v3 page plan" in readme
+    for category in (
+        "fact_integrity",
+        "primary_relationship",
+        "core_exhibit_prominence",
+        "quantitative_truth",
+        "severe_usability",
+    ):
+        assert readme.count(category) == 1

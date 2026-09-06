@@ -11,6 +11,7 @@ from pptx import Presentation
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+TEN_BLOCK_COVER_FIXTURE = Path(__file__).resolve().parent / "fixtures/workflow_v6_special_pages/ten_block_cover.json"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
@@ -25,6 +26,48 @@ ROLE_TEXT = {
     "section": ["PART 1｜产业目标", "产业目标", "聚焦主导产业升级"],
     "closing": ["最终目标：形成可持续产业生态", "全联并购公会"],
 }
+
+
+@pytest.mark.parametrize("role", ["cover", "toc", "section", "closing"])
+def test_inserted_structure_design_preserves_source_text_and_native_objects(tmp_path: Path, role: str) -> None:
+    from workflow_v6_special_pages import check_special_page, render_special_page
+
+    project = prepared_confirmed_project(tmp_path, role=role, visible_page_number=role in {"toc", "section"})
+    path = project / "02_v6/page_composition.json"
+    composition = json.loads(path.read_text(encoding="utf-8"))
+    page = composition["pages"][0]
+    page["composition_page_id"] = f"structure:{role}:1"
+    page["source_page_id"] = page["source_page_number"] = None
+    page["role_source"] = "synthesized"
+    page["material_source_block_ids"] = page["material_source_block_ids"][:2 if role == "cover" else 1]
+    path.write_text(json.dumps(composition, ensure_ascii=False), encoding="utf-8")
+    checked = check_special_page(project, 1)
+    assert checked["structure_layout"]["variant"] == f"structure-{role}"
+    receipt = render_special_page(project, 1)
+    assert receipt["displayed_source_block_ids"] == page["material_source_block_ids"]
+    slide = Presentation(project / receipt["page_pptx"]).slides[0]
+    assert str(slide.background.fill.fore_color.rgb) == "F1F2F3"
+    source_shapes = [shape for shape in slide.shapes if shape.name.startswith("special-source-")]
+    assert len(source_shapes) == len(page["material_source_block_ids"])
+    assert source_shapes[0].text == ROLE_TEXT[role][0]
+    assert "special-logo" in [shape.name for shape in slide.shapes]
+    for shape in slide.shapes:
+        if shape.has_text_frame:
+            for paragraph in shape.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    assert str(run.font.color.rgb) != "C7352B"
+
+
+def test_inserted_structure_design_falls_back_for_dense_sources() -> None:
+    from workflow_v6_special_pages import _structure_layout
+
+    page = {"composition_page_id": "structure:cover", "page_role": "cover", "fixed_page_title": "报告"}
+    kwargs = {"title_size": 28, "body_size": 14, "toc_start": 0, "toc_column_size": 0}
+    assert _structure_layout(page, ["报告", "副标题"], **kwargs)["variant"] == "structure-cover"
+    assert _structure_layout(page, ["报告", "很长的副标题" * 200], **kwargs) == {}
+    assert _structure_layout(page, ["报告", "副标题", "必须保留的正文"], **kwargs) == {}
+    page["composition_page_id"] = "original:cover"
+    assert _structure_layout(page, ["报告"], **kwargs) == {}
 
 
 def _extend_materials(project: Path, total: int) -> list[str]:
@@ -44,6 +87,25 @@ def _extend_materials(project: Path, total: int) -> list[str]:
     composition["pages"][0]["material_source_block_ids"] = ids
     composition_path.write_text(json.dumps(composition, ensure_ascii=False), encoding="utf-8")
     return ids
+
+
+def ten_block_cover_project(tmp_path: Path) -> Path:
+    project = prepared_confirmed_project(tmp_path, role="cover", visible_page_number=False)
+    fixture = json.loads(TEN_BLOCK_COVER_FIXTURE.read_text(encoding="utf-8"))
+    blocks = fixture["blocks"]
+    source_path = project / "02_v6/paginated_word_source.json"
+    source_path.write_text(
+        json.dumps({"pages": [{"page_number": 1, "blocks": blocks}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    composition_path = project / "02_v6/page_composition.json"
+    composition = json.loads(composition_path.read_text(encoding="utf-8"))
+    composition["pages"][0].update({
+        "fixed_page_title": blocks[0]["text"],
+        "material_source_block_ids": [block["source_block_id"] for block in blocks],
+    })
+    composition_path.write_text(json.dumps(composition, ensure_ascii=False), encoding="utf-8")
+    return project
 
 
 def prepared_confirmed_project(tmp_path: Path, *, role: str, visible_page_number: bool) -> Path:
@@ -229,7 +291,7 @@ def test_special_page_displays_every_frozen_source_block_once(
     assert source_names == [f"special-source-block-{index}" for index in range(1, 7)]
 
 
-@pytest.mark.parametrize("role", ["cover", "section", "closing"])
+@pytest.mark.parametrize("role", ["section", "closing"])
 def test_special_page_overflow_fails_with_exact_source_block_id(
     tmp_path: Path, role: str,
 ) -> None:
@@ -239,10 +301,57 @@ def test_special_page_overflow_fails_with_exact_source_block_id(
         tmp_path, role=role, visible_page_number=role == "section",
     )
     _extend_materials(project, 7)
+    state = load(project)
+    state["style_confirmation"]["contract"]["body_size_pt"] = 12
+    save(project, state)
 
     with pytest.raises(ValueError, match=rf"{role}.*block-7"):
         render_special_page(project, 1)
     assert not (project / "06_v6/pages/page_001/page.pptx").exists()
+
+
+def test_ten_block_cover_uses_measured_readable_layout_for_preflight_and_render(
+    tmp_path: Path,
+) -> None:
+    # Break caught: a readable dense cover is rejected by the old six-block count ceiling.
+    from workflow_v6_special_pages import check_special_page, render_special_page
+
+    project = ten_block_cover_project(tmp_path)
+    checked = check_special_page(project, 1)
+    receipt = render_special_page(project, 1)
+    slide = Presentation(project / receipt["page_pptx"]).slides[0]
+    source_shapes = [
+        shape for shape in slide.shapes if shape.name.startswith("special-source-")
+    ]
+    rendered_sizes = {
+        run.font.size.pt
+        for shape in source_shapes[1:]
+        for paragraph in shape.text_frame.paragraphs
+        for run in paragraph.runs
+    }
+
+    assert receipt["displayed_source_block_ids"] == checked["required_ids"]
+    assert len(source_shapes) == 10
+    assert rendered_sizes == {checked["body_size"]}
+    assert [round(shape.height.cm, 3) for shape in source_shapes[1:]] == [
+        round(height, 3) for height in checked["row_heights"]
+    ]
+    assert source_shapes[4].height.cm >= 2.1
+    assert checked["body_size"] >= 12
+
+
+def test_ten_block_cover_still_rejects_text_that_exceeds_readable_height(tmp_path: Path) -> None:
+    # Break caught: removing the count ceiling accidentally disables measured overflow protection.
+    from workflow_v6_special_pages import check_special_page
+
+    project = ten_block_cover_project(tmp_path)
+    source_path = project / "02_v6/paginated_word_source.json"
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    source["pages"][0]["blocks"][-1]["text"] = "超长限定" * 300
+    source_path.write_text(json.dumps(source, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"cover.*cover-block-10"):
+        check_special_page(project, 1)
 
 
 @pytest.mark.parametrize("role", ["cover", "section", "closing"])
@@ -257,7 +366,7 @@ def test_special_page_text_density_overflow_names_the_exact_block(
     path = project / "02_v6/paginated_word_source.json"
     source = json.loads(path.read_text(encoding="utf-8"))
     overflow_id = source["pages"][0]["blocks"][-1]["source_block_id"]
-    source["pages"][0]["blocks"][-1]["text"] = "超长材料" * 160
+    source["pages"][0]["blocks"][-1]["text"] = "超长材料" * 300
     path.write_text(json.dumps(source, ensure_ascii=False), encoding="utf-8")
 
     with pytest.raises(ValueError, match=rf"{role}.*{overflow_id}"):

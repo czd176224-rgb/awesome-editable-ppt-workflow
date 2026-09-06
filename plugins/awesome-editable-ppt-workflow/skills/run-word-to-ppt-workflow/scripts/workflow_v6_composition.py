@@ -199,7 +199,7 @@ def _synthesized_record(
     return record
 
 
-def compose_pages(pages_payload: Mapping[str, Any]) -> dict[str, Any]:
+def compose_pages(pages_payload: Mapping[str, Any], *, complete_structure: bool = False) -> dict[str, Any]:
     raw_pages = pages_payload.get("pages", [])
     if not isinstance(raw_pages, list):
         raise ValueError("pages payload is invalid")
@@ -239,6 +239,8 @@ def compose_pages(pages_payload: Mapping[str, Any]) -> dict[str, Any]:
             split_records.append(continuation)
             split_blocks.append([block for block in blocks if block.get("source_block_id") in set(chunk)])
     source_records, blocks_by_page = split_records, split_blocks
+    if complete_structure:
+        return _complete_structure(source_records, blocks_by_page, pages_payload)
 
     toc_chapters: list[tuple[str, str, str | None]] = []
     for record, blocks in zip(source_records, blocks_by_page):
@@ -303,6 +305,114 @@ def compose_pages(pages_payload: Mapping[str, Any]) -> dict[str, Any]:
     }
     validate_composition(result)
     return result
+
+
+def _complete_structure(records, blocks_by_page, payload):
+    """Propose source-backed additions, retaining every original page in order."""
+    if not records:
+        raise ValueError("complete structure requires at least one source page")
+    records = copy.deepcopy(records)
+    # Only explicit covers replace a source page in complete-structure mode.
+    for record, blocks in zip(records, blocks_by_page):
+        if record["role_source"] == "automatic" and record["page_role"] == "cover":
+            record.update(page_role="content", visible_page_number=True)
+    body = [(r, b) for r, b in zip(records, blocks_by_page) if r["page_role"] in {"content", "appendix"}]
+    numbered = re.compile(r"^[一二三四五六七八九十百]+[、．.]\s*\S")
+    chapters = []
+    for record, blocks in zip(records, blocks_by_page):
+        if record["page_role"] == "section" and _lines(blocks):
+            text, block_id = _lines(blocks)[0]
+            if block_id:
+                chapters.append((record["source_page_number"], text, block_id))
+            continue
+        if record["page_role"] not in {"content", "appendix"}:
+            continue
+        for text, block_id in _lines(blocks)[:3]:
+            if block_id and (_chapter(text) or numbered.match(text)):
+                chapters.append((record["source_page_number"], text, block_id))
+                break
+    if not chapters and body:
+        # ponytail: absent chapter headings, suggest one opening section; user can omit it.
+        for record, blocks in body[:1]:
+            if _lines(blocks):
+                text, block_id = _lines(blocks)[0]
+                if block_id:
+                    chapters.append((record["source_page_number"], text, block_id))
+
+    def added(role, title, ids, suffix):
+        record = _synthesized_record(
+            role=role, chapter_title=title if role == "section" else "",
+            fixed_title=title, source_block_id=ids[0],
+            composition_page_id=f"structure:{role}:{suffix}",
+        )
+        record["material_source_block_ids"] = list(ids)
+        record["visible_page_number"] = role not in {"cover", "closing"}
+        return record
+
+    first_lines = _lines(blocks_by_page[0])
+    last_lines = _lines(blocks_by_page[-1])
+    if not first_lines or not last_lines or not first_lines[0][1] or not last_lines[0][1]:
+        raise ValueError("structure pages require traced opening and closing source text")
+    composed = []
+    if not any(r["page_role"] == "cover" for r in records):
+        cover_candidates = [(_block_text(b), b.get("source_block_id")) for b in blocks_by_page[0][:5]
+                            if 5 <= len(_block_text(b)) <= 80 and b.get("source_block_id")
+                            and re.search(r"(?:报告|建议|方案|计划|介绍|规划|白皮书)$", _block_text(b))]
+        cover_title, cover_id = max(cover_candidates, key=lambda item: len(item[0])) if cover_candidates else (records[0]["fixed_page_title"], first_lines[0][1])
+        cover_ids = list(dict.fromkeys([cover_id, first_lines[0][1]]))
+        composed.append(added("cover", cover_title, cover_ids, "cover"))
+    elif records[0]["page_role"] == "cover":
+        composed.append(records.pop(0))
+    if not any(r["page_role"] == "toc" for r in records):
+        entries = list(dict.fromkeys(block_id for _, _, block_id in chapters)) or [first_lines[0][1]]
+        for offset in range(0, len(entries), TOC_ENTRY_CAPACITY):
+            composed.append(added("toc", "目录" if offset == 0 else "目录（续）", entries[offset:offset + TOC_ENTRY_CAPACITY], str(offset)))
+    chapter_map = {number: (title, block_id) for number, title, block_id in chapters}
+    preceding_section = None
+    for record in records:
+        if record["page_role"] == "section":
+            preceding_section = record["chapter_title"]
+        if record["page_role"] in {"content", "appendix"} and record["source_page_number"] in chapter_map:
+            title, block_id = chapter_map[record["source_page_number"]]
+            if preceding_section not in {title, _chapter(title)}:
+                composed.append(added("section", title, [block_id], str(record["source_page_number"])))
+            preceding_section = None
+        composed.append(record)
+    if not any(r["page_role"] == "closing" for r in composed):
+        composed.append(added("closing", last_lines[0][0], [last_lines[0][1]], "closing"))
+    for number, record in enumerate(composed, 1):
+        record["output_page_number"] = number
+    result = {"artifact_version": _ARTIFACT_VERSION, "page_count": len(composed), "pages": composed,
+              "warnings": copy.deepcopy(payload.get("pagination_warnings", []))}
+    validate_composition(result)
+    return result
+
+
+def validate_structure_selection(proposed, selected):
+    """Allow omission of proposed additions only, never source loss or reordering."""
+    if not isinstance(selected, list) or not selected:
+        raise ValueError("confirmed structure must contain pages")
+    if any(not isinstance(page, dict) for page in selected):
+        raise ValueError("confirmed structure page must be an object")
+    freeze_composition(proposed, selected)
+    originals = {p["output_page_number"]: p for p in proposed["pages"]}
+    def identity(page):
+        return (page.get("composition_page_id"), page["source_page_id"], page["source_page_number"], tuple(page["material_source_block_ids"]))
+    by_identity = {identity(p): (n, p) for n, p in originals.items()}
+    numbers = []
+    for number, page in enumerate(selected, 1):
+        if not isinstance(page, dict):
+            raise ValueError("confirmed structure page must be an object")
+        match = by_identity.get(identity(page))
+        if match is None:
+            raise ValueError("confirmed structure contains an unknown page")
+        old_number, original = match
+        if page != {**original, "output_page_number": number}:
+            raise ValueError("confirmed structure may only omit suggested added pages")
+        numbers.append(old_number)
+    mandatory = {n for n, p in originals.items() if not str(p.get("composition_page_id", "")).startswith("structure:")}
+    if numbers != sorted(set(numbers)) or not mandatory.issubset(numbers):
+        raise ValueError("confirmed structure must preserve every Word page in order")
 
 
 def validate_composition(value: Mapping[str, Any], *, confirmed: bool = False) -> None:

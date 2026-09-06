@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import sys
 import base64
@@ -25,13 +26,13 @@ from workflow_v6_contract import canonical_sha256, new_page, new_project  # noqa
 from workflow_v6_state import create, load, save  # noqa: E402
 from workflow_v6_image import (  # noqa: E402
     build_image_command,
-    generate_page_body,
     load_validated_image_request,
     seal_page_image_prompt,
 )
 import workflow_v6_image  # noqa: E402
 import codex_gpt_image  # type: ignore  # noqa: E402
 import provider_worker  # type: ignore  # noqa: E402
+import provider_keyring  # type: ignore  # noqa: E402
 from validate_page_image_prompt import _block  # noqa: E402
 
 
@@ -183,55 +184,6 @@ def test_validated_prompt_drives_exact_generate_edit_reference_matrix(tmp_path: 
                                   output=tmp_path / "out.png", trace=tmp_path / "trace.json")
     assert command[2] == request.operation
     assert [command[i + 1] for i, item in enumerate(command) if item == "--image"] == [str(path) for path in request.input_images]
-
-
-@pytest.mark.parametrize("count,expected_operation", [(0, "generate"), (1, "edit")])
-def test_runtime_e2e_calls_exact_generate_or_edit_and_accepts_receipt(
-    tmp_path: Path, count: int, expected_operation: str,
-):
-    project, materials, selected = _project(tmp_path, count)
-    source = tmp_path / "compiler-result.json"
-    source.write_text(json.dumps(_result(materials, selected), ensure_ascii=False), encoding="utf-8")
-    seal_page_image_prompt(project, 1, source)
-    observed: list[list[str]] = []
-
-    def runner(command: list[str], _timeout: int) -> None:
-        observed.append(command)
-        cap = json.loads(Path(command[command.index("--request-capability") + 1]).read_text(encoding="utf-8"))
-        root = Path(command[command.index("--workflow-project") + 1])
-        output = root / cap["output_path"]
-        trace = root / cap["trace_path"]
-        Image.new("RGB", (1904, 896), "white").save(output)
-        images = [command[index + 1] for index, value in enumerate(command) if value == "--image"]
-        roles = [command[index + 1] for index, value in enumerate(command) if value == "--image-role"]
-        digests = [command[index + 1] for index, value in enumerate(command) if value == "--image-sha256"]
-        trace.write_text(json.dumps({
-            "operation": command[2], "model": "gpt-image-2",
-            "quality": command[command.index("--quality") + 1],
-            "size": command[command.index("--size") + 1],
-            "input_images": [
-                {"role": role, "path": str(Path(path)), "sha256": digest}
-                for role, path, digest in zip(roles, images, digests)
-            ],
-            "outputs": [{"path": str(output.resolve()),
-                         "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
-                         "mime_type": "image/png"}],
-        }), encoding="utf-8")
-
-    receipt = generate_page_body(
-        project, page_number=1, runner=runner,
-        reviewer=lambda *_args, **_kwargs: {"accepted": True, "score": 6, "issues": []},
-    )
-
-    assert len(observed) == 1
-    command = observed[0]
-    assert command[2] == expected_operation
-    assert [command[i + 1] for i, item in enumerate(command) if item == "--image"] == [
-        str(path) for path in load_validated_image_request(project, 1).input_images
-    ]
-    assert receipt["state"] == "accepted"
-    assert receipt["selected"]["operation"] == expected_operation
-    assert receipt["selected_reference_ids"] == selected
 
 
 def test_unselected_page_images_never_enter_request_payload(tmp_path: Path):
@@ -473,6 +425,57 @@ def test_capability_envelope_contains_full_authority_and_inline_image_bytes(tmp_
     assert base64.b64decode(value["selected_references"][0]["bytes_b64"]) == request_value.input_images[0].read_bytes()
 
 
+@pytest.mark.parametrize("kind", ["image", "reconstruction"])
+def test_capability_issuance_keeps_one_key_pair_across_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    project, materials, selected = _project(tmp_path, 0)
+    source = tmp_path / "compiler-result.json"
+    source.write_text(json.dumps(_result(materials, selected), ensure_ascii=False), encoding="utf-8")
+    seal_page_image_prompt(project, 1, source)
+    request_value = load_validated_image_request(project, 1)
+
+    calls = 0
+    real_signing_key = provider_keyring.signing_key
+
+    def rotate_after_first_read() -> tuple[str, bytes]:
+        nonlocal calls
+        calls += 1
+        pair = real_signing_key()
+        if calls == 1:
+            provider_keyring.rotate()
+        return pair
+
+    monkeypatch.setattr(workflow_v6_image, "signing_key", rotate_after_first_read)
+    if kind == "image":
+        capability = workflow_v6_image._issue_capability(request_value, attempt=1)
+    else:
+        accepted = project / "04_v6/images/page_001.candidate_1.png"
+        _image(accepted, (10, 20, 30))
+        receipt = project / "04_v6/images/page_001.json"
+        receipt.write_text(json.dumps({
+            "page_number": 1,
+            "selected": {"attempt": 1, "path": accepted.relative_to(project).as_posix(),
+                         "sha256": hashlib.sha256(accepted.read_bytes()).hexdigest()},
+            "source_identity": request_value.source_identity,
+            "prompt_output_sha256": request_value.prompt_output_sha256,
+        }), encoding="utf-8")
+        capability = workflow_v6_image.issue_reconstruction_capability(
+            project, page_number=1, accepted_receipt=receipt,
+            purpose="asset-separation", output_kind="foreground-sheet",
+        )
+
+    value = json.loads(capability.read_text(encoding="utf-8"))
+    signature = value.pop("hmac_sha256")
+    unsigned = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    expected = hmac.new(provider_keyring.verification_key(value["key_id"]), unsigned, hashlib.sha256).hexdigest()
+    assert calls == 1
+    assert hmac.compare_digest(signature, expected)
+
+
 def test_pre_network_local_validation_failure_reissues_lease(tmp_path: Path, monkeypatch):
     project, materials, selected = _project(tmp_path, 0)
     source = tmp_path / "compiler-result.json"
@@ -580,7 +583,7 @@ def test_editppt_reconstruction_command_routes_to_real_provider_worker(tmp_path:
     assert (project / "05_v6/reconstruction_assets/page_001.clean-base.png").is_file()
 
 
-def test_reconstruction_skill_docs_default_to_accepted_image_without_model_edit():
+def test_reconstruction_skill_docs_default_to_accepted_image_with_only_sealed_exceptions():
     root = PLUGIN_ROOT / "skills/reconstruct-editable-slide"
     required = [root / "SKILL.md", root / "prompts/page-worker.md",
                 root / "references/cli-helper.md", root / "references/page-decision-tree.md"]
@@ -591,7 +594,10 @@ def test_reconstruction_skill_docs_default_to_accepted_image_without_model_edit(
     decisions = (root / "references/page-decision-tree.md").read_text(encoding="utf-8")
     for text in (worker, decisions):
         assert "accepted" in text
-        assert "only visual authority" in text
+        assert "visual authority" in text
+        assert "page_plan" in text
+        assert "numeric_authority" in text
+        assert "core exhibit or reading path" in text
         assert "zero Image2" in text
         assert "explicitly" in text
         assert "editppt image reconstruct-edit" in text

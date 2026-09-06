@@ -43,6 +43,7 @@
       }
     },
     "calls": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/call"}},
+    "candidate_adoptions": {"type": "array", "maxItems": 1, "items": {"$ref": "#/$defs/candidateAdoption"}},
     "candidate_preflights": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/candidatePreflight"}},
     "call_totals": {"$ref": "#/$defs/callTotals"},
     "image2_total_calls": {"type": "integer", "minimum": 0, "maximum": 3},
@@ -226,6 +227,27 @@
         "then": {"properties": {"problems": {"maxItems": 0}}},
         "else": {"properties": {"problems": {"minItems": 1}}}
       }]
+    },
+    "candidateAdoption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event", "experiment_id", "workspace_identity_sha256", "source_snapshot_sha256", "page_number", "attempt", "prior_experiment_id", "prior_attempt", "candidate_sha256", "request_identity", "material_view_sha256", "director_authority_sha256", "recovery_authority_sha256", "disposition"],
+      "properties": {
+        "event": {"const": "adopted_candidate"},
+        "experiment_id": {"$ref": "#/$defs/safeExperimentId"},
+        "workspace_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "source_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "page_number": {"type": "integer", "minimum": 1},
+        "attempt": {"const": 1},
+        "prior_experiment_id": {"$ref": "#/$defs/safeExperimentId"},
+        "prior_attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+        "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "request_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "material_view_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "director_authority_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "recovery_authority_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        ,"disposition": {"enum": ["unreviewed", "correct"]}
+      }
     },
     "callTotals": {
       "type": "object",

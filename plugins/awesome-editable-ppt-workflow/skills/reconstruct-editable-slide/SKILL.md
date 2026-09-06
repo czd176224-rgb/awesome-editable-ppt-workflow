@@ -18,7 +18,7 @@ Each rule in this skill has exactly one authoritative home; the other files poin
 - `scripts/build-page-worker-prompt.py`: skill-local prompt builder. It reads `prompts/page-worker.md`, fills run/page paths, writes `worker-prompt.md`, and prints the dispatch command template.
 - `references/cli-helper.md`: CLI install check (Pre-Run Check), command tree, and command syntax examples. Read it when deciding which `editppt` command to call.
 - `references/manifest-schema.md`: the single home for JSON field contracts of deck/page/image artifacts — required manifest fields, positioned-object coordinates, `validation.json`, and `page_result.json` shapes. Read it when writing or validating any run/page file.
-- `references/page-decision-tree.md`: the single source of truth for page object decisions — background handling, foreground asset separation, native shapes, formulas, text-hints usage, the final self-check, and the fix-versus-warning split. Read it before reconstructing any page.
+- `references/page-decision-tree.md`: the single source of truth for page object decisions — background handling, foreground asset separation, native shapes, formulas, text calibration, and the final self-check. Read it before reconstructing any page.
 
 ## Entry Contract
 
@@ -29,14 +29,14 @@ These parent-level rules are stated once here; page-level rules live in the refe
 - Every page, including a one-page run, is rebuilt by a dispatched Codex page worker. If a page worker cannot be started, stop that page; the parent agent never substitutes a local reconstruction.
 - The parent agent must not write page reconstruction artifacts: `manifest.json`, `page.pptx`, `preview.png`, `split_assets_contact.png`, `validation.json`, or `page_result.json`.
 - The accepted V6 body image is the reconstruction stage's only visual authority. After acceptance, do not read or reinterpret Word content, comments, attachments, generation prompts, reference selections, or other material-chain files. The default reconstruction request has `sealed_image_edits: []` and makes zero Image2 calls. If a separately authorized targeted reconstruction edit is already present, it may consume only the accepted V6 body through `editppt image reconstruct-edit --request-capability <capability> --workflow-project <project>`; generic `image generate/edit`, caller prompts, caller images, and caller output paths remain forbidden.
-- A user request to convert visual slides into editable PPT authorizes the required OCR and Codex-managed image calls for that conversion, unless the user explicitly requests local-only processing or marks the input as confidential/no-external-processing.
-- Only send task-local page images, prompts, masks, and reference images required for the current conversion. Never send unrelated local files, API keys, auth tokens, credentials, or generated artifacts that are not needed by the current OCR/image operation. Model-backed operations use Codex-managed ChatGPT authentication; direct or third-party API endpoints are not used.
-- In network-restricted environments, request network approval before OCR calls and each required sealed `editppt image reconstruct-edit` call. The reconstruction upload is exactly the accepted page image and capability-bound prompt; no other page-local file may be substituted.
+- A user request to convert visual slides into editable PPT authorizes the required Codex-managed calls for that conversion, subject to the user's processing constraints. No external OCR service is used.
+- Only send task-local page images, prompts, masks, and reference images required for the current conversion. Never send unrelated local files, API keys, auth tokens, credentials, or unrelated generated artifacts. Model-backed operations use Codex-managed ChatGPT authentication; direct or third-party API endpoints are not used.
+- In network-restricted environments, follow the active approval policy for each required sealed `editppt image reconstruct-edit` call. The reconstruction upload is exactly the accepted page image and capability-bound prompt; no other page-local file may be substituted.
 - All page object decisions follow `references/page-decision-tree.md`, including its no-fallback rule for foreground visual objects and its rule that deterministic validation is a structure gate that never waives an object-source decision.
 - `manifest.json` is the authoritative page build source: `editppt run record` validates `page.pptx` against it, and `editppt run finalize` rebuilds the final deck from recorded page manifests. Required fields and coordinate contracts are defined in `references/manifest-schema.md`.
 - The `word-ppt-workflow-v4` integration accepts only `fixed-canvas-cm-v2`: the body source targets 17:8 and maps directly into x=0.81 cm, y=2.3 cm, w=23.78 cm, h=11.18 cm on a 25.4x14.288 cm slide. Its relative aspect error, `abs((width / height) / (17 / 8) - 1)`, must be at most 1%; otherwise the V4 page must repair or block. Word V4 must never use `contain` as a passing fallback. The manifest is the mapping authority; reconstruction never builds a temporary full-slide layout and never applies a later positioning pass.
 - standalone legacy image conversion is version-isolated from Word V4 and may retain centered proportional `contain` for a positive non-target source ratio; that behavior is not a Word V4 acceptance rule.
-- The normal path creates no OCR hints. Only a page worker that has inspected `source.png` may report `failure_code: text_unreadable`; the orchestrator may then run PaddleOCR once when a token and page-upload authorization are both present, and dispatch the same page-worker contract once more with those hints. Paddle failure stops the page.
+- The Codex page worker reads `source.png` directly. Unreadable text returns `failure_code: text_unreadable` and stops the page. No OCR retry, substitute model, local reconstruction, or first-candidate acceptance is permitted after failure.
 - Page reconstructors are driven by prompts generated from `prompts/page-worker.md`.
 
 ## Roles
@@ -62,7 +62,7 @@ editppt prepare <input...>
 
 After this completes, there must be a run directory, `deck_manifest.json`, `page_jobs.json`, `notes_manifest.json`, and each page must have `source.png` plus `page_request.json`.
 
-Prepare does not run OCR. The first page worker reads the accepted image directly. If it cannot reliably transcribe text because it is too small, blurred, or dense, it writes a failed `validation.json` with `failure_code: text_unreadable`; this is the only condition that permits the one-time Paddle-assisted retry described in the Entry Contract.
+Prepare does not run OCR. The page worker reads the accepted image directly. If it cannot reliably transcribe text because it is too small, blurred, or dense, it writes a failed `validation.json` with `failure_code: text_unreadable` and stops. Do not dispatch another engine or an OCR-assisted retry.
 
 ### Phase 2: Rebuild Or Dispatch Pages
 

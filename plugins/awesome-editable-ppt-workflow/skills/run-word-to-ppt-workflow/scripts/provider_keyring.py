@@ -1,4 +1,4 @@
-"""Private capability signing keyring with one bounded previous key."""
+"""Shared packaged capability signing keyring with one bounded previous key."""
 from __future__ import annotations
 
 import hashlib, hmac, json, os, secrets, stat, subprocess, sys, time
@@ -31,20 +31,20 @@ def _root() -> Path:
 
 
 def _harden_acl(path: Path) -> None:
-    who = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True, check=True)
+    who = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, encoding="oem", errors="replace", check=True)
     import re
     match = re.search(r"S-1-5-(?:\d+-)+\d+", who.stdout)
     if match is None:
         raise ValueError("provider keyring owner SID unavailable")
     subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"*{match.group(0)}:(F)",
-                    "*S-1-5-18:(F)", "*S-1-5-32-544:(F)"], capture_output=True, text=True, check=True)
+                    "*S-1-5-18:(F)", "*S-1-5-32-544:(F)"], capture_output=True, check=True)
     script = ("& { param($p) $ErrorActionPreference='Stop'; "
               "Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -Force; "
               "(Get-Acl -LiteralPath $p).Access | % {"
               "$sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value;"
               "Write-Output ($sid+'|'+$_.AccessControlType+'|'+$_.IsInherited)} }")
     acl = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script, str(path)],
-                         capture_output=True, text=True, check=True)
+                         capture_output=True, encoding="oem", errors="replace", check=True)
     allowed = {match.group(0), "S-1-5-18", "S-1-5-32-544"}
     observed = set()
     for line in acl.stdout.splitlines():

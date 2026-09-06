@@ -10,6 +10,7 @@
     "page_number",
     "fixed_page_title",
     "complete_word_content",
+    "numeric_source_candidates",
     "original_comments",
     "visual_contract",
     "body_frame",
@@ -23,6 +24,10 @@
     "page_number": {"type": "integer", "minimum": 1},
     "fixed_page_title": {"type": "string", "minLength": 1},
     "complete_word_content": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "numeric_source_candidates": {
       "type": "array",
       "items": {"type": "object"}
     },
@@ -40,6 +45,7 @@
       "properties": {
         "primary_color": {"type": "string"},
         "secondary_color": {"type": "string"},
+        "highlight_color": {"type": "string"},
         "background_color": {"type": "string"},
         "cjk_font": {"type": "string"},
         "latin_font": {"type": "string"},

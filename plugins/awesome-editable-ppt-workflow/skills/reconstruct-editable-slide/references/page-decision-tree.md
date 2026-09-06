@@ -4,7 +4,7 @@ This file is the single source of truth for page object decisions. Field contrac
 
 Every `source.png` is judged in three steps, in this order:
 
-The source is the accepted body's only visual authority. Object-source decisions exist to reproduce that image editably, not to redesign or reinterpret it. Preserve visible content, composition, object geometry, hierarchy, palette, spacing, visual rhythm, and major decorative elements. Do not consult Word, page-local comments, attachments, generation prompts, or reference selections after acceptance.
+The source is the accepted body's visual authority. Object-source decisions exist to reproduce that image editably, not to redesign or reinterpret it. Preserve visible content, composition, object geometry, hierarchy, palette, spacing, visual rhythm, and major decorative elements. There are exactly two narrow exceptions. A sealed page_plan may correct only relationship node identity, edge direction, and connector endpoints. Each matching chart in sealed numeric_authorities (or the legacy single-chart numeric_authority) may correct only values, units, labels, any explicitly sourced period, and quantitative geometry as specified in manifest-schema.md. Match authorities by exact object_id, preserve each one independently, and never invent a missing period. The accepted image still owns composition and style; neither exception authorizes replacing the core exhibit or reading path. Do not consult Word, page-local comments, attachments, generation prompts, or reference selections after acceptance.
 
 1. Background recognition and repair.
 2. Foreground asset separation.
@@ -115,6 +115,8 @@ Represent non-text foreground visual objects from the accepted image with native
 
 Use native primitives only when they can faithfully reproduce the accepted image; use a bounded accepted-image region for complex visual identity that cannot be separated locally without drift. Do not hand-draw or assemble invented substitutes with local Python/Pillow/SVG/HTML/CSS code; deterministic tools are for faithful normalization, recording, bounded extraction, background removal, splitting, formula rendering, building, validation, and QA.
 
+Record a zero-Image2 bounded accepted-image region with the existing manifest fields: `source_type: user-provided`, `source` equal to the manifest's accepted `source.path`, an `images[].box_px` fully inside the accepted source dimensions, and a `provenance_note` that explicitly says `bounded extraction of accepted source pixels` or `bounded accepted-image region`. The same foreground role must be present in `visual_inventory`. This exception is only for inventoried non-text foreground identity; it never permits a whole card, panel, table, chart, dashboard, or full page to bypass native reconstruction.
+
 An absent capability is not a failure and must not trigger a model call. If an explicitly authorized targeted capability cannot produce a compliant asset, that targeted operation fails; never replace it with a generic image call or a newly authored prompt.
 
 ### 2.2 Asset Sheet Prompt Principles
@@ -158,17 +160,14 @@ Exceptions — text that is part of brand or background identity rather than edi
 - Small text inside UI screenshots that is not required to be editable.
 - Signage in photo backgrounds.
 - Textures such as newspapers, book pages, or code.
-- Tiny text with very low OCR confidence that does not affect main meaning.
+- Tiny non-content text embedded in background imagery.
 
 Explain each exception in `visual_inventory` or `asset_provenance`. Never disguise main titles, subtitles, body text, table text, legends, axis labels, numbers, tags, or button text as exceptions.
 
-The first page-worker execution reads text directly from `source.png`; OCR is not a prerequisite. If that worker explicitly fails with `failure_code: text_unreadable`, the orchestrator may provide one Paddle-generated `text_hints.json` and overlay on the single authorized retry. When those files are present, use them like this:
+The page worker reads text directly from `source.png`. If text cannot be read reliably, report `failure_code: text_unreadable` and stop. Do not call an external OCR service or use a substitute reconstruction engine.
 
-- Match each detected line in the overlay image to the text you read in the source.
-- Copy the measured `box_px` and the matching font size column (`font_pt_if_cjk` for CJK text, `font_pt_if_latin` for Latin) into the corresponding `text_boxes` item.
-- Add `"font_size_source": "measured"` to every box sized this way — the deterministic builder then trusts the measured size instead of applying its conservative shrink, which otherwise makes text systematically smaller than the source.
-- Hints are advisory and incomplete by design. Fill lines the detector missed and correct lines it merged with a graphic or labeled implausibly (a box sitting on an icon or photo) from your own reading of the source — a missed hint never means the text can be dropped.
-- Same-level text uses exactly one font size: lines sharing a `size_group` get the same size, hand-added text joins the size group of its level, and the final page keeps same-level text identical even where individual measurements disagree slightly.
+- Measure text boxes and font sizes against the accepted image; do not omit unreadable text.
+- Same-level text uses exactly one font size; the final page keeps same-level text identical.
 - Keep deterministic runtime fitting (`fit_text`) enabled as the overflow guard; tuning fields and when to disable it are in `manifest-schema.md`.
 - After building a preview, compare text by level against the source; do not enlarge titles, body text, or labels by default. If any level looks larger, heavier, more crowded, or wraps more than the source, fix the font size or box before continuing.
 

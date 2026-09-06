@@ -219,7 +219,7 @@ def _initialize_lane(command: Sequence[str], deadline: float) -> _AppServerLane:
             {
                 "id": 1,
                 "method": "initialize",
-                "params": {"clientInfo": {"name": "awesome-editable-ppt-workflow", "version": "1.2.2"}},
+                "params": {"clientInfo": {"name": "awesome-editable-ppt-workflow", "version": "1.2.3"}},
             }
         )
         _response(runtime, 1)

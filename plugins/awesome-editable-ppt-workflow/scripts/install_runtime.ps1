@@ -121,6 +121,8 @@ if (-not $WorkflowStageReady) {
     Save-RuntimeInstallState
 } else {
     Write-Output "Reusing workflow dependencies for plugin $PluginVersion."
+    & $WorkflowPython -m pip install --disable-pip-version-check --no-deps --force-reinstall (Join-Path $EditableSkill "cli")
+    if ($LASTEXITCODE -ne 0) { throw "Unable to refresh workflow editable-PPT code." }
 }
 
 $EditableVenv = Join-Path $RuntimeRoot "editable-ppt"
@@ -148,6 +150,8 @@ if (-not $EditableStageReady) {
     Save-RuntimeInstallState
 } else {
     Write-Output "Reusing editable-PPT CLI for plugin $PluginVersion."
+    & $EditablePython -m pip install --disable-pip-version-check --no-deps --force-reinstall (Join-Path $EditableSkill "cli")
+    if ($LASTEXITCODE -ne 0) { throw "Unable to refresh editable-PPT CLI code." }
 }
 
 # Install a self-contained copy of the current Word workflow beside the two
@@ -155,7 +159,7 @@ if (-not $EditableStageReady) {
 # boundary through a .pth file; it never guesses a repository sibling path.
 $WorkflowPackageName = "workflow-" + ($PluginVersion -replace '[^A-Za-z0-9._-]', '_')
 $CurrentWorkflowRoot = Join-Path $RuntimeRoot $WorkflowPackageName
-if (-not (Test-Path -LiteralPath $CurrentWorkflowRoot -PathType Container)) {
+& {
     $WorkflowStage = Join-Path $RuntimeRoot ".$WorkflowPackageName.$PID.tmp"
     if (Test-Path -LiteralPath $WorkflowStage) {
         Remove-Item -LiteralPath $WorkflowStage -Recurse -Force
@@ -165,13 +169,16 @@ if (-not (Test-Path -LiteralPath $CurrentWorkflowRoot -PathType Container)) {
         Copy-Item -LiteralPath (Join-Path $WorkflowSkill $name) -Destination $WorkflowStage -Recurse
     }
     Copy-Item -LiteralPath (Join-Path $PluginRoot "scripts\runtime_office.py") -Destination (Join-Path $WorkflowStage "scripts\runtime_office.py")
+    if (Test-Path -LiteralPath $CurrentWorkflowRoot) {
+        Move-Item -LiteralPath $CurrentWorkflowRoot -Destination "$CurrentWorkflowRoot.previous-$([guid]::NewGuid().ToString('N'))"
+    }
     Move-Item -LiteralPath $WorkflowStage -Destination $CurrentWorkflowRoot
 }
 $CurrentWorkflowScripts = Join-Path $CurrentWorkflowRoot "scripts"
 $DetectorModules = @("background_text_detector.py")
 $DetectorPackageName = "background-text-detector-" + ($PluginVersion -replace '[^A-Za-z0-9._-]', '_')
 $CurrentDetectorRuntime = Join-Path $RuntimeRoot $DetectorPackageName
-if (-not (Test-Path -LiteralPath $CurrentDetectorRuntime -PathType Container)) {
+& {
     $DetectorStage = Join-Path $RuntimeRoot ".$DetectorPackageName.$PID.tmp"
     if (Test-Path -LiteralPath $DetectorStage) {
         Remove-Item -LiteralPath $DetectorStage -Recurse -Force
@@ -184,17 +191,20 @@ if (-not (Test-Path -LiteralPath $CurrentDetectorRuntime -PathType Container)) {
         }
         Copy-Item -LiteralPath $DetectorSource -Destination (Join-Path $DetectorStage $DetectorModule)
     }
+    if (Test-Path -LiteralPath $CurrentDetectorRuntime) {
+        Move-Item -LiteralPath $CurrentDetectorRuntime -Destination "$CurrentDetectorRuntime.previous-$([guid]::NewGuid().ToString('N'))"
+    }
     Move-Item -LiteralPath $DetectorStage -Destination $CurrentDetectorRuntime
 }
 $CurrentImageSkillRoot = Join-Path $RuntimeRoot "generate-slide-body-image"
-if (-not (Test-Path -LiteralPath (Join-Path $CurrentImageSkillRoot "scripts\codex_gpt_image.py") -PathType Leaf)) {
+& {
     $ImageSkillStage = Join-Path $RuntimeRoot ".generate-slide-body-image.$PID.tmp"
     if (Test-Path -LiteralPath $ImageSkillStage) {
         Remove-Item -LiteralPath $ImageSkillStage -Recurse -Force
     }
     Copy-Item -LiteralPath $ImageSkill -Destination $ImageSkillStage -Recurse
     if (Test-Path -LiteralPath $CurrentImageSkillRoot) {
-        Remove-Item -LiteralPath $CurrentImageSkillRoot -Recurse -Force
+        Move-Item -LiteralPath $CurrentImageSkillRoot -Destination "$CurrentImageSkillRoot.previous-$([guid]::NewGuid().ToString('N'))"
     }
     Move-Item -LiteralPath $ImageSkillStage -Destination $CurrentImageSkillRoot
 }
@@ -230,12 +240,8 @@ Invoke-WithClearedPythonPath {
         else { $env:EDITPPT_PYTHON = $PreviousEditPptPython }
     }
 }
-Remove-StaleEditablePptWorkflowPackages `
-    -RuntimeRoot $RuntimeRoot `
-    -CurrentWorkflowRoot $CurrentWorkflowRoot
-Remove-StaleEditablePptDetectorPackages `
-    -RuntimeRoot $RuntimeRoot `
-    -CurrentDetectorRoot $CurrentDetectorRuntime
+# Old version directories remain available until the caller has verified and
+# committed the installation; the transaction snapshot retains full rollback.
 if ($RunningOnWindows -and -not $PortableSmokeTest) {
     & $EditablePython -c "import win32com.client; print('editppt-win32com=ok')"
     if ($LASTEXITCODE -ne 0) { throw "Editable-PPT Windows COM dependency probe failed." }
@@ -243,11 +249,12 @@ if ($RunningOnWindows -and -not $PortableSmokeTest) {
 
 $EditWrapper = @"
 @echo off
+@chcp 65001 >nul
 "$EditExe" %*
 "@
 $EditWrapperPath = Join-Path $BinDir "editppt.CMD"
 $EditWrapperStage = "$EditWrapperPath.$PID.tmp"
-Set-Content -LiteralPath $EditWrapperStage -Value $EditWrapper -Encoding ascii
+[IO.File]::WriteAllText($EditWrapperStage, $EditWrapper, $Utf8NoBom)
 Move-Item -LiteralPath $EditWrapperStage -Destination $EditWrapperPath -Force
 
 $ResolvedOfficeExe = $null
@@ -262,11 +269,12 @@ if (-not $PortableSmokeTest) {
         $OfficeCliOptional = "preinstalled"
         $OfficeWrapper = @"
 @echo off
+@chcp 65001 >nul
 "$ResolvedOfficeExe" %*
 "@
         $OfficeWrapperPath = Join-Path $BinDir "officecli.CMD"
         $OfficeWrapperStage = "$OfficeWrapperPath.$PID.tmp"
-        Set-Content -LiteralPath $OfficeWrapperStage -Value $OfficeWrapper -Encoding ascii
+        [IO.File]::WriteAllText($OfficeWrapperStage, $OfficeWrapper, $Utf8NoBom)
         Move-Item -LiteralPath $OfficeWrapperStage -Destination $OfficeWrapperPath -Force
     } else {
         $ResolvedOfficeExe = $null

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -8,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+from pptx import Presentation
+from pptx.util import Inches
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,7 +20,7 @@ EDITPPT_RUNTIME = PLUGIN / "skills" / "reconstruct-editable-slide" / "cli" / "ed
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from test_workflow_v6_reconstruction import _body, _project  # noqa: E402
+from test_workflow_v6_reconstruction import _body, _project, _write_signed_receipt  # noqa: E402
 import workflow_v6_pipeline  # noqa: E402
 import workflow_v6_reconstruction_worker as worker_module  # noqa: E402
 from workflow_v6_pipeline import (  # noqa: E402
@@ -30,7 +33,15 @@ from workflow_v6_reconstruction_worker import (  # noqa: E402
     PageWorkerResult,
     reconstruct_accepted_page,
 )
+from workflow_v6_reconstruction import assemble_v6_deck  # noqa: E402
+from workflow_v6_media import normalized_raster_pixel_seal  # noqa: E402
 from workflow_v6_state import load, save  # noqa: E402
+from test_quantitative_chart_v123_e2e import (  # noqa: E402
+    _production_worker,
+    _qualitative_manifest,
+    _relationship_manifest,
+    _with_relationship,
+)
 
 
 def _accepted_outcome(project: Path, page_number: int = 1):
@@ -55,43 +66,317 @@ def _workspace(project: Path, page_number: int = 1):
 
 
 def _successful_worker(calls: list, text: str = "Editable worker output"):
+    def manifest(page_request):
+        value = _with_relationship(
+            _qualitative_manifest("flow", "timeline_roadmap"), page_request,
+        )
+        value["text_boxes"].append({
+            "object_id": "worker-output-text",
+            "name": "worker-output-text",
+            "box_px": [200, 300, 800, 100],
+            "text": text,
+            "font_size": 20,
+        })
+        return value
+
+    sealed_worker = _production_worker(manifest, [])
+
     def invoke(request):
         calls.append(request)
-        body = request.page_dir / "worker-body.pptx"
-        _body(body, text)
-        return PageWorkerResult(status="completed", reconstructed_body=body)
+        return sealed_worker(request)
 
     return invoke
 
 
-def test_direct_codex_worker_success_uses_zero_paddle_and_recovers_with_zero_calls(
+def _numeric_authority() -> dict[str, object]:
+    return {
+        "title": "Revenue",
+        "relationship": "change_over_time",
+        "rendering_primitive": "line_point",
+        "chart_variant": "line",
+        "unit": "USD m",
+        "basis": "reported revenue",
+        "period": "FY2024-FY2025",
+        "series": [{"name": "Revenue", "categories": ["2024", "2025"], "values": [12, 18]}],
+    }
+
+
+def test_direct_codex_worker_success_recovers_with_zero_calls(
     tmp_path: Path,
 ):
     project = _project(tmp_path, 1)
     worker_calls: list = []
-    paddle_calls: list = []
 
     first = reconstruct_accepted_page(
         _workspace(project),
         _accepted_outcome(project),
         page_worker=_successful_worker(worker_calls),
-        paddle_runner=lambda request: paddle_calls.append(request),
     )
     recovered = reconstruct_accepted_page(
         _workspace(project),
         _accepted_outcome(project),
         page_worker=lambda request: pytest.fail("recovery called the page worker"),
-        paddle_runner=lambda request: pytest.fail("recovery called Paddle"),
     )
+    assembly = assemble_v6_deck(project)
 
     assert first["reconstruction_mode"] == "codex_direct_reconstruction"
     assert recovered["recovered"] is True
     assert len(worker_calls) == 1
-    assert paddle_calls == []
     prompt = worker_calls[0].prompt_file.read_text(encoding="utf-8")
     assert str(EDITPPT_RUNTIME / "main.py") in prompt
     assert "do not rely on a separately installed CLI" in prompt
     assert load(project)["pages"][0]["state"] == "page_complete"
+    page_request = json.loads((worker_calls[0].page_dir / "page_request.json").read_text(encoding="utf-8"))
+    accepted_request = json.loads(
+        (worker_calls[0].page_dir / "accepted_reconstruction_request.json").read_text(encoding="utf-8")
+    )
+    final = json.loads((project / "06_v6/pages/page_001/page.json").read_text(encoding="utf-8"))
+    reconstruction = json.loads(
+        (project / "05_v6/reconstruction_runs/page_001/reconstruction.json").read_text(encoding="utf-8")
+    )
+    assert page_request["accepted_source_body"] == accepted_request["source_body"]
+    assert page_request["worker_source_body"]["normalized_pixel_sha256"] == (
+        accepted_request["source_body"]["normalized_pixel_sha256"]
+    )
+    assert final["accepted_source_body"] == accepted_request["source_body"]
+    assert reconstruction["accepted_source_body"] == accepted_request["source_body"]
+    assert reconstruction["worker_source_body"] == page_request["worker_source_body"]
+    assert [
+        {key: item[key] for key in ("page_number", "status", "authority_mode")}
+        for item in assembly["page_authority"]
+    ] == [{
+        "page_number": 1, "status": "verified", "authority_mode": "sealed_reconstruction",
+    }]
+    assert assembly["page_authority"][0]["visual_qa"]["status"] in {
+        "passed", "unavailable",
+    }
+    if assembly["status"] == "complete":
+        assert assembly["assembled_visual_qa"]["status"] == "passed"
+        assert assembly["release_ready"] is False
+        assert assembly["structure_validation"]["reason"] == "presentation_structure_not_confirmed"
+        assert assembly["sha256"] == hashlib.sha256(
+            (project / assembly["output"]).read_bytes()
+        ).hexdigest()
+    else:
+        assert assembly["status"] == "validation_incomplete"
+        assert assembly["release_status"] == "not_release_ready"
+        assert assembly["final_output"] is None
+        assert "output" not in assembly
+        assert (project / assembly["candidate_output"]["relative_path"]).is_file()
+
+
+@pytest.mark.parametrize(
+    "target,mutate",
+    [
+        (
+            "accepted_reconstruction_request.json",
+            lambda value: value["page_plan"].update({"page_purpose": "tampered"}),
+        ),
+        (
+            "page_request.json",
+            lambda value: value["page_plan"].update({"page_purpose": "tampered"}),
+        ),
+        (
+            "page_jobs.json",
+            lambda value: value["pages"][0]["dispatch"].update(
+                {"page_request_sha256": "0" * 64}
+            ),
+        ),
+        (
+            "manifest.json",
+            lambda value: value.update({"shapes": []}),
+        ),
+        (
+            "reconstruction.json",
+            lambda value: value.update({"final_page_sha256": "0" * 64}),
+        ),
+        (
+            "acceptance_receipt",
+            lambda value: value["page_plan"].update({"page_purpose": "tampered"}),
+        ),
+        (
+            "final_page_receipt",
+            lambda value: value.update({"artifact_version": "tampered"}),
+        ),
+        (
+            "final_page_receipt",
+            lambda value: value.update({"page_pptx": "06_v6/pages/page_999/page.pptx"}),
+        ),
+        (
+            "final_page_receipt",
+            lambda value: value["fixed_frame"].update({"passed": False}),
+        ),
+    ],
+)
+def test_assembly_revalidates_the_complete_sealed_page_authority_chain(
+    tmp_path: Path, target: str, mutate,
+):
+    project = _project(tmp_path, 1)
+    calls: list = []
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker(calls),
+    )
+    run_dir = project / "05_v6/reconstruction_runs/page_001"
+    path = {
+        "acceptance_receipt": project / "04_v6/images/page_001.json",
+        "final_page_receipt": project / "06_v6/pages/page_001/page.json",
+        "reconstruction.json": run_dir / "reconstruction.json",
+        "page_jobs.json": run_dir / "page_jobs.json",
+    }.get(target, run_dir / "pages/page_001" / target)
+    value = json.loads(path.read_text(encoding="utf-8"))
+    mutate(value)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        (RuntimeError, ValueError),
+        match="authority|receipt|request|relationship|edge|signature|artifact",
+    ):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
+
+
+def test_assembly_rejects_changed_final_page_bytes(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    page = project / "06_v6/pages/page_001/page.pptx"
+    page.write_bytes(page.read_bytes() + b"tampered")
+
+    with pytest.raises(RuntimeError, match="completed reconstructed page changed"):
+        assemble_v6_deck(project)
+
+    assert not (project / "08_final/deck.pptx").exists()
+
+
+@pytest.mark.parametrize("page_role", ["content", "appendix"])
+def test_assembly_rejects_non_special_page_disguised_as_special_page(
+    tmp_path: Path, page_role: str,
+):
+    project = _project(tmp_path, 1)
+    composition_path = project / "02_v6/page_composition.json"
+    composition = json.loads(composition_path.read_text(encoding="utf-8"))
+    composition["pages"][0]["page_role"] = page_role
+    composition_path.write_text(
+        json.dumps(composition, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    receipt_path = project / "06_v6/pages/page_001/page.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["artifact_version"] = "special-page-v6"
+    receipt_path.write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="artifact|role|authority"):
+        assemble_v6_deck(project)
+
+
+def test_assembly_rejects_unsigned_source_chain_swapped_away_from_signed_candidate(
+    tmp_path: Path,
+):
+    project = _project(tmp_path, 1)
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    swapped_path = project / "04_v6/images/swapped.png"
+    Image.new("RGB", (1904, 896), "black").save(swapped_path)
+    swapped_bytes = swapped_path.read_bytes()
+    accepted_source = {
+        "path": swapped_path.relative_to(project).as_posix(),
+        "sha256": hashlib.sha256(swapped_bytes).hexdigest(),
+        **normalized_raster_pixel_seal(swapped_bytes),
+    }
+    run_dir = project / "05_v6/reconstruction_runs/page_001"
+    page_dir = run_dir / "pages/page_001"
+    worker_path = page_dir / "source.png"
+    worker_path.write_bytes(swapped_bytes)
+    worker_source = {
+        "path": worker_path.relative_to(project).as_posix(),
+        "sha256": hashlib.sha256(swapped_bytes).hexdigest(),
+        **normalized_raster_pixel_seal(swapped_bytes),
+    }
+    request_paths = [
+        project / "05_v6/reconstruction_requests/page_001.json",
+        page_dir / "accepted_reconstruction_request.json",
+    ]
+    for path in request_paths:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["source_body"] = accepted_source
+        path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    page_request_path = page_dir / "page_request.json"
+    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    page_request["accepted_source_body"] = accepted_source
+    page_request["worker_source_body"] = worker_source
+    page_request_path.write_text(
+        json.dumps(page_request, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    jobs_path = run_dir / "page_jobs.json"
+    jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
+    jobs["pages"][0]["dispatch"]["page_request_sha256"] = hashlib.sha256(
+        page_request_path.read_bytes()
+    ).hexdigest()
+    jobs_path.write_text(json.dumps(jobs, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    reconstruction_path = run_dir / "reconstruction.json"
+    reconstruction = json.loads(reconstruction_path.read_text(encoding="utf-8"))
+    reconstruction.update({
+        "accepted_image_sha256": accepted_source["sha256"],
+        "accepted_image_pixel_sha256": accepted_source["normalized_pixel_sha256"],
+        "accepted_source_body": accepted_source,
+        "worker_source_body": worker_source,
+    })
+    reconstruction_path.write_text(
+        json.dumps(reconstruction, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    final_path = project / "06_v6/pages/page_001/page.json"
+    final = json.loads(final_path.read_text(encoding="utf-8"))
+    final["accepted_source_body"] = accepted_source
+    final["worker_source_body"] = worker_source
+    final_path.write_text(json.dumps(final, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises((RuntimeError, ValueError), match="accepted|candidate|source|authority"):
+        assemble_v6_deck(project)
+
+
+def test_assembly_rejects_manifest_bytes_changed_after_worker_record(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    manifest_path = project / "05_v6/reconstruction_runs/page_001/pages/page_001/manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["harmless_note"] = "changed after record"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+
+    with pytest.raises((RuntimeError, ValueError), match="manifest|record|authority|digest"):
+        assemble_v6_deck(project)
+
+
+def test_assembly_rejects_worker_pptx_with_undeclared_shape_after_record(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project),
+        page_worker=_successful_worker([]),
+    )
+    worker_path = project / "05_v6/reconstruction_runs/page_001/pages/page_001/page.pptx"
+    deck = Presentation(worker_path)
+    deck.slides[0].shapes.add_textbox(Inches(1), Inches(1), Inches(2), Inches(1)).text = (
+        "undeclared"
+    )
+    deck.save(worker_path)
+
+    with pytest.raises((RuntimeError, ValueError), match="worker|record|authority|digest|PPTX"):
+        assemble_v6_deck(project)
 
 
 def test_page_worker_prompt_enforces_sealed_text_repairs(tmp_path: Path):
@@ -100,11 +385,11 @@ def test_page_worker_prompt_enforces_sealed_text_repairs(tmp_path: Path):
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     receipt["reconstruction_repairs"] = [
         {
-            "category": "misleading_fabrication",
+            "category": "severe_usability",
             "detail": "将错字“清出”修正为“退出”，其余构图保持不变。",
         }
     ]
-    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+    _write_signed_receipt(project, 1, receipt)
     calls: list = []
 
     reconstruct_accepted_page(
@@ -118,111 +403,196 @@ def test_page_worker_prompt_enforces_sealed_text_repairs(tmp_path: Path):
     assert "将错字“清出”修正为“退出”" in prompt
 
 
-def test_unreadable_text_uses_paddle_once_then_same_page_worker(tmp_path: Path):
-    project = _project(tmp_path, 1)
-    worker_calls: list = []
-    paddle_calls: list = []
-
-    def worker(request):
-        worker_calls.append(request)
-        if len(worker_calls) == 1:
-            return PageWorkerResult(
-                status="needs_paddle",
-                reason="accepted image text is too small to transcribe reliably",
-            )
-        body = request.page_dir / "paddle-assisted.pptx"
-        _body(body, "Paddle assisted editable output")
-        return PageWorkerResult(status="completed", reconstructed_body=body)
-
-    def paddle(request):
-        paddle_calls.append(request)
-        hints = request.page_dir / "text_hints.json"
-        hints.write_text('{"backend":"paddleocr-vl","lines":[]}', encoding="utf-8")
-        return hints
-
-    result = reconstruct_accepted_page(
-        _workspace(project),
-        _accepted_outcome(project),
-        page_worker=worker,
-        paddle_runner=paddle,
-        paddle_token="configured-token",
-        paddle_authorized=True,
-    )
-
-    assert result["reconstruction_mode"] == "paddle_assisted_reconstruction"
-    assert len(worker_calls) == 2
-    assert len(paddle_calls) == 1
-    assert worker_calls[0].page_number == worker_calls[1].page_number == 1
-    assert worker_calls[0].page_dir == worker_calls[1].page_dir
-    assert worker_calls[0].text_hints is None
-    assert worker_calls[1].text_hints.name == "text_hints.json"
-
-
-@pytest.mark.parametrize(
-    ("token", "authorized", "paddle_fails"),
-    [
-        ("", True, False),
-        ("configured-token", False, False),
-        ("configured-token", True, True),
-    ],
-)
-def test_unreadable_text_without_permitted_working_paddle_stops_page(
-    tmp_path: Path, token: str | None, authorized: bool, paddle_fails: bool,
+def test_page_worker_request_copies_numeric_authority_before_whole_request_hash(
+    tmp_path: Path,
 ):
     project = _project(tmp_path, 1)
-    paddle_calls: list = []
+    authority = _numeric_authority()
+    materials = project / "02_v6/page_materials/page_001.json"
+    materials.parent.mkdir(parents=True, exist_ok=True)
+    materials.write_text(
+        json.dumps({"chart_facts": [authority]}, ensure_ascii=False), encoding="utf-8"
+    )
+    calls: list = []
 
     def worker(request):
-        return PageWorkerResult(status="needs_paddle", reason="text unreadable")
+        calls.append(request)
+        return _production_worker(_relationship_manifest, [])(request)
 
-    def paddle(request):
-        paddle_calls.append(request)
-        if paddle_fails:
-            raise RuntimeError("Paddle unavailable")
-        return request.page_dir / "text_hints.json"
+    reconstruct_accepted_page(
+        _workspace(project), _accepted_outcome(project), page_worker=worker,
+    )
 
-    with pytest.raises(RuntimeError, match="Paddle|text unreadable"):
-        reconstruct_accepted_page(
-            _workspace(project),
-            _accepted_outcome(project),
-            page_worker=worker,
-            paddle_runner=paddle,
-            paddle_token=token,
-            paddle_authorized=authorized,
-        )
-
-    assert not (project / "06_v6" / "pages" / "page_001" / "page.pptx").exists()
-    assert len(paddle_calls) == (1 if token and authorized and paddle_fails else 0)
+    page_request_path = calls[0].page_dir / "page_request.json"
+    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    receipt = json.loads((project / "04_v6/images/page_001.json").read_text(encoding="utf-8"))
+    jobs = json.loads((calls[0].run_dir / "page_jobs.json").read_text(encoding="utf-8"))
+    assert page_request["numeric_authority"] == authority
+    assert page_request["page_plan"] == receipt["page_plan"]
+    assert jobs["pages"][0]["dispatch"]["page_request_sha256"] == hashlib.sha256(
+        page_request_path.read_bytes()
+    ).hexdigest()
+    assert not list(calls[0].page_dir.glob("numeric_authority*.json"))
 
 
-def test_failed_paddle_assisted_worker_does_not_publish_page(tmp_path: Path):
+def test_page_worker_request_copies_plural_authorities_into_prompt_and_request_hash(
+    tmp_path: Path,
+) -> None:
     project = _project(tmp_path, 1)
-    calls = 0
+    receipt_path = project / "04_v6/images/page_001.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["page_plan"]["numeric_authorities"] = [
+        {**_numeric_authority(), "object_id": "chart:revenue", "name": "chart:revenue"},
+        {
+            **_numeric_authority(),
+            "object_id": "chart:profit",
+            "name": "chart:profit",
+            "title": "Profit",
+            "series": [{
+                "name": "Profit",
+                "categories": ["2024", "2025"],
+                "values": [30, 45],
+            }],
+        },
+    ]
+    _write_signed_receipt(project, 1, receipt)
+    accepted_request = worker_module.build_reconstruction_request(project, page_number=1)
+
+    run_dir, page_dir, prompt_file = worker_module._prepare_run(
+        project, accepted_request, 1,
+    )
+
+    page_request_path = page_dir / "page_request.json"
+    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    assert page_request["numeric_authorities"] == receipt["page_plan"]["numeric_authorities"]
+    assert "numeric_authority" not in page_request
+    prompt = prompt_file.read_text(encoding="utf-8")
+    assert "chart:revenue" in prompt and "chart:profit" in prompt
+    dispatched = subprocess.run(
+        [
+            sys.executable,
+            str(EDITPPT_RUNTIME / "record_page_dispatch.py"),
+            str(run_dir),
+            "--page", "page_001",
+            "--agent-id", "deterministic-worker",
+            "--prompt-file", str(prompt_file),
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    assert dispatched.returncode == 0, dispatched.stderr
+    jobs = json.loads((run_dir / "page_jobs.json").read_text(encoding="utf-8"))
+    assert jobs["pages"][0]["dispatch"]["page_request_sha256"] == hashlib.sha256(
+        page_request_path.read_bytes()
+    ).hexdigest()
+    assert not list(page_dir.glob("numeric_authorit*.json"))
+
+
+def test_qualitative_relationship_never_creates_numeric_authority_in_page_request(
+    tmp_path: Path,
+):
+    project = _project(tmp_path, 1)
+    materials = project / "02_v6/page_materials/page_001.json"
+    materials.parent.mkdir(parents=True, exist_ok=True)
+    materials.write_text(
+        json.dumps(
+            {
+                "chart_facts": [{
+                    "title": "Change over time",
+                    "relationship": "change_over_time",
+                    "source_wording": "The source states a sequence but no complete values.",
+                    "disabled_primitive": "line_point",
+                    "fallback": "timeline_roadmap",
+                    "series": [],
+                }]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    calls: list = []
+
+    reconstruct_accepted_page(
+        _workspace(project),
+        _accepted_outcome(project),
+        page_worker=_successful_worker(calls),
+    )
+
+    page_request = json.loads(
+        (calls[0].page_dir / "page_request.json").read_text(encoding="utf-8")
+    )
+    assert "numeric_authority" not in page_request
+
+
+def test_interrupted_prepare_validates_accepted_request_before_resyncing_authority(
+    tmp_path: Path,
+):
+    project = _project(tmp_path, 1)
+    accepted_request = worker_module.build_reconstruction_request(project, page_number=1)
+    run_dir, page_dir, _prompt_file = worker_module._prepare_run(
+        project, accepted_request, 1
+    )
+    page_request_path = page_dir / "page_request.json"
+    stale_authority = _numeric_authority()
+    page_request = json.loads(page_request_path.read_text(encoding="utf-8"))
+    page_request["numeric_authority"] = stale_authority
+    page_request_path.write_text(
+        json.dumps(page_request, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    changed_request = {
+        **accepted_request,
+        "numeric_authority": {**stale_authority, "unit": "EUR m"},
+    }
+    with pytest.raises(RuntimeError, match="accepted reconstruction request changed"):
+        worker_module._prepare_run(project, changed_request, 1)
+    assert json.loads(page_request_path.read_text(encoding="utf-8"))[
+        "numeric_authority"
+    ] == stale_authority
+
+    recovered_run, recovered_page, _prompt_file = worker_module._prepare_run(
+        project, accepted_request, 1
+    )
+    assert recovered_run == run_dir
+    assert recovered_page == page_dir
+    assert "numeric_authority" not in json.loads(
+        page_request_path.read_text(encoding="utf-8")
+    )
+
+
+def test_interrupted_prepare_rejects_stale_page_plan_before_resync(tmp_path: Path):
+    project = _project(tmp_path, 1)
+    accepted_request = worker_module.build_reconstruction_request(project, page_number=1)
+    _run_dir, page_dir, _prompt_file = worker_module._prepare_run(project, accepted_request, 1)
+    page_request_path = page_dir / "page_request.json"
+    original_page_request = page_request_path.read_bytes()
+    changed_request = json.loads(json.dumps(accepted_request))
+    changed_request["page_plan"]["primary_relationship"]["edges"][0]["to_node"] = "source"
+
+    with pytest.raises(RuntimeError, match="accepted reconstruction request changed"):
+        worker_module._prepare_run(project, changed_request, 1)
+
+    assert page_request_path.read_bytes() == original_page_request
+
+
+def test_unreadable_text_stops_after_one_worker_without_publishing(tmp_path: Path, monkeypatch):
+    project = _project(tmp_path, 1)
+    calls = []
 
     def worker(request):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return PageWorkerResult(status="needs_paddle", reason="dense unreadable text")
-        return PageWorkerResult(status="failed", reason="could not reconstruct after Paddle")
+        calls.append(request)
+        monkeypatch.setattr(worker_module, "_run_script", lambda *_args, **_kwargs: pytest.fail("failure invoked another engine"))
+        validation = request.page_dir / "validation.json"
+        validation.write_text(json.dumps({"passed": False, "failure_code": "text_unreadable", "reason": "text unreadable"}), encoding="utf-8")
+        return worker_module._validation_result(request.page_dir)
 
-    def paddle(request):
-        hints = request.page_dir / "text_hints.json"
-        hints.write_text('{"backend":"paddleocr-vl","lines":[]}', encoding="utf-8")
-        return hints
+    with pytest.raises(RuntimeError, match="text unreadable"):
+        reconstruct_accepted_page(_workspace(project), _accepted_outcome(project), page_worker=worker)
 
-    with pytest.raises(RuntimeError, match="could not reconstruct"):
-        reconstruct_accepted_page(
-            _workspace(project),
-            _accepted_outcome(project),
-            page_worker=worker,
-            paddle_runner=paddle,
-            paddle_token="configured-token",
-            paddle_authorized=True,
-        )
-
-    assert calls == 2
+    assert len(calls) == 1
+    assert load(project)["pages"][0]["state"] == "accepted"
     assert not (project / "06_v6" / "pages" / "page_001" / "page.pptx").exists()
+    assert not (calls[0].run_dir / "reconstruction.json").exists()
 
 
 def test_failed_dispatched_worker_requires_explicit_reset_before_resubmission(tmp_path: Path):
@@ -267,9 +637,24 @@ def test_nonaccepted_and_legacy_fallback_states_cannot_reconstruct(tmp_path: Pat
         save(project, state)
 
 
-def test_production_pipeline_defaults_auto_reconstruct_and_assemble():
+def test_production_pipeline_defaults_auto_reconstruct_and_assemble(monkeypatch):
+    calls = []
+    expected = object()
+
+    def reconstruct(*args, **kwargs):
+        calls.append((args, kwargs))
+        return expected
+
+    monkeypatch.setattr(worker_module, "reconstruct_accepted_page", reconstruct)
     dependencies = production_pipeline_dependencies()
-    assert dependencies.reconstruct_page is reconstruct_accepted_page
+    assert dependencies.reconstruct_page is not None
+    workspace = object()
+    outcome = object()
+    page_worker = object()
+    assert dependencies.reconstruct_page(
+        workspace, outcome, page_worker=page_worker,
+    ) is expected
+    assert calls == [((workspace, outcome), {"page_worker": page_worker})]
     assert callable(dependencies.assemble_project)
 
 
@@ -401,10 +786,13 @@ def test_codex_process_failure_reports_transport_error_before_missing_validation
     source = page_dir / "source.png"
     prompt.write_text("reconstruct", encoding="utf-8")
     Image.new("RGB", (1904, 896), "white").save(source)
+    (page_dir / "validation.json").write_text('{"passed":true}', encoding="utf-8")
+    (page_dir / "manifest.json").write_text('{"text_boxes":[]}', encoding="utf-8")
+    _body(page_dir / "page.pptx", "stale passed body")
     monkeypatch.setattr(worker_module, "_codex_executable", lambda: "codex")
     monkeypatch.setattr(
-        worker_module.subprocess,
-        "run",
+        worker_module,
+        "_run_worker_process",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args[0], 1, stdout="", stderr="remote worker transport failed",
         ),
@@ -416,7 +804,6 @@ def test_codex_process_failure_reports_transport_error_before_missing_validation
         page_dir=page_dir,
         source_image=source,
         prompt_file=prompt,
-        text_hints=None,
         timeout=30,
     )
 
@@ -424,3 +811,27 @@ def test_codex_process_failure_reports_transport_error_before_missing_validation
 
     assert result.status == "failed"
     assert result.reason == "remote worker transport failed"
+    assert not (page_dir / "validation.json").exists()
+    assert not (page_dir / "manifest.json").exists()
+    assert not (page_dir / "page.pptx").exists()
+
+
+def test_formal_reconstruction_commits_state_after_all_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    project = _project(tmp_path, 1)
+    calls: list = []
+    original_write = worker_module._atomic_json
+
+    def fail_reconstruction_receipt(root, path, value):
+        if Path(path).name == "reconstruction.json":
+            raise RuntimeError("simulated reconstruction receipt failure")
+        return original_write(root, path, value)
+
+    monkeypatch.setattr(worker_module, "_atomic_json", fail_reconstruction_receipt)
+    with pytest.raises(RuntimeError, match="receipt failure"):
+        reconstruct_accepted_page(
+            _workspace(project), _accepted_outcome(project), page_worker=_successful_worker(calls),
+        )
+
+    assert load(project)["pages"][0]["state"] != "page_complete"
+    assert not (project / "06_v6/pages/page_001/page.pptx").exists()
+    assert not (project / "06_v6/pages/page_001/page.json").exists()

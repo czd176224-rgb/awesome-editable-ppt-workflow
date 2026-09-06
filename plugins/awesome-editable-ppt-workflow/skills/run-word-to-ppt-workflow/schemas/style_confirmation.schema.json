@@ -21,6 +21,7 @@
     "revision": {"type": "integer", "minimum": 1},
     "primary_color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
     "secondary_color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+    "highlight_color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
     "background_color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
     "cjk_font": {"type": "string", "minLength": 1, "maxLength": 120},
     "latin_font": {"type": "string", "minLength": 1, "maxLength": 120},

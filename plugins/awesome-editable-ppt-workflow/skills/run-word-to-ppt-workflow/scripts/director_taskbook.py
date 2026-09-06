@@ -31,8 +31,10 @@ DIRECTOR_TEMPLATE_IDS = frozenset({
 
 TASKBOOK_AUTHORITY_BOUNDARY = (
     "This taskbook is a user-confirmed presentation constraint, not factual source material. "
-    "It may change emphasis, hierarchy, reading path, evidence framing, and takeaway selection "
-    "only; it must not add, omit, rewrite, or move Word content."
+    "It may guide only how Word information maps to the compact page plan. Lossless within-page "
+    "rewording and regrouping are "
+    "allowed; the taskbook cannot authorize new facts, omitted information, altered meaning, "
+    "or moving content between pages."
 )
 
 _TASKBOOK_LABELS = {
@@ -264,11 +266,10 @@ def confirmed_taskbook_prompt(project: Path) -> str:
     return (
         f"{TASKBOOK_AUTHORITY_BOUNDARY}\n"
         f"{fields}\n"
-        "Apply the use scenario to business_proposition and analytical_backbone. "
-        "Use the presenter to calibrate explanatory_lead and speaking stance. "
-        "Use the primary audience to shape content_hierarchy; use prior knowledge to shape "
-        "reading_path_and_density. Use the desired outcome to shape takeaway_statement and "
-        "evidence_interpretation_conclusion. Use emphasis to guide content_hierarchy and "
-        "supporting_visual_policy. Keep deemphasized Word content present but visually subordinate; "
-        "never omit it."
+        "Map the use scenario and desired outcome to page_purpose. Select primary_relationship "
+        "only from source-supported relationships. Use the presenter, primary audience, and prior "
+        "knowledge to calibrate reading_path. Use emphasis and deemphasis only to allocate source "
+        "blocks among core_exhibit and support_groups and to suggest local_visuals. A conclusion is "
+        "optional and may appear only when the Word source supplies it. Keep deemphasized Word "
+        "content present but visually subordinate; never omit it."
     )

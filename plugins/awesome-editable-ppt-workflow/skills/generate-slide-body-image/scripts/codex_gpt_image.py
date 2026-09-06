@@ -28,12 +28,11 @@ import time
 from typing import Any
 import webbrowser
 
-from PIL import Image, PngImagePlugin
-from provider_keyring import signing_key, verification_key
-
 WORKFLOW_SCRIPTS = Path(__file__).resolve().parents[2] / "run-word-to-ppt-workflow" / "scripts"
 if str(WORKFLOW_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(WORKFLOW_SCRIPTS))
+from PIL import Image, PngImagePlugin
+from provider_keyring import signing_key, verification_key
 import workflow_v6_secure_io as secure_io  # noqa: E402
 
 

@@ -515,7 +515,7 @@ def main() -> int:
     parser.add_argument("--json", type=Path, help="Also write the report as JSON.")
     parser.add_argument("--check-powerpoint", action="store_true", help="Launch PowerPoint briefly through COM.")
     parser.add_argument("--smoke-test", action="store_true", help="Create, edit, validate, and open a temporary PPTX.")
-    parser.add_argument("--require-high-quality", action="store_true", help="Fail unless PaddleOCR, a CJK font, and a render backend are ready.")
+    parser.add_argument("--require-high-quality", action="store_true", help="Fail unless a CJK font and a render backend are ready.")
     args = parser.parse_args()
     result = diagnose(args.check_powerpoint, args.smoke_test)
     print(json.dumps(result, ensure_ascii=False, indent=2))
