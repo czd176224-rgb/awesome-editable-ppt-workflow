@@ -8,35 +8,35 @@
       "name": "公司及业务推介材料",
       "description": "帮助受众快速理解公司、业务价值与合作理由。",
       "director_summary": "以清晰价值主张串联公司能力、业务结构、成果证据与合作空间。",
-      "defaults": {"primary_color": "#17365D", "secondary_color": "#2F6FB0", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 30, "body_size_pt": 14, "caption_size_pt": 9}
+      "defaults": {"primary_color": "#17365D", "secondary_color": "#2F6FB0", "highlight_color": "#2F6FB0", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 30, "body_size_pt": 14, "caption_size_pt": 9}
     },
     {
       "id": "investment-committee",
       "name": "投决会材料",
       "description": "围绕投资判断、回报、风险与决策条件组织证据。",
       "director_summary": "以明确投资判断为主线，呈现关键事实、估值回报、风险边界和待决事项。",
-      "defaults": {"primary_color": "#13263A", "secondary_color": "#B58A2A", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 28, "body_size_pt": 13, "caption_size_pt": 9}
+      "defaults": {"primary_color": "#13263A", "secondary_color": "#B58A2A", "highlight_color": "#B58A2A", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 28, "body_size_pt": 13, "caption_size_pt": 9}
     },
     {
       "id": "project-initiation",
       "name": "立项会材料",
       "description": "说明立项依据、初步判断、待验证事项与下一步工作。",
       "director_summary": "围绕是否值得投入下一阶段资源，区分已有事实、初步判断和后续验证任务。",
-      "defaults": {"primary_color": "#244A73", "secondary_color": "#D07A2D", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 28, "body_size_pt": 13, "caption_size_pt": 9}
+      "defaults": {"primary_color": "#244A73", "secondary_color": "#D07A2D", "highlight_color": "#D07A2D", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 28, "body_size_pt": 13, "caption_size_pt": 9}
     },
     {
       "id": "corporate-planning",
       "name": "公司规划报告",
       "description": "把战略目标、重点任务、实施路径与衡量方式连成体系。",
       "director_summary": "由现状判断推导目标和选择，再落到行动、责任、节奏与结果衡量。",
-      "defaults": {"primary_color": "#1E4D45", "secondary_color": "#C58B3A", "background_color": "#FAFBF8", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 30, "body_size_pt": 14, "caption_size_pt": 9}
+      "defaults": {"primary_color": "#17212B", "secondary_color": "#176B67", "highlight_color": "#D3A62C", "background_color": "#F7F6F2", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 30, "body_size_pt": 14, "caption_size_pt": 9}
     },
     {
       "id": "investment-project-bp",
       "name": "投资项目 BP",
       "description": "面向投资人建立项目价值、增长逻辑与融资用途的完整认知。",
       "director_summary": "以项目机会和增长逻辑为主线，用产品、市场、团队、财务与融资证据支撑价值判断。",
-      "defaults": {"primary_color": "#101820", "secondary_color": "#E85D2A", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 30, "body_size_pt": 14, "caption_size_pt": 9}
+      "defaults": {"primary_color": "#101820", "secondary_color": "#E85D2A", "highlight_color": "#E85D2A", "background_color": "#FFFFFF", "cjk_font": "Microsoft YaHei", "latin_font": "Arial", "title_size_pt": 30, "body_size_pt": 14, "caption_size_pt": 9}
     }
   ]
 }

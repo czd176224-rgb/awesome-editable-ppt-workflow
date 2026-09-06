@@ -36,12 +36,13 @@ def smoke(editppt: Path, output: Path) -> dict:
     from confirm_ui.server import _wait, create_app
     from editppt.runtime.fixed_region_runtime import CONTENT_BOX, SLIDE
     from workflow_v6_source import initialize_v6_project
+    from workflow_v6_special_pages import render_special_page, SPECIAL_ROLES
     from workflow_v6_state import load
 
-    initialize_v6_project(source, logo, project)
+    initialize_v6_project(source, logo, project, complete_structure=True)
     state = load(project)
-    if len(state.get("pages", [])) != 1:
-        raise RuntimeError("portable V6 initialization did not create exactly one page")
+    if len(state.get("pages", [])) != 5:
+        raise RuntimeError("portable V6 initialization did not propose all four structure roles")
 
     client = create_app(project).test_client()
     recommendations = client.get("/api/recommendations").get_json()
@@ -55,6 +56,9 @@ def smoke(editppt: Path, output: Path) -> dict:
         "revision": recommendations["revision"],
         "selected_director_template_id": recommendations["recommended_template_id"],
         "director_taskbook": recommendations["director_taskbook"],
+        "structure_confirmed": True,
+        "confirmed_pages": [{k: v for k, v in page.items() if k != "source_preview"}
+                            for page in recommendations["composition"]["pages"]],
         **template["defaults"],
     }
     response = client.post("/api/confirm", json=confirmation)
@@ -67,6 +71,11 @@ def smoke(editppt: Path, output: Path) -> dict:
         or state.get("style_confirmation", {}).get("status") != "confirmed"
     ):
         raise RuntimeError("portable initialization/confirmation did not reach the V6 boundary")
+    special_pages = [page for page in confirmation["confirmed_pages"] if page["page_role"] in SPECIAL_ROLES]
+    if {page["page_role"] for page in special_pages} != SPECIAL_ROLES:
+        raise RuntimeError("portable confirmation lost a structure role")
+    for page in special_pages:
+        render_special_page(project, page["output_page_number"])
 
     page_dir = output / "editable-page"
     page_dir.mkdir()

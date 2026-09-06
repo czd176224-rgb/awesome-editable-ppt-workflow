@@ -34,6 +34,10 @@ def installer_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
         ROOT / "plugins/awesome-editable-ppt-workflow/scripts/runtime_root_safety.ps1",
         release / "plugins/awesome-editable-ppt-workflow/scripts/runtime_root_safety.ps1",
     )
+    shutil.copy2(
+        ROOT / "plugins/awesome-editable-ppt-workflow/scripts/runtime_transaction.ps1",
+        release / "plugins/awesome-editable-ppt-workflow/scripts/runtime_transaction.ps1",
+    )
     mock_bin = tmp_path / "bin"
     mock_bin.mkdir()
     (mock_bin / "codex.cmd").write_text(
@@ -115,8 +119,8 @@ def test_first_install_writes_receipt_and_same_version_is_rejected_without_cli_m
     assert first.returncode == 0, first.stdout + first.stderr
     state = json.loads(receipt.read_text(encoding="utf-8-sig"))
     assert state["schemaVersion"] == "editable-ppt-install-receipt-v1"
-    assert state["releaseTag"] == "v1.2.2"
-    assert any("marketplace add" in line and "--ref v1.2.2" in line for line in log_lines(environment))
+    assert state["releaseTag"] == "v1.2.3"
+    assert any("marketplace add" in line and "--ref v1.2.3" in line for line in log_lines(environment))
     before = log_lines(environment)
 
     repeated = run_installer(release, receipt, environment)
@@ -135,7 +139,7 @@ def test_update_accepts_only_higher_immutable_tag_and_repair_is_explicit(install
     before_repair = len(log_lines(environment))
     repaired = run_installer(release, receipt, environment, "-Repair")
     assert repaired.returncode == 0, repaired.stdout + repaired.stderr
-    assert any("--ref v1.2.2" in line for line in log_lines(environment)[before_repair:])
+    assert any("--ref v1.2.3" in line for line in log_lines(environment)[before_repair:])
 
     set_version(release, "2.6.2")
     updated = run_update(release, receipt, environment)
@@ -162,7 +166,7 @@ def test_failed_target_registration_restores_previous_ref_and_receipt(installer_
     assert receipt.read_bytes() == old_receipt
     tail = log_lines(environment)
     assert any("marketplace add" in line and "--ref v2.6.2" in line for line in tail)
-    assert any("marketplace add" in line and "--ref v1.2.2" in line for line in tail)
+    assert any("marketplace add" in line and "--ref v1.2.3" in line for line in tail)
 
 
 @pytest.mark.parametrize(
@@ -190,7 +194,7 @@ def test_failed_old_teardown_restores_exact_previous_ref_and_preserves_receipt(
     assert failed.returncode != 0
     assert receipt.read_bytes() == old_receipt
     lines = log_lines(environment)[before:]
-    assert any("marketplace add" in line and "--ref v1.2.2" in line for line in lines)
+    assert any("marketplace add" in line and "--ref v1.2.3" in line for line in lines)
     assert any(line == f"plugin add {plugin}@{marketplace}" for line in lines)
 
 
@@ -209,7 +213,118 @@ def test_rollback_failure_leaves_recovery_required_transaction(installer_fixture
     transaction = Path(f"{receipt}.transaction.json")
     recovery = json.loads(transaction.read_text(encoding="utf-8-sig"))
     assert recovery["status"] == "recovery-required"
-    assert recovery["previous"]["releaseTag"] == "v1.2.2"
+    assert recovery["previous"]["releaseTag"] == "v1.2.3"
+
+
+def test_failed_v123_update_from_v122_restores_the_published_v122_ref(installer_fixture):
+    release, receipt, environment = installer_fixture
+    set_version(release, "1.2.2")
+    assert run_installer(release, receipt, environment).returncode == 0
+    set_version(release, "1.2.3")
+    environment["CODEX_MOCK_FAIL_ON"] = "v1.2.3"
+
+    failed = run_update(release, receipt, environment)
+
+    assert failed.returncode != 0
+    assert json.loads(receipt.read_text(encoding="utf-8-sig"))["releaseTag"] == "v1.2.2"
+    assert any("marketplace add" in line and "--ref v1.2.2" in line for line in log_lines(environment))
+
+
+@pytest.mark.parametrize("failure", ["runtime", "verify"])
+def test_failed_upgrade_restores_real_runtime_and_executable_wrapper(installer_fixture, failure):
+    release, receipt, environment = installer_fixture
+    runtime = release / "plugins/awesome-editable-ppt-workflow/scripts/install_runtime.ps1"
+    runtime.write_text('''param([switch]$Force,[string]$RuntimeRoot,[string]$BinDir)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'runtime_root_safety.ps1')
+New-Item -ItemType Directory -Force -Path $RuntimeRoot,$BinDir | Out-Null
+Write-RuntimeOwnershipSentinel $RuntimeRoot
+$version = $env:FIXTURE_VERSION
+Set-Content -LiteralPath (Join-Path $RuntimeRoot 'entry.cmd') -Value "@echo $version" -Encoding ascii
+Set-Content -LiteralPath (Join-Path $RuntimeRoot 'workflow.pth') -Value $version -Encoding ascii
+[IO.File]::WriteAllText((Join-Path $BinDir 'editppt.CMD'), ('@chcp 65001 >nul' + "`r`n" + '@call "' + (Join-Path $RuntimeRoot 'entry.cmd') + '"'), [Text.UTF8Encoding]::new($false))
+if ($env:FIXTURE_FAIL -eq 'runtime') { throw 'injected runtime failure' }
+exit 0
+''', encoding="utf-8")
+    (release / "verify.ps1").write_text('''param([string]$RuntimeRoot)
+if ($env:FIXTURE_FAIL -eq 'verify') { throw 'injected verify failure' }
+exit 0
+''', encoding="utf-8")
+    set_version(release, "1.2.2")
+    environment["FIXTURE_VERSION"] = "1.2.2"
+    first = run_installer(release, receipt, environment)
+    assert first.returncode == 0, first.stdout + first.stderr
+    before_receipt = receipt.read_bytes()
+    state = json.loads(before_receipt.decode("utf-8-sig"))
+    root = Path(state["runtimeRoot"])
+    wrapper = Path(state["binDir"]) / "editppt.CMD"
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    before_wrapper = wrapper.read_bytes()
+    set_version(release, "1.2.3")
+    environment.update(FIXTURE_VERSION="1.2.3", FIXTURE_FAIL=failure)
+    failed = run_update(release, receipt, environment)
+    assert failed.returncode != 0
+    assert receipt.read_bytes() == before_receipt
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+    assert wrapper.read_bytes() == before_wrapper
+    executed = subprocess.run(["cmd", "/c", str(wrapper)], capture_output=True, text=True)
+    assert executed.returncode == 0 and executed.stdout.strip() == "1.2.2"
+
+
+@pytest.mark.parametrize("missing", ["runtime", "editppt.CMD"])
+def test_incomplete_backup_is_rejected_before_current_runtime_changes(installer_fixture, missing):
+    release, _, environment = installer_fixture
+    script = release.parent / "backup-check.ps1"
+    script.write_text('''param([string]$Scripts,[string]$Root,[string]$Missing)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Scripts 'runtime_root_safety.ps1')
+. (Join-Path $Scripts 'runtime_transaction.ps1')
+$runtime = Join-Path $Root 'runtime'
+$bin = Join-Path $Root 'wrappers'
+New-Item -ItemType Directory -Path $runtime,$bin | Out-Null
+Write-RuntimeOwnershipSentinel $runtime
+Set-Content -LiteralPath (Join-Path $runtime 'entry.txt') -Value 'old'
+Set-Content -LiteralPath (Join-Path $bin 'editppt.CMD') -Value '@echo old'
+$snapshot = Backup-EditablePptRuntime $runtime $bin (Split-Path -Parent $Scripts)
+Set-Content -LiteralPath (Join-Path $runtime 'entry.txt') -Value 'current'
+Move-Item -LiteralPath (Join-Path $snapshot.backupRoot $Missing) -Destination (Join-Path $snapshot.backupRoot 'missing-backup')
+$rejected = $false
+try { Restore-EditablePptRuntime $snapshot } catch { $rejected = $true }
+if (-not $rejected -or (Get-Content -Raw -LiteralPath (Join-Path $runtime 'entry.txt')).Trim() -ne 'current') { throw 'Unsafe rollback' }
+Write-Output 'incomplete-backup-rejected=ok'
+''', encoding="utf-8")
+    result = subprocess.run([
+        "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Scripts",
+        str(release / "plugins/awesome-editable-ppt-workflow/scripts"),
+        "-Root", str(release.parent), "-Missing", missing,
+    ], env=environment, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "incomplete-backup-rejected=ok" in result.stdout
+
+
+def test_image_helper_refreshes_existing_code_on_every_install(installer_fixture):
+    release, _, environment = installer_fixture
+    script = release.parent / "refresh-check.ps1"
+    source = ROOT / "plugins/awesome-editable-ppt-workflow/scripts/install_runtime.ps1"
+    code = source.read_text(encoding="utf-8-sig")
+    block = code[code.index("$CurrentImageSkillRoot ="):code.index("$WorkflowSitePackages =")]
+    script.write_text('''param([string]$Root)
+$ErrorActionPreference = 'Stop'
+$RuntimeRoot = Join-Path $Root 'runtime'
+$ImageSkill = Join-Path $Root 'image-source'
+New-Item -ItemType Directory -Path $RuntimeRoot,(Join-Path $ImageSkill 'scripts') | Out-Null
+$source = Join-Path $ImageSkill 'scripts/codex_gpt_image.py'
+''' + '\nforeach ($version in @(\'old\', \'new\')) {\nSet-Content -LiteralPath $source -Value $version\n' + block + '''
+    if ((Get-Content -Raw -LiteralPath (Join-Path $CurrentImageSkillRoot 'scripts/codex_gpt_image.py')).Trim() -ne $version) { throw 'Stale helper reused' }
+}
+Write-Output 'helper-refreshed=ok'
+''', encoding="utf-8")
+    result = subprocess.run([
+        "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
+        "-Root", str(release.parent),
+    ], env=environment, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "helper-refreshed=ok" in result.stdout
 
 
 def run_uninstall(release: Path, receipt: Path, environment: dict[str, str]) -> subprocess.CompletedProcess:

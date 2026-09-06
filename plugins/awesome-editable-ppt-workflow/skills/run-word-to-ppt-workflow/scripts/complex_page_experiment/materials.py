@@ -17,6 +17,7 @@ from awesome_page_materials import collect_page_materials, validate_page_materia
 from awesome_attachment_render import SUPPORTED_DOCUMENTS, SUPPORTED_IMAGES
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 from workflow_v6_state import load
+from workflow_v6_materials import index_source_numeric_candidates
 
 from .workspace import ExperimentWorkspace
 
@@ -364,6 +365,10 @@ def validate_complete_page_material_view(value: Mapping[str, object]) -> None:
     ]
     if [record["original"] for record in block_records] != value["complete_word_content"]:
         raise ValueError("Word content differs from its material authority records")
+    if value["numeric_source_candidates"] != index_source_numeric_candidates(
+        value["complete_word_content"]
+    ):
+        raise ValueError("numeric source candidate index differs from exact Word locations")
     if [record["original"] for record in comment_records] != value["original_comments"]:
         raise ValueError("original comments differ from their material authority records")
     for record in [*block_records, *comment_records]:
@@ -625,6 +630,9 @@ def build_complete_page_material_view(
         "page_number": workspace.page_number,
         "fixed_page_title": published["fixed_page_title"],
         "complete_word_content": copy.deepcopy(published["complete_word_content"]),
+        "numeric_source_candidates": index_source_numeric_candidates(
+            published["complete_word_content"]
+        ),
         "original_comments": copy.deepcopy(published["original_comments"]),
         "visual_contract": copy.deepcopy(published["visual_contract"]),
         "body_frame": copy.deepcopy(published["body_frame"]),

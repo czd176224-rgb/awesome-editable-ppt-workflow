@@ -6,9 +6,12 @@ import copy
 import csv
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -22,6 +25,12 @@ from workflow_v6_media import NormalizedReference, normalize_reference
 
 PAGE_MATERIALS_VERSION = "page-materials-v6"
 _ATTACHMENT_EXTRACTION_CACHE: dict[str, dict[str, Any]] = {}
+_SOURCE_NUMBER = re.compile(
+    r"(?<![\d.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\d.])"
+)
+_SOURCE_CLAUSE = re.compile(
+    r"(?:[^,，;；。!！?？\n]|(?<=\d),(?=\d{3}(?:\D|$)))+"
+)
 _SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
 _REFERENCE_IMAGE_SCHEMA = json.loads(
     (_SCHEMAS / "reference_image_v6.schema.json").read_text(encoding="utf-8")
@@ -551,15 +560,563 @@ def chart_to_facts(chart: Mapping[str, Any]) -> dict[str, Any]:
         entry: dict[str, Any] = {}
         for key in (
             "series", "name", "unit", "value", "values", "time", "times",
-            "trend", "relationship",
+            "categories", "basis", "trend", "relationship", "source_wording",
+            "category_indices", "value_indices",
+            "x_values", "x_label", "x_unit", "x_basis",
+            "x_indices", "y_indices", "size_indices",
+            "y_values", "y_label", "y_unit", "y_basis",
+            "size_values", "size_label", "size_unit", "size_basis",
+            "start", "start_label", "changes", "end", "end_label", "start_dates", "end_dates",
+            "width_values", "width_label", "width_unit", "width_basis",
+            "share_values", "share_label", "share_unit", "share_basis",
+            "share_denominator", "target_value", "actual_value",
         ):
             if key in item:
                 entry[key] = copy.deepcopy(item[key])
         factual_series.append(entry)
     result: dict[str, Any] = {"title": title, "series": factual_series}
-    if "unit" in chart:
-        result["unit"] = copy.deepcopy(chart["unit"])
+    for key in (
+        "object_id", "name", "unit", "basis", "period", "source_page", "relationship", "source_wording",
+        "x_label", "x_unit", "x_basis", "y_label", "y_unit", "y_basis",
+        "size_label", "size_unit", "size_basis", "target_value", "actual_value",
+        "rendering_primitive", "chart_variant", "disabled_primitive", "fallback", "table_rows",
+        "source_ref_ids", "editability",
+    ):
+        if key in chart:
+            result[key] = copy.deepcopy(chart[key])
     return result
+
+
+def _numeric(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _canonical_number(value: Any) -> int | float:
+    if isinstance(value, bool):
+        raise ValueError("boolean is not numeric chart data")
+    try:
+        number = Decimal(str(value).strip())
+    except (InvalidOperation, AttributeError, ValueError) as exc:
+        raise ValueError("chart data must be numeric") from exc
+    if not number.is_finite():
+        raise ValueError("chart data must be finite")
+    return int(number) if number == number.to_integral_value() else float(number)
+
+
+def _source_ref_id(locator: Mapping[str, Any]) -> str:
+    return f"source-ref:{canonical_sha256(dict(locator))[:24]}"
+
+
+def index_source_numeric_candidates(
+    blocks: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Index exact Word locations without assigning subjects, units, or chart meaning."""
+    candidates: list[dict[str, Any]] = []
+
+    def add(locator: dict[str, Any], text: object, *, value_kind: str) -> None:
+        if not isinstance(text, (str, int, float)) or isinstance(text, bool):
+            return
+        exact = str(text)
+        if not exact.strip():
+            return
+        candidates.append({
+            "source_ref_id": _source_ref_id({**locator, "value_kind": value_kind}),
+            **locator,
+            "value_kind": value_kind,
+            "text": exact,
+        })
+
+    for block in blocks:
+        if not isinstance(block, Mapping):
+            continue
+        block_id = block.get("source_block_id")
+        if not isinstance(block_id, str) or not block_id:
+            continue
+        if block.get("type") == "table":
+            rows = block.get("rows")
+            if not isinstance(rows, list):
+                continue
+            for row_index, row in enumerate(rows):
+                if not isinstance(row, list):
+                    continue
+                for column_index, cell in enumerate(row):
+                    add(
+                        {
+                            "source_kind": "table_cell",
+                            "source_block_id": block_id,
+                            "row": row_index,
+                            "column": column_index,
+                        },
+                        cell,
+                        value_kind="cell",
+                    )
+            continue
+        text = block.get("text")
+        if block.get("type") not in {"paragraph", "list"} or not isinstance(text, str):
+            continue
+        numeric_matches = list(_SOURCE_NUMBER.finditer(text))
+        for number in numeric_matches:
+            add(
+                {
+                    "source_kind": "text_fragment",
+                    "source_block_id": block_id,
+                    "start": number.start(),
+                    "end": number.end(),
+                },
+                text[number.start():number.end()],
+                value_kind="number",
+            )
+        for clause_match in _SOURCE_CLAUSE.finditer(text):
+            clause = clause_match.group(0)
+            numbers = [
+                number for number in numeric_matches
+                if number.start() >= clause_match.start()
+                and number.end() <= clause_match.end()
+            ]
+            if not numbers:
+                continue
+            boundaries = [
+                0,
+                *[
+                    point - clause_match.start()
+                    for match in numbers
+                    for point in (match.start(), match.end())
+                ],
+                len(clause),
+            ]
+            for start, end in zip(boundaries, boundaries[1:]):
+                fragment = clause[start:end]
+                if not fragment.strip() or _SOURCE_NUMBER.fullmatch(fragment.strip()):
+                    continue
+                leading = len(fragment) - len(fragment.lstrip())
+                trailing = len(fragment.rstrip())
+                exact_start = clause_match.start() + start + leading
+                exact_end = clause_match.start() + start + trailing
+                add(
+                    {
+                        "source_kind": "text_fragment",
+                        "source_block_id": block_id,
+                        "start": exact_start,
+                        "end": exact_end,
+                    },
+                    text[exact_start:exact_end],
+                    value_kind="label",
+                )
+    return candidates
+
+
+def _selected_source_text(
+    by_id: Mapping[str, Mapping[str, Any]], source_ref_id: object, field: str,
+) -> tuple[str, str]:
+    if not isinstance(source_ref_id, str) or source_ref_id not in by_id:
+        raise ValueError(f"numeric authority {field} source reference is missing")
+    text = by_id[source_ref_id].get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError(f"numeric authority {field} source reference is empty")
+    return text.strip(), source_ref_id
+
+
+def _selected_source_number(
+    by_id: Mapping[str, Mapping[str, Any]], source_ref_id: object, field: str,
+) -> tuple[int | float, str]:
+    text, reference = _selected_source_text(by_id, source_ref_id, field)
+    if _SOURCE_NUMBER.fullmatch(text) is None:
+        raise ValueError(f"numeric authority {field} must reference one exact numeric source")
+    return _canonical_number(text.replace(",", "")), reference
+
+
+def resolve_numeric_authorities(
+    selections: Sequence[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Resolve director-selected source IDs into complete renderer-ready authorities."""
+    if (
+        not isinstance(selections, Sequence) or isinstance(selections, (str, bytes))
+        or not isinstance(candidates, Sequence) or isinstance(candidates, (str, bytes))
+    ):
+        raise ValueError("numeric authority selections and candidates must be arrays")
+    by_id: dict[str, Mapping[str, Any]] = {}
+    for candidate in candidates:
+        source_ref_id = candidate.get("source_ref_id") if isinstance(candidate, Mapping) else None
+        if not isinstance(source_ref_id, str) or not source_ref_id or source_ref_id in by_id:
+            raise ValueError("numeric source candidate IDs must be unique")
+        by_id[source_ref_id] = candidate
+    resolved: list[dict[str, Any]] = []
+    chart_ids: set[str] = set()
+    for selection in selections:
+        if not isinstance(selection, Mapping):
+            raise ValueError("numeric authority selection must be an object")
+        chart_id = selection.get("chart_id")
+        if not isinstance(chart_id, str) or not chart_id.strip() or chart_id in chart_ids:
+            raise ValueError("numeric authority chart_id must be unique non-empty text")
+        chart_ids.add(chart_id)
+        primitive = selection.get("rendering_primitive")
+        variant = selection.get("chart_variant")
+        if primitive not in {"column_bar", "line_point"} or variant not in {
+            "column", "bar", "line", "dot",
+        }:
+            raise ValueError("numeric authority selection uses an unsupported existing chart form")
+        title, title_ref = _selected_source_text(
+            by_id, selection.get("title_ref_id"), "title_ref_id",
+        )
+        source_refs = [title_ref]
+        chart: dict[str, Any] = {
+            "title": title,
+            "rendering_primitive": primitive,
+            "chart_variant": variant,
+            "series": [],
+        }
+        period_ref = selection.get("period_ref_id")
+        if period_ref is not None:
+            chart["period"], ref = _selected_source_text(by_id, period_ref, "period_ref_id")
+            source_refs.append(ref)
+        groups = selection.get("series_groups")
+        if not isinstance(groups, list) or not groups:
+            raise ValueError("numeric authority requires explicit series groups")
+        for group in groups:
+            if not isinstance(group, Mapping):
+                raise ValueError("numeric authority series group must be an object")
+            name, name_ref = _selected_source_text(
+                by_id, group.get("name_ref_id"), "name_ref_id",
+            )
+            category_refs = group.get("category_ref_ids")
+            value_refs = group.get("value_ref_ids")
+            if (
+                not isinstance(category_refs, list) or not category_refs
+                or not isinstance(value_refs, list) or len(category_refs) != len(value_refs)
+            ):
+                raise ValueError("numeric authority category and value references must align")
+            categories: list[str] = []
+            values: list[int | float] = []
+            refs = [name_ref]
+            for reference in category_refs:
+                value, ref = _selected_source_text(by_id, reference, "category_ref_ids")
+                categories.append(value)
+                refs.append(ref)
+            for reference in value_refs:
+                value, ref = _selected_source_number(by_id, reference, "value_ref_ids")
+                values.append(value)
+                refs.append(ref)
+            unit, unit_ref = _selected_source_text(
+                by_id, group.get("unit_ref_id"), "unit_ref_id",
+            )
+            basis, basis_ref = _selected_source_text(
+                by_id, group.get("basis_ref_id"), "basis_ref_id",
+            )
+            chart["series"].append({
+                "name": name,
+                "categories": categories,
+                "values": values,
+                "unit": unit,
+                "basis": basis,
+            })
+            source_refs.extend([*refs, unit_ref, basis_ref])
+        canonical = _canonical_numeric_chart(chart)
+        if canonical is None or not _complete_numeric_chart(canonical):
+            raise ValueError("numeric authority source selection is incomplete or incompatible")
+        canonical.update({
+            "object_id": chart_id,
+            "name": chart_id,
+            "source_ref_ids": list(dict.fromkeys(source_refs)),
+            "editability": "editable_shapes" if variant == "dot" else "native_chart_data",
+        })
+        resolved.append(canonical)
+    return resolved
+
+
+def _canonical_numeric_chart(chart: Mapping[str, Any]) -> dict[str, Any] | None:
+    try:
+        result = chart_to_facts(chart)
+        series = result.get("series")
+        if not isinstance(series, list) or any(not isinstance(item, Mapping) for item in series):
+            return None
+        for key in (
+            "title", "period", "unit", "basis",
+            "x_label", "x_unit", "x_basis", "y_label", "y_unit", "y_basis",
+            "size_label", "size_unit", "size_basis",
+        ):
+            if key in result and isinstance(result[key], str):
+                result[key] = result[key].strip()
+        for item in series:
+            name = item.pop("name", None)
+            source_name = item.pop("series", None)
+            name = name or source_name
+            if isinstance(name, str) and name.strip():
+                item["name"] = name.strip()
+            item.pop("time", None)
+            item.pop("times", None)
+            if "categories" in item:
+                if not _labels(item["categories"]):
+                    raise ValueError("chart categories must be labels")
+                item["categories"] = [str(value).strip() for value in item["categories"]]
+            for key in ("values", "x_values", "y_values", "size_values", "changes", "width_values"):
+                if key in item:
+                    if not isinstance(item[key], list):
+                        raise ValueError("chart dimensions must be lists")
+                    item[key] = [_canonical_number(value) for value in item[key]]
+            if "share_values" in item:
+                item["share_values"] = [
+                    [_canonical_number(value) for value in values]
+                    for values in item["share_values"]
+                ]
+            for key in ("value", "start", "end", "share_denominator", "target_value", "actual_value"):
+                if key in item:
+                    item[key] = _canonical_number(item[key])
+            for key in (
+                "unit", "basis", "start_label", "end_label", "width_label", "width_unit", "width_basis",
+                "share_label", "share_unit", "share_basis",
+            ):
+                if key in item and isinstance(item[key], str):
+                    item[key] = item[key].strip()
+        for key in ("target_value", "actual_value"):
+            if key in result:
+                result[key] = _canonical_number(result[key])
+        return result
+    except (TypeError, ValueError):
+        return None
+
+
+def _numeric_list(value: Any, *, non_negative: bool = False) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(_numeric(item) and (not non_negative or float(item) >= 0) for item in value)
+    )
+
+
+def _labels(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(
+        isinstance(item, (str, int, float)) and not isinstance(item, bool) and str(item).strip()
+        for item in value
+    )
+
+
+def _text(record: Mapping[str, Any], chart: Mapping[str, Any], key: str) -> bool:
+    value = record.get(key, chart.get(key))
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _text_value(record: Mapping[str, Any], chart: Mapping[str, Any], key: str) -> str | None:
+    value = record.get(key, chart.get(key))
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _series(chart: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    value = chart.get("series")
+    if not isinstance(value, list) or not value or any(not isinstance(item, Mapping) for item in value):
+        return []
+    return value
+
+
+def _aligned_indices(item: Mapping[str, Any], dimensions: Sequence[tuple[str, str]]) -> bool:
+    index_values = [item.get(index_key) for _value_key, index_key in dimensions]
+    if not any(value is not None for value in index_values):
+        return True
+    if any(not isinstance(value, list) for value in index_values):
+        return False
+    for value_key, index_key in dimensions:
+        values = item.get(value_key)
+        indices = item.get(index_key)
+        if (
+            not isinstance(values, list)
+            or not isinstance(indices, list)
+            or len(values) != len(indices)
+            or any(type(index) is not int or index < 0 for index in indices)
+            or len(indices) != len(set(indices))
+        ):
+            return False
+    return all(value == index_values[0] for value in index_values[1:])
+
+
+def _one_dimensional_complete(chart: Mapping[str, Any]) -> bool:
+    primitive = chart.get("rendering_primitive")
+    variants = {"column_bar": {"column", "bar"}, "line_point": {"line", "dot"}}
+    if chart.get("chart_variant") not in variants.get(primitive, set()):
+        return False
+    series = _series(chart)
+    if not series:
+        return False
+    comparison_basis: set[tuple[str, str]] = set()
+    shared_categories: list[str] | None = None
+    for item in series:
+        categories = item.get("categories")
+        values = item.get("values")
+        if (
+            not _text(item, {}, "name")
+            or not _labels(categories)
+            or not _numeric_list(values)
+            or len(categories) != len(values)
+            or not _aligned_indices(item, (("categories", "category_indices"), ("values", "value_indices")))
+        ):
+            return False
+        unit = _text_value(item, chart, "unit")
+        basis = _text_value(item, chart, "basis")
+        if unit is None or basis is None:
+            return False
+        comparison_basis.add((unit, basis))
+        if shared_categories is None:
+            shared_categories = categories
+        elif categories != shared_categories:
+            return False
+    if len(comparison_basis) != 1:
+        return False
+    return True
+
+
+def _xy_complete(chart: Mapping[str, Any]) -> bool:
+    variant = chart.get("chart_variant")
+    if variant not in {"scatter", "bubble"}:
+        return False
+    for prefix in ("x", "y"):
+        if not all(_text({}, chart, f"{prefix}_{suffix}") for suffix in ("label", "unit", "basis")):
+            return False
+    if variant == "bubble" and not all(
+        _text({}, chart, f"size_{suffix}") for suffix in ("label", "unit", "basis")
+    ):
+        return False
+    series = _series(chart)
+    for item in series:
+        x_values = item.get("x_values")
+        y_values = item.get("y_values")
+        if not _text(item, {}, "name") or not _numeric_list(x_values) or not _numeric_list(y_values) or len(x_values) != len(y_values):
+            return False
+        dimensions = [("x_values", "x_indices"), ("y_values", "y_indices")]
+        if variant == "bubble":
+            sizes = item.get("size_values")
+            if not _numeric_list(sizes, non_negative=True) or len(sizes) != len(x_values):
+                return False
+            dimensions.append(("size_values", "size_indices"))
+        if not _aligned_indices(item, dimensions):
+            return False
+    return bool(series)
+
+
+def _cumulative_complete(chart: Mapping[str, Any]) -> bool:
+    if "chart_variant" in chart:
+        return False
+    series = _series(chart)
+    if len(series) != 1 or not _text(series[0], {}, "name") or not _text(series[0], chart, "unit") or not _text(series[0], chart, "basis"):
+        return False
+    item = series[0]
+    changes = item.get("changes")
+    categories = item.get("categories")
+    if (
+        not _numeric(item.get("start"))
+        or not _numeric_list(changes)
+        or not _numeric(item.get("end"))
+        or any(key in item and not _text(item, {}, key) for key in ("start_label", "end_label"))
+        or not _labels(categories)
+        or len(changes) != len(categories)
+    ):
+        return False
+    return Decimal(str(item["start"])) + sum(
+        (Decimal(str(value)) for value in changes), Decimal(0)
+    ) == Decimal(str(item["end"]))
+
+
+def _time_interval_complete(chart: Mapping[str, Any]) -> bool:
+    if "chart_variant" in chart:
+        return False
+    series = _series(chart)
+    for item in series:
+        categories = item.get("categories")
+        starts = item.get("start_dates")
+        ends = item.get("end_dates")
+        if not _text(item, {}, "name") or not _labels(categories) or not isinstance(starts, list) or not isinstance(ends, list):
+            return False
+        if not starts or len(categories) != len(starts) or len(starts) != len(ends):
+            return False
+        try:
+            intervals = [(date.fromisoformat(str(start)), date.fromisoformat(str(end))) for start, end in zip(starts, ends)]
+        except ValueError:
+            return False
+        if any(start > end for start, end in intervals):
+            return False
+    return bool(series)
+
+
+def _variable_rectangle_complete(chart: Mapping[str, Any]) -> bool:
+    if "chart_variant" in chart:
+        return False
+    series = _series(chart)
+    if len(series) != 1:
+        return False
+    item = series[0]
+    categories = item.get("categories")
+    widths = item.get("width_values")
+    shares = item.get("share_values")
+    denominator = item.get("share_denominator")
+    if (
+        not _labels(categories)
+        or not _text(item, {}, "name")
+        or not _numeric_list(widths)
+        or any(Decimal(str(value)) <= 0 for value in widths)
+        or len(categories) != len(widths)
+        or not all(_text(item, chart, f"{prefix}_{suffix}") for prefix in ("width", "share") for suffix in ("label", "unit", "basis"))
+        or not _numeric(denominator)
+        or float(denominator) <= 0
+        or not isinstance(shares, list)
+        or len(shares) != len(widths)
+    ):
+        return False
+    return all(
+        _numeric_list(values, non_negative=True)
+        and sum((Decimal(str(value)) for value in values), Decimal(0)) == Decimal(str(denominator))
+        for values in shares
+    )
+
+
+def _complete_numeric_chart(chart: Mapping[str, Any]) -> bool:
+    if not _text({}, chart, "title"):
+        return False
+    target, actual = chart.get("target_value"), chart.get("actual_value")
+    if (target is None) != (actual is None) or target is not None and (
+        chart.get("chart_variant") != "dot" or not _numeric(target) or not _numeric(actual)
+    ):
+        return False
+    primitive = chart.get("rendering_primitive")
+    if primitive in {"column_bar", "line_point"}:
+        return _one_dimensional_complete(chart)
+    if primitive == "xy":
+        return _xy_complete(chart)
+    if primitive == "cumulative_bridge":
+        return _cumulative_complete(chart)
+    if primitive == "time_interval":
+        return _time_interval_complete(chart)
+    if primitive == "variable_rectangle":
+        return _variable_rectangle_complete(chart)
+    return False
+
+
+def select_numeric_authorities(
+    chart_facts: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return every complete explicit chart without discarding chart identity."""
+    if not isinstance(chart_facts, Sequence) or isinstance(chart_facts, (str, bytes)):
+        return []
+    return [
+        candidate
+        for chart in chart_facts
+        if isinstance(chart, Mapping)
+        for candidate in [_canonical_numeric_chart(chart)]
+        if candidate is not None and _complete_numeric_chart(candidate)
+    ]
+
+
+def select_numeric_authority(chart_facts: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Legacy single-chart reader; ambiguity or missing dimensions still refuses."""
+    canonical = select_numeric_authorities(chart_facts)
+    if len(canonical) != 1:
+        return None
+    legacy = dict(canonical[0])
+    for field in ("object_id", "name", "source_ref_ids", "editability"):
+        legacy.pop(field, None)
+    return legacy
 
 
 def validate_page_materials(value: Mapping[str, Any], *, confirmed: bool) -> None:

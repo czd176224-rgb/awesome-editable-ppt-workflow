@@ -177,6 +177,51 @@ Positioned build object requirements:
 - Every `images[]` item must have `box_px`.
 - Every non-line `shapes[]` item must have `box_px`.
 - Every line shape must have `points_px`.
+- A sealed directed edge uses one `shapes[]` item with `object_id: "edge:<source-id>-><target-id>"`, `type: "line"`, and either the default/`line` preset or `preset: "bentConnector3"`. A bent connector may set `bend_x_px` to the source-pixel x-coordinate of its single vertical elbow; the value must lie within the two endpoint x-coordinates. Omit it to keep PowerPoint's midpoint bend. The runtime preserves one native connector object, endpoint direction, dash, and target arrowhead.
+- Every optional `charts[]` item must have `object_id`, `name`, and an in-bounds `box_px`. Its `object_id` shares the same uniqueness scope as text boxes, tables, images, and shapes. Legacy centimeter `anchor` and inferred `chart_type` fields are rejected.
+
+### Optional quantitative `charts[]`
+
+`charts[]` consumes the sealed per-chart quantitative authorities without choosing or inferring a chart form. Every authority is copied into the manifest chart with the same exact `object_id`; the legacy `numeric_authority` request remains valid only for one chart. Each item requires `rendering_primitive`, `title`, and non-empty `series`. `period` is optional: copy it exactly only when the source authority contains it, and never add a placeholder such as "current" or "not stated". Standard chart primitives must include the matching explicit `chart_variant`; special shape-based primitives must omit `chart_variant`. Supported standard pairs are exactly:
+
+- `column_bar` with `column` or `bar`
+- `line_point` with `line` or `dot`
+- `xy` with `scatter` or `bubble`
+
+`column`, `bar`, `line`, `scatter`, and `bubble` become native PowerPoint chart objects. `dot` becomes editable title, point, connector, category, and value shapes because PowerPoint has no stable dedicated dot-plot chart type.
+
+Supported special primitives are exactly:
+
+- `cumulative_bridge` must omit `chart_variant` and contain exactly one named series with aligned `categories` and numeric `changes`, numeric `start` and `end`, and one explicit shared `unit` and `basis`. `end` must exactly equal `start + sum(changes)`. Optional non-empty `start_label` and `end_label` are copied only when supplied by the source; the runtime does not invent endpoint labels.
+- `time_interval` must omit `chart_variant`. Every named series contains aligned `categories`, ISO `start_dates`, and ISO `end_dates`; each start must be on or before its matching end.
+- `variable_rectangle` must omit `chart_variant` and contain exactly one named series. It requires aligned `categories` and strictly positive `width_values`, plus explicit `width_label`, `width_unit`, and `width_basis`. It also requires aligned non-empty non-negative `share_values`, a positive `share_denominator`, and explicit `share_label`, `share_unit`, and `share_basis`; each share list must total the denominator exactly.
+
+These three primitives expand into editable shapes and text. Their numeric geometry remains source-scaled, while labels for zero or extremely small geometry may be placed outside the mark without changing the data geometry.
+
+One-dimensional charts require one shared explicit `unit` and `basis`, either at chart level or repeated identically on every series. Every series requires renderer-ready `name`, string `categories`, and an equally sized numeric `values` list; all series in one categorical chart must use identical categories. XY charts require explicit `x_label`/`x_unit`/`x_basis` and `y_label`/`y_unit`/`y_basis`, plus aligned numeric `x_values` and `y_values` per named series. Bubble charts additionally require `size_label`/`size_unit`/`size_basis` and aligned non-negative `size_values`. The runtime renders every applicable basis as a named editable text object and requires exact basis readback; missing or changed basis text blocks validation.
+
+Example:
+
+```json
+{
+  "object_id": "chart-revenue",
+  "name": "Revenue chart",
+  "box_px": [190, 90, 1142, 620],
+  "rendering_primitive": "column_bar",
+  "chart_variant": "column",
+  "title": "Revenue",
+  "unit": "USD m",
+  "period": "FY2025",
+  "basis": "same portfolio companies",
+  "series": [
+    {"name": "Revenue", "categories": ["A", "B"], "values": [12, 18]}
+  ]
+}
+```
+
+`target_value` and `actual_value` are optional only as one explicit numeric pair on the shape-based `dot` variant. When both exist, the builder adds an editable target line, actual/target labels, and a difference arrow whose displayed value is the decimal-formatted direct subtraction `actual_value - target_value`. Native `column`, `bar`, `line`, `scatter`, and `bubble` charts with either mark are rejected because fixed chart-box percentages do not prove alignment with PowerPoint's plot area and axes. A lone value, inferred target, inferred actual, or additional derived metric is rejected.
+
+Core validation reopens both page and final PPTX files and checks the exact chart/object type, fixed-canvas box, object identity, title, labels, units, bases, any supplied period, series dimensions, target, actual, and displayed direct difference. An omitted period produces no period label. Dot points/connectors plus target and difference marks have deterministic object descriptions; validation checks their expected ellipse/connector type and exact integer-EMU bounds or endpoints. The difference arrow must retain triangle arrowheads at both ends. OfficeCLI may add optional evidence but is not required for this readback.
 
 For `editable-image-v3`, every `tables[]` item is a native table and must also provide `rows`, `font_size`, `font_color`, `cell_fill`, and `cell_margin_px`. Both colors are explicit `#RRGGBB`; inheritance from an unresolved table style or theme is not accepted. The runtime writes the selected font size/color, fill, and margins into every cell so the verifier can calculate per-cell contrast and capacity from actual DrawingML rather than defaults.
 
@@ -224,6 +269,15 @@ Text-size fitting:
 - `source`: the file the asset was produced from (for separated assets and clean bases this is typically `source.png` or the recorded asset sheet; for formulas the `.tex` file). The referenced file must exist.
 - `source_type`: exactly one of `asset-sheet-separated`, `authentic-published-source`, `imagegen`, `latex-rendered-formula`, `user-provided`, `user-approved-rasterization`. `authentic-published-source` means the exact bytes of a publicly sourced authentic image are embedded with a source-page URL and custody hash; it is not an Image2 likeness or a user-provided file. No other value passes validation.
 - `provenance_note`: a non-empty explanation of how the asset was produced.
+
+For a locally extracted bounded region of the accepted `source.png`, keep the existing `user-provided` source type and record all of the following together:
+
+- `source` exactly equals the manifest `source.path`.
+- The matching `images[].box_px` is the source-image pixel region, stays fully inside the accepted source dimensions, and is not a full-page region.
+- `provenance_note` explicitly says `bounded extraction of accepted source pixels` or `bounded accepted-image region`.
+- `visual_inventory` names the same non-text foreground role (for example, icon or pictogram).
+
+This bounded-region evidence does not authorize a whole card, panel, table, chart, dashboard, or full-page raster. Those structures remain native/editable requirements.
 
 Validation keyword-scans the free text of `visual_inventory` and `asset_provenance` entries:
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -12,11 +13,12 @@ import stat
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, ContextManager, Literal, cast
 
 from jsonschema import Draft202012Validator
 
+from provider_keyring import verification_key
 from workflow_v6_secure_io import (
     _held_parent,
     _open_relative,
@@ -144,6 +146,14 @@ def _validate_summary(value: Mapping[str, object]) -> None:
     if errors:
         path = "/".join(str(item) for item in errors[0].absolute_path) or "<root>"
         raise ValueError(f"evidence schema rejected {path}: {errors[0].message}")
+    if (
+        re.fullmatch(r"live-page-[0-9]{3}-recovery-[0-9]{3}", str(value.get("experiment_id")))
+        and (
+            not isinstance(value.get("candidate_adoptions"), list)
+            or len(cast(list[object], value["candidate_adoptions"])) != 1
+        )
+    ):
+        raise ValueError("recovery evidence summary requires exactly one candidate adoption")
 
 
 def _validate_metadata(value: object, *, depth: int = 0) -> None:
@@ -430,7 +440,8 @@ class EvidenceRecorder:
             current = load(self.project_copy)
             if page_number > len(current["pages"]):
                 raise ValueError("live evidence page_number is out of range")
-            if self.experiment_id != f"live-page-{page_number:03d}":
+            live_id = rf"live-page-{page_number:03d}(?:-recovery-(?!000)[0-9]{{3}})?"
+            if re.fullmatch(live_id, self.experiment_id) is None:
                 raise ValueError("live evidence experiment_id does not match page_number")
             if source_identity != current["source_identity"]:
                 raise ValueError("live evidence source_identity does not match current workflow")
@@ -466,6 +477,7 @@ class EvidenceRecorder:
         self._events: list[dict[str, object]] = []
         self._stages: list[dict[str, object]] = []
         self._calls: list[dict[str, object]] = []
+        self._candidate_adoptions: list[dict[str, object]] = []
         self._candidate_preflights: list[dict[str, object]] = []
         self._attachment_cache = {"hits": 0, "misses": 0}
         self._recovery_events = 0
@@ -482,7 +494,10 @@ class EvidenceRecorder:
         self._load_existing_events(raw, checkpoint_count=checkpoint_count)
         if self._summary_exists:
             expected = self._build_summary(self._events[:checkpoint_count])
-            if self._stored_summary != expected:
+            comparable = dict(expected)
+            if self._stored_summary is not None and "candidate_adoptions" not in self._stored_summary:
+                comparable.pop("candidate_adoptions", None)
+            if self._stored_summary != comparable:
                 raise ValueError("existing evidence summary aggregate does not match its checkpoint events")
 
     def _read_existing_jsonl(self) -> bytes:
@@ -598,6 +613,9 @@ class EvidenceRecorder:
             elif event == "candidate_preflight":
                 self._validate_preflight_event(value)
                 self._candidate_preflights.append(value)
+            elif event == "adopted_candidate":
+                self._validate_candidate_adoption(value)
+                self._candidate_adoptions.append(value)
             elif event == "recovery":
                 skipped = value.get("skipped_calls")
                 if skipped != list(RECOVERY_CALLS):
@@ -832,8 +850,12 @@ class EvidenceRecorder:
             call for call in self._calls
             if call["kind"] == "image2" and call["attempt"] == attempt
         ]
-        if len(image_calls) != 1:
-            raise ValueError("candidate preflight requires the same Image2 candidate attempt")
+        adoptions = [
+            item for item in self._candidate_adoptions
+            if item["attempt"] == attempt
+        ]
+        if (len(image_calls), len(adoptions)) not in {(1, 0), (0, 1)}:
+            raise ValueError("candidate preflight requires one Image2 or adopted candidate origin")
         if any(
             call["attempt"] == attempt
             and call["kind"] in {"visual_review", "correction_decision"}
@@ -849,9 +871,17 @@ class EvidenceRecorder:
             or re.fullmatch(r"[0-9a-f]{64}", request_identity) is None
         ):
             raise ValueError("candidate preflight identity is invalid")
-        recorded_identity = image_calls[0]["metadata"].get("request_identity_sha256")
-        if recorded_identity is not None and recorded_identity != request_identity:
+        recorded_identity = (
+            image_calls[0]["metadata"].get("request_identity_sha256")
+            if image_calls else None
+        )
+        if image_calls and recorded_identity is not None and recorded_identity != request_identity:
             raise ValueError("candidate preflight request identity does not match Image2 evidence")
+        if adoptions and (
+            adoptions[0]["request_identity"] != request_identity
+            or adoptions[0]["candidate_sha256"] != candidate_sha
+        ):
+            raise ValueError("candidate preflight does not match adopted candidate evidence")
         passed = value.get("passed")
         problems = value.get("problems")
         if type(passed) is not bool or not isinstance(problems, list) or any(
@@ -889,6 +919,158 @@ class EvidenceRecorder:
         self._validate_preflight_event(event)
         self._commit_event(event, self._candidate_preflights)
 
+    def _validate_candidate_adoption(self, value: Mapping[str, object]) -> None:
+        required = {
+            "event", "experiment_id", "workspace_identity_sha256",
+            "source_snapshot_sha256", "page_number", "attempt",
+            "prior_experiment_id", "prior_attempt", "candidate_sha256",
+            "request_identity", "material_view_sha256",
+            "director_authority_sha256", "recovery_authority_sha256",
+            "disposition",
+        }
+        if set(value) != required or value.get("attempt") != 1 or self._candidate_adoptions:
+            raise ValueError("adopted candidate evidence is invalid or repeated")
+        if type(value.get("prior_attempt")) is not int or not 1 <= cast(int, value["prior_attempt"]) <= 3:
+            raise ValueError("adopted candidate prior attempt is invalid")
+        if not isinstance(value.get("prior_experiment_id"), str):
+            raise ValueError("adopted candidate prior experiment is invalid")
+        if value.get("disposition") not in {"unreviewed", "correct"}:
+            raise ValueError("adopted candidate disposition is invalid")
+        for name in (
+            "candidate_sha256", "request_identity", "material_view_sha256",
+            "director_authority_sha256", "recovery_authority_sha256",
+        ):
+            if not isinstance(value.get(name), str) or re.fullmatch(r"[0-9a-f]{64}", cast(str, value[name])) is None:
+                raise ValueError(f"adopted candidate {name} is invalid")
+
+    def _adoption_has_verified_authority(
+        self, adoption: Mapping[str, object], *, require_prior_review: bool,
+    ) -> bool:
+        if require_prior_review and adoption.get("disposition") != "correct":
+            return False
+
+        def signed_object(relative: PurePosixPath, label: str) -> tuple[dict[str, object], bytes]:
+            payload = read_bytes(self.project_copy, relative, max_bytes=4 * 1024 * 1024)
+
+            def no_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+                value: dict[str, object] = {}
+                for key, item in pairs:
+                    if key in value:
+                        raise ValueError(f"{label} contains duplicate keys")
+                    value[key] = item
+                return value
+
+            try:
+                value = json.loads(payload.decode("utf-8"), object_pairs_hook=no_duplicates)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                raise ValueError(f"{label} is invalid") from exc
+            if not isinstance(value, dict):
+                raise ValueError(f"{label} is invalid")
+            signature = value.get("hmac_sha256")
+            unsigned = dict(value)
+            unsigned.pop("hmac_sha256", None)
+            try:
+                key = verification_key(value.get("key_id"))
+            except (OSError, ValueError) as exc:
+                raise ValueError(f"{label} key is invalid") from exc
+            expected = hmac.new(
+                key, _canonical_bytes(unsigned), hashlib.sha256,
+            ).hexdigest()
+            if not isinstance(signature, str) or not hmac.compare_digest(signature, expected):
+                raise ValueError(f"{label} signature is invalid")
+            return value, payload
+
+        recovery_relative = PurePosixPath(
+            "04_v6", "experiments", self.experiment_id, "recovery_authority.json",
+        )
+        recovery, recovery_payload = signed_object(
+            recovery_relative, "failed-page recovery authority",
+        )
+        candidate = recovery.get("candidate")
+        prior_review = recovery.get("prior_review")
+        if (
+            hashlib.sha256(recovery_payload).hexdigest() != adoption["recovery_authority_sha256"]
+            or recovery.get("schema_version") != "awesome-failed-page-recovery-authority-v1"
+            or recovery.get("experiment_id") != self.experiment_id
+            or recovery.get("prior_experiment_id") != adoption["prior_experiment_id"]
+            or recovery.get("page_number") != self.page_number
+            or recovery.get("source_snapshot_sha256") != self.source_snapshot_sha256
+            or recovery.get("material_view_sha256") != adoption["material_view_sha256"]
+            or not isinstance(candidate, dict)
+            or candidate.get("attempt") != adoption["prior_attempt"]
+            or candidate.get("sha256") != adoption["candidate_sha256"]
+            or candidate.get("request_identity") != adoption["request_identity"]
+            or prior_review is not None
+            and (not isinstance(prior_review, dict) or set(prior_review) != {"path", "sha256"})
+        ):
+            return False
+        current_director = PurePosixPath(
+            "02_v6", "experiments", self.experiment_id, "director_v2.json",
+        )
+        if hashlib.sha256(read_bytes(
+            self.project_copy, current_director, max_bytes=4 * 1024 * 1024,
+        )).hexdigest() != adoption["director_authority_sha256"]:
+            return False
+        if adoption.get("disposition") == "unreviewed":
+            return prior_review is None
+        if adoption.get("disposition") != "correct" or not isinstance(prior_review, dict):
+            return False
+        review_path = PurePosixPath(str(prior_review["path"]))
+        expected_review_path = PurePosixPath(
+            "04_v6", "experiments", str(adoption["prior_experiment_id"]),
+            "review_inputs", f"attempt_{adoption['prior_attempt']}", "review_result.json",
+        )
+        if review_path != expected_review_path:
+            return False
+        review, review_payload = signed_object(review_path, "prior visual review authority")
+        review_candidate = review.get("candidate")
+        problems = review.get("problems")
+        return bool(
+            hashlib.sha256(review_payload).hexdigest() == prior_review["sha256"]
+            and review.get("schema_version") == "awesome-independent-visual-review-authority-v1"
+            and review.get("experiment_id") == adoption["prior_experiment_id"]
+            and review.get("page_number") == self.page_number
+            and review.get("source_snapshot_sha256") == self.source_snapshot_sha256
+            and review.get("decision") == "correct"
+            and isinstance(problems, list) and len(problems) == 1
+            and isinstance(review_candidate, dict)
+            and review_candidate.get("attempt") == adoption["prior_attempt"]
+            and review_candidate.get("sha256") == adoption["candidate_sha256"]
+            and review_candidate.get("request_identity") == adoption["request_identity"]
+            and review_candidate.get("path") == candidate.get("path")
+        )
+
+    def _adoption_has_verified_prior_review(self, adoption: Mapping[str, object]) -> bool:
+        return self._adoption_has_verified_authority(
+            adoption, require_prior_review=True,
+        )
+
+    def record_candidate_adoption(
+        self, *, prior_experiment_id: str, prior_attempt: int,
+        candidate_sha256: str, request_identity: str,
+        material_view_sha256: str, director_authority_sha256: str,
+        recovery_authority_sha256: str, disposition: str,
+    ) -> None:
+        """Bind one verified prior-round candidate as attempt 1 without an Image2 call."""
+        event = {
+            "event": "adopted_candidate", "page_number": self.page_number,
+            "attempt": 1, "prior_experiment_id": prior_experiment_id,
+            "prior_attempt": prior_attempt, "candidate_sha256": candidate_sha256,
+            "request_identity": request_identity,
+            "material_view_sha256": material_view_sha256,
+            "director_authority_sha256": director_authority_sha256,
+            "recovery_authority_sha256": recovery_authority_sha256,
+            "disposition": disposition,
+        }
+        value = {
+            "experiment_id": self.experiment_id,
+            "workspace_identity_sha256": self.workspace_identity_sha256,
+            "source_snapshot_sha256": self.source_snapshot_sha256,
+            **event,
+        }
+        self._validate_candidate_adoption(value)
+        self._commit_event(event, self._candidate_adoptions)
+
     def _validate_call_sequence(
         self, kind: CallKind, attempt: object, *, existing: bool
     ) -> None:
@@ -901,13 +1083,15 @@ class EvidenceRecorder:
             return
         if type(attempt) is not int:
             raise ValueError(f"{kind} candidate attempt must be an integer")
-        if kind in {"image2", "reconstruct_edit"} and attempt != len(attempts) + 1:
+        first_attempt = 2 if kind == "image2" and self._candidate_adoptions else 1
+        if kind in {"image2", "reconstruct_edit"} and attempt != len(attempts) + first_attempt:
             raise ValueError(f"{kind} candidate attempts must begin at 1 and be contiguous")
         if kind in {"visual_review", "correction_decision"} and attempts and attempt <= attempts[-1]:
             raise ValueError(f"{kind} candidate attempts must be strictly increasing")
         image_attempts = {
             call["attempt"] for call in self._calls if call["kind"] == "image2"
         }
+        image_attempts.update(item["attempt"] for item in self._candidate_adoptions)
         review_attempts = {
             call["attempt"] for call in self._calls if call["kind"] == "visual_review"
         }
@@ -932,7 +1116,18 @@ class EvidenceRecorder:
                 and candidate - 1 not in review_attempts
                 and candidate - 1 not in correction_attempts
             )
-            if semantic_path == technical_path:
+            adopted_path = (
+                prior is not None
+                and prior["passed"] is True
+                and candidate - 1 not in review_attempts
+                and candidate - 1 in correction_attempts
+                and any(
+                    item["attempt"] == candidate - 1
+                    and item["disposition"] == "correct"
+                    for item in self._candidate_adoptions
+                )
+            )
+            if sum((semantic_path, technical_path, adopted_path)) != 1:
                 raise ValueError(
                     "next Image2 candidate requires exactly one prior preflight causal path"
                 )
@@ -944,7 +1139,11 @@ class EvidenceRecorder:
             preflight = preflights.get(candidate)
             if preflight is None or preflight["passed"] is not True:
                 raise ValueError("correction_decision is forbidden after failed or missing preflight")
-            if candidate not in review_attempts:
+            adopted_prior_review = any(
+                item["attempt"] == candidate and item["disposition"] == "correct"
+                for item in self._candidate_adoptions
+            )
+            if candidate not in review_attempts and not adopted_prior_review:
                 raise ValueError("correction_decision attempt requires the same visual review attempt")
 
     def record_attachment_cache(self, *, hits: int, misses: int) -> None:
@@ -965,6 +1164,12 @@ class EvidenceRecorder:
         """Return durable model/Provider calls already bound to this page."""
         return len(self._calls)
 
+    def has_candidate_adoption(self) -> bool:
+        return bool(self._candidate_adoptions)
+
+    def has_candidate_preflight(self, attempt: int) -> bool:
+        return any(item["attempt"] == attempt for item in self._candidate_preflights)
+
     def acceptance_checkpoint(
         self, *, attempt: int, candidate_sha256: str,
         request_identity: str, review_authority_sha256: str,
@@ -981,22 +1186,28 @@ class EvidenceRecorder:
         indexed = list(enumerate(self._events))
         image = [(index, event) for index, event in indexed
                  if event.get("event") == "call" and event.get("kind") == "image2" and event.get("attempt") == attempt]
+        adopted = [(index, event) for index, event in indexed
+                   if event.get("event") == "adopted_candidate" and event.get("attempt") == attempt]
         preflight = [(index, event) for index, event in indexed
                      if event.get("event") == "candidate_preflight" and event.get("attempt") == attempt]
         review = [(index, event) for index, event in indexed
                   if event.get("event") == "call" and event.get("kind") == "visual_review" and event.get("attempt") == attempt]
-        if len(image) != 1 or len(preflight) != 1 or len(review) != 1:
+        if (len(image), len(adopted)) not in {(1, 0), (0, 1)} or len(preflight) != 1 or len(review) != 1:
             raise ValueError("acceptance checkpoint requires one exact candidate causal sequence")
-        image_index, image_event = image[0]
+        image_index, image_event = (image or adopted)[0]
+        if adopted and not self._adoption_has_verified_authority(
+            adopted[0][1], require_prior_review=False,
+        ):
+            raise ValueError("adopted candidate lacks verified recovery authority")
         preflight_index, preflight_event = preflight[0]
         review_index, review_event = review[0]
-        image_metadata = cast(Mapping[str, object], image_event["metadata"])
+        image_metadata = cast(Mapping[str, object], image_event.get("metadata", image_event))
         review_metadata = cast(Mapping[str, object], review_event["metadata"])
         if not image_index < preflight_index < review_index or review_index != len(self._events) - 1:
             raise ValueError("acceptance review must be the terminal causal event with no later event")
         if (
             image_event.get("status") in {"error", "outcome_unknown"}
-            or image_metadata.get("request_identity_sha256") != request_identity
+            or image_metadata.get("request_identity_sha256", image_metadata.get("request_identity")) != request_identity
             or preflight_event.get("request_identity") != request_identity
             or preflight_event.get("candidate_sha256") != candidate_sha256
             or preflight_event.get("passed") is not True or preflight_event.get("problems") != []
@@ -1016,6 +1227,7 @@ class EvidenceRecorder:
             "source_snapshot_sha256": self.source_snapshot_sha256,
             "page_number": self.page_number, "selected_attempt": attempt,
             "candidate_sha256": candidate_sha256, "request_identity": request_identity,
+            "candidate_origin": "image2" if image else "adopted_candidate",
             "review_authority_sha256": review_authority_sha256,
             "event_count": len(self._events), "terminal_event_index": review_index,
             "evidence_prefix_sha256": hashlib.sha256(raw).hexdigest(),
@@ -1037,11 +1249,21 @@ class EvidenceRecorder:
             raise ValueError("acceptance checkpoint digest is invalid")
         expected_keys = {
             "schema_version", "experiment_id", "workspace_identity_sha256", "source_snapshot_sha256",
-            "page_number", "selected_attempt", "candidate_sha256", "request_identity",
+            "page_number", "selected_attempt", "candidate_sha256", "request_identity", "candidate_origin",
             "review_authority_sha256", "event_count", "terminal_event_index",
             "evidence_prefix_sha256", "causal_events",
         }
-        if set(value) != expected_keys or value["schema_version"] != "awesome-complex-page-candidate-acceptance-checkpoint-v1":
+        legacy_keys = expected_keys - {"candidate_origin"}
+        recovery_checkpoint = bool(re.fullmatch(
+            r"live-page-[0-9]{3}-recovery-[0-9]{3}", str(value.get("experiment_id")),
+        ))
+        if (
+            (set(value) != expected_keys and set(value) != legacy_keys)
+            or recovery_checkpoint and set(value) != expected_keys
+            or value["schema_version"] != "awesome-complex-page-candidate-acceptance-checkpoint-v1"
+            or "candidate_origin" in value
+            and value["candidate_origin"] not in {"image2", "adopted_candidate"}
+        ):
             raise ValueError("acceptance checkpoint shape is invalid")
         if value["experiment_id"] != self.experiment_id or value["workspace_identity_sha256"] != self.workspace_identity_sha256 or value["source_snapshot_sha256"] != self.source_snapshot_sha256:
             raise ValueError("acceptance checkpoint workspace identity is invalid")
@@ -1094,7 +1316,12 @@ class EvidenceRecorder:
         }
         for preflight in self._candidate_preflights:
             reviewed = preflight["attempt"] in review_attempts
-            if preflight["passed"] is True and not reviewed:
+            adopted_review = next((
+                adoption for adoption in self._candidate_adoptions
+                if adoption["attempt"] == preflight["attempt"]
+                and self._adoption_has_verified_prior_review(adoption)
+            ), None)
+            if preflight["passed"] is True and not reviewed and adopted_review is None:
                 raise ValueError("passed candidate preflight requires exactly one visual review")
             if preflight["passed"] is False and reviewed:
                 raise ValueError("failed candidate preflight forbids visual review")
@@ -1114,6 +1341,7 @@ class EvidenceRecorder:
         stages = [dict(event) for event in events if event.get("event") == "stage"]
         calls = [dict(event) for event in events if event.get("event") == "call"]
         preflights = [dict(event) for event in events if event.get("event") == "candidate_preflight"]
+        adoptions = [dict(event) for event in events if event.get("event") == "adopted_candidate"]
         call_totals = {kind: sum(call["kind"] == kind for call in calls) for kind in CALL_KINDS}
         local_total = sum(
             cast(float, stage["local_duration_seconds"])
@@ -1163,6 +1391,7 @@ class EvidenceRecorder:
                 "reconstruction_duration_seconds": reconstruction_total,
             },
             "calls": calls,
+            "candidate_adoptions": adoptions,
             "candidate_preflights": preflights,
             "call_totals": call_totals,
             "image2_total_calls": call_totals["image2"],

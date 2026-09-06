@@ -268,8 +268,6 @@ def test_build_preserves_complete_authorities_and_reuses_existing_render_cache(
     assert result.value["complete_word_content"] == published["complete_word_content"]
     assert result.value["original_comments"] == published["original_comments"]
     assert result.value["visual_contract"] == published["visual_contract"]
-
-
     assert len(result.value["visual_contract"]) == 10
     assert result.value["body_frame"] == published["body_frame"]
     assert result.value["body_frame"]["body_pixels"] == {
@@ -349,6 +347,48 @@ def test_build_preserves_complete_authorities_and_reuses_existing_render_cache(
     )
     assert output.read_bytes() == _canonical(result.value)
     assert hashlib.sha256(output.read_bytes()).hexdigest() == result.sha256
+
+
+def test_complete_material_view_indexes_exact_table_cells_and_rejects_candidate_tamper(
+    awesome_four_page_project: Path,
+    tmp_path: Path,
+) -> None:
+    published = _prepare_complete_page_one(awesome_four_page_project)
+    table = {
+        **published["complete_word_content"][0],
+        "type": "table",
+        "source_block_id": "metrics-table",
+        "rows": [["指标", "2025"], ["收入", "120"]],
+    }
+    table.pop("text", None)
+    paginated_path = awesome_four_page_project / "02_v6/paginated_word_source.json"
+    paginated = json.loads(paginated_path.read_text(encoding="utf-8"))
+    paginated["pages"][0]["blocks"][1] = copy.deepcopy(table)
+    paginated_path.write_bytes(_canonical(paginated))
+    material_path = awesome_four_page_project / "02_v6/awesome_page_materials/page_001.json"
+    published["complete_word_content"] = [copy.deepcopy(table)]
+    payload = _canonical(published)
+    material_path.write_bytes(payload)
+    state_path = awesome_four_page_project / "workflow_v6.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["pages"][0]["material_receipt"]["digest"] = hashlib.sha256(payload).hexdigest()
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    workspace = create_experiment_copy(
+        awesome_four_page_project,
+        tmp_path / "experiment-numeric",
+        experiment_id="numeric-source-candidates",
+    )
+
+    result = build_complete_page_material_view(workspace)
+
+    cells = result.value["numeric_source_candidates"]
+    assert [(item["row"], item["column"], item["text"]) for item in cells] == [
+        (0, 0, "指标"), (0, 1, "2025"), (1, 0, "收入"), (1, 1, "120"),
+    ]
+    tampered = copy.deepcopy(result.value)
+    tampered["numeric_source_candidates"][3]["text"] = "999"
+    with pytest.raises(ValueError, match="numeric source candidate"):
+        validate_complete_page_material_view(tampered)
 
 
 def test_build_preserves_unrenderable_nonblocking_attachment_as_original_authority(

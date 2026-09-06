@@ -1,0 +1,107 @@
+{
+  "blocks": [
+    {
+      "source_block_id": "cover-block-01",
+      "source_block_index": 1,
+      "source_order": 1,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "paragraph",
+      "text": "数据是基础、流程是路径：以统一平台为协作枢纽连接跨域工作节点",
+      "paragraph_style": "Pagination Storyline"
+    },
+    {
+      "source_block_id": "cover-block-02",
+      "source_block_index": 2,
+      "source_order": 2,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "paragraph",
+      "text": "系统协作方案",
+      "paragraph_style": "Normal"
+    },
+    {
+      "source_block_id": "cover-block-03",
+      "source_block_index": 3,
+      "source_order": 3,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "paragraph",
+      "text": "星云社区数据治理与服务平台\n跨团队协同运行示例方案",
+      "paragraph_style": "Normal"
+    },
+    {
+      "source_block_id": "cover-block-04",
+      "source_block_index": 4,
+      "source_order": 4,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "paragraph",
+      "text": "以统一平台为协作枢纽  推动外部数据接入与本地流程稳定运行",
+      "paragraph_style": "Normal"
+    },
+    {
+      "source_block_id": "cover-block-05",
+      "source_block_index": 5,
+      "source_order": 5,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "table",
+      "rows": [
+        [
+          "演示说明  该虚构平台用于验证跨团队任务协作。示例环境已配置测试终端、模拟数据源与临时账号，并建立输入、处理、复核和归档的演练流程。下一阶段将继续验证异常记录、权限转换、状态恢复与结果追踪，确保每个测试步骤均可重放、可核对、可撤销且不依赖外部生产服务。同时保留任务分派、进度检查、错误处理和完成确认的全流程样例。"
+        ]
+      ]
+    },
+    {
+      "source_block_id": "cover-block-06",
+      "source_block_index": 6,
+      "source_order": 6,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "paragraph",
+      "text": "协作小组",
+      "paragraph_style": "Normal"
+    },
+    {
+      "source_block_id": "cover-block-07",
+      "source_block_index": 7,
+      "source_order": 7,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "paragraph",
+      "text": "示例甲组  /  示例乙组（联合虚构测试实验室）  /  示例丙组",
+      "paragraph_style": "Normal"
+    },
+    {
+      "source_block_id": "cover-block-08",
+      "source_block_index": 8,
+      "source_order": 8,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "paragraph",
+      "text": "演示对象：虚构项目组、测试团队及相关协作成员",
+      "paragraph_style": "Normal"
+    },
+    {
+      "source_block_id": "cover-block-09",
+      "source_block_index": 9,
+      "source_order": 9,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "paragraph",
+      "text": "版本：内部演示稿  |  日期：2099年1月1日",
+      "paragraph_style": "Normal"
+    },
+    {
+      "source_block_id": "cover-block-10",
+      "source_block_index": 10,
+      "source_order": 10,
+      "relationship_ids": [],
+      "comment_ids": [],
+      "type": "paragraph",
+      "text": "演示截点：2099年1月1日。测试数据须经过校验、授权、记录归档及访问控制流程。",
+      "paragraph_style": "Normal"
+    }
+  ]
+}

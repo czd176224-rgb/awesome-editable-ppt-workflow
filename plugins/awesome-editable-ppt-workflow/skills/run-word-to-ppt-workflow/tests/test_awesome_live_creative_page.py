@@ -15,6 +15,7 @@ from complex_page_experiment import (
     EvidenceRecorder,
     build_complete_page_material_view,
     open_live_page_workspace,
+    open_live_page_recovery_workspace,
 )
 from complex_page_experiment.loop import AcceptedImageSeal, run_candidate_loop
 from complex_page_experiment.provider import CandidateArtifact
@@ -152,6 +153,50 @@ def test_live_workspace_uses_project_in_place_and_accepts_actual_last_page(
         project / "04_v6" / "experiments" / "live-page-005"
     ).resolve()
     assert not (project.parent / "project").exists()
+
+
+def test_live_recovery_workspace_uses_explicit_unique_round_identity(tmp_path: Path) -> None:
+    project = _live_project(tmp_path, page_count=5)
+    prior = project / "04_v6/experiments/live-page-005"
+    prior.mkdir(parents=True)
+    (prior / "failed_outcome.json").write_text("{}\n", encoding="utf-8")
+
+    workspace = open_live_page_recovery_workspace(project, 5, recovery_round=1)
+    same_round = open_live_page_recovery_workspace(project, 5, recovery_round=1)
+
+    assert workspace.experiment_id == "live-page-005-recovery-001"
+    assert workspace.recovery_round == 1
+    assert workspace.prior_experiment_id == "live-page-005"
+    assert workspace.experiment_root == (
+        project / "04_v6/experiments/live-page-005-recovery-001"
+    ).resolve()
+    assert same_round == workspace
+
+
+@pytest.mark.parametrize("recovery_round", [0, -1, True, 1000])
+def test_live_recovery_workspace_rejects_invalid_round_identity(
+    tmp_path: Path, recovery_round: object,
+) -> None:
+    project = _live_project(tmp_path, page_count=1)
+    with pytest.raises(ValueError, match="1 through 999"):
+        open_live_page_recovery_workspace(
+            project, 1, recovery_round=recovery_round,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("finished_state", ["accepted", "reconstructing", "page_complete"])
+def test_live_recovery_workspace_rejects_finished_page_or_missing_prior_round(
+    tmp_path: Path, finished_state: str,
+) -> None:
+    project = _live_project(tmp_path, page_count=2)
+    state = load(project)
+    state["pages"][0]["state"] = finished_state
+    save(project, state)
+    with pytest.raises(ValueError, match="accepted|page_complete|finished"):
+        open_live_page_recovery_workspace(project, 1, recovery_round=1)
+
+    with pytest.raises(ValueError, match="previous.*failed|sealed"):
+        open_live_page_recovery_workspace(project, 2, recovery_round=2)
 
 
 def test_complete_material_view_accepts_actual_project_last_page(tmp_path: Path) -> None:

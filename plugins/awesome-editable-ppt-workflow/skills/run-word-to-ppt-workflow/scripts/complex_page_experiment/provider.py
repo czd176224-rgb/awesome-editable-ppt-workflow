@@ -28,7 +28,7 @@ from .workspace import ExperimentWorkspace
 
 Operation = Literal["generate", "edit"]
 Quality = Literal["medium", "high"]
-Strategy = Literal["initial", "edit_previous", "regenerate_from_materials"]
+Strategy = Literal["initial", "edit_previous"]
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _MAX_INPUTS = 16
 
@@ -142,20 +142,31 @@ def _validated_previous_candidate(
 ) -> tuple[Path, str, str]:
     if previous.attempt != attempt - 1:
         raise ValueError("edit_previous requires the immediately preceding candidate")
+    validated = validate_completed_candidate_authority(workspace, previous)
     root = workspace.project_copy.resolve(strict=True)
-    canonical_archive = root / Path(*_archive_relative(workspace, previous.attempt).parts)
+    path = validated.path
+    digest = _digest(read_bytes(root, path.relative_to(root)))
+    return path, digest, f"candidate:{previous.attempt}:{digest}"
+
+
+def validate_completed_candidate_authority(
+    workspace: ExperimentWorkspace, candidate: CandidateArtifact,
+) -> CandidateArtifact:
+    """Verify one completed candidate against its signed request and Provider custody."""
+    root = workspace.project_copy.resolve(strict=True)
+    canonical_archive = root / Path(*_archive_relative(workspace, candidate.attempt).parts)
     try:
-        if previous.prompt_path.resolve(strict=True) != canonical_archive.resolve(strict=True):
+        if candidate.prompt_path.resolve(strict=True) != canonical_archive.resolve(strict=True):
             raise ValueError
         archive = _json_object(
-            read_bytes(root, _archive_relative(workspace, previous.attempt)),
+            read_bytes(root, _archive_relative(workspace, candidate.attempt)),
             "previous candidate attempt archive",
         )
     except (OSError, ValueError) as exc:
         raise ValueError(
             "previous candidate attempt authority must remain inside the isolated project copy and be the canonical archive"
         ) from exc
-    trace = _inside_copy(workspace, previous.trace_path, "previous candidate trace")
+    trace = _inside_copy(workspace, candidate.trace_path, "previous candidate trace")
     try:
         trace_value = _json_object(
             read_bytes(root, trace.relative_to(root)), "previous candidate trace"
@@ -178,17 +189,15 @@ def _validated_previous_candidate(
             source_identity=str(archive["source_identity"]), project_root=root,
             page_number=workspace.page_number,
         )
-        seal = _load_request_seal(workspace, request, attempt=previous.attempt)
+        seal = _load_request_seal(workspace, request, attempt=candidate.attempt)
         validated = _load_completed_archive(
-            workspace, request, attempt=previous.attempt, seal=seal,
+            workspace, request, attempt=candidate.attempt, seal=seal,
         )
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise ValueError("previous candidate trace or archive binding is unavailable") from exc
-    if validated is None or validated != previous:
+    if validated is None or validated != candidate:
         raise ValueError("previous CandidateArtifact differs from canonical completed authority")
-    path = validated.path
-    digest = _digest(read_bytes(root, path.relative_to(root)))
-    return path, digest, f"candidate:{previous.attempt}:{digest}"
+    return validated
 
 
 def build_experiment_image_request(
@@ -201,6 +210,7 @@ def build_experiment_image_request(
     selected_reference_ids: Sequence[str],
     strategy: Strategy,
     previous_candidate: CandidateArtifact | None,
+    adopted_candidate_origin: tuple[ExperimentWorkspace, CandidateArtifact] | None = None,
 ) -> workflow_v6_image.ImageRequest:
     """Resolve selected owned bytes and optional preceding candidate without writes."""
     attempt = _strict_attempt(attempt)
@@ -210,7 +220,7 @@ def build_experiment_image_request(
         raise ValueError("prompt must be nonempty exact text without outer whitespace")
     if quality not in {"medium", "high"}:
         raise ValueError("quality must be medium or high")
-    if strategy not in {"initial", "edit_previous", "regenerate_from_materials"}:
+    if strategy not in {"initial", "edit_previous"}:
         raise ValueError("strategy is invalid")
     if strategy == "initial" and attempt != 1:
         raise ValueError("initial strategy is valid only for attempt 1")
@@ -220,8 +230,6 @@ def build_experiment_image_request(
         raise ValueError("correction strategy requires attempt 2 or 3")
     if strategy == "edit_previous" and previous_candidate is None:
         raise ValueError("edit_previous requires the immediately preceding candidate")
-    if strategy == "regenerate_from_materials" and previous_candidate is None:
-        raise ValueError("regenerate correction requires the immediately preceding candidate authority")
     if len(selected_reference_ids) + (1 if strategy == "edit_previous" else 0) > _MAX_INPUTS:
         raise ValueError("Image2 accepts at most 16 total image inputs")
 
@@ -234,14 +242,20 @@ def build_experiment_image_request(
     roles = list(material_roles)
     digests = list(material_digests)
     transport_ids = list(selected_material_ids)
-    if strategy == "regenerate_from_materials":
-        assert previous_candidate is not None
-        _validated_previous_candidate(workspace, previous_candidate, attempt=attempt)
     if strategy == "edit_previous":
         assert previous_candidate is not None
-        candidate_path, candidate_digest, candidate_id = _validated_previous_candidate(
-            workspace, previous_candidate, attempt=attempt
-        )
+        if adopted_candidate_origin is None:
+            candidate_path, candidate_digest, candidate_id = _validated_previous_candidate(
+                workspace, previous_candidate, attempt=attempt
+            )
+        else:
+            origin_workspace, origin = adopted_candidate_origin
+            validated = validate_completed_candidate_authority(origin_workspace, origin)
+            if previous_candidate != replace(validated, attempt=previous_candidate.attempt):
+                raise ValueError("adopted previous candidate differs from prior signed authority")
+            candidate_path = validated.path
+            candidate_digest = _digest(read_bytes(workspace.project_copy, candidate_path.relative_to(workspace.project_copy)))
+            candidate_id = f"candidate:{previous_candidate.attempt}:{candidate_digest}"
         paths.insert(0, candidate_path)
         roles.insert(0, "previous-candidate-to-correct")
         digests.insert(0, candidate_digest)
@@ -282,6 +296,7 @@ def build_experiment_image_request(
         material_view_sha256=material_view.sha256,
         selected_material_reference_ids=selected_material_ids,
         previous_candidate=previous_candidate,
+        adopted_candidate_origin=adopted_candidate_origin,
     )
     return request
 
@@ -403,12 +418,17 @@ def _request_projection(
     material_view_sha256: str,
     selected_material_reference_ids: Sequence[str],
     previous_candidate: CandidateArtifact | None,
+    adopted_candidate_origin: tuple[ExperimentWorkspace, CandidateArtifact] | None = None,
 ) -> dict[str, object]:
     root = workspace.project_copy.resolve(strict=True)
     candidate = None
     predecessor = None
     if previous_candidate is not None:
-        archive_relative = _archive_relative(workspace, previous_candidate.attempt)
+        archive_workspace = workspace
+        archive_candidate = previous_candidate
+        if adopted_candidate_origin is not None:
+            archive_workspace, archive_candidate = adopted_candidate_origin
+        archive_relative = _archive_relative(archive_workspace, archive_candidate.attempt)
         archive = _json_object(read_bytes(root, archive_relative), "immediate predecessor archive")
         predecessor = {
             "attempt": previous_candidate.attempt,
@@ -477,12 +497,14 @@ def _publish_request_seal(
     material_view_sha256: str,
     selected_material_reference_ids: Sequence[str],
     previous_candidate: CandidateArtifact | None,
+    adopted_candidate_origin: tuple[ExperimentWorkspace, CandidateArtifact] | None = None,
 ) -> None:
     value = _request_projection(
         workspace, request, attempt=attempt, strategy=strategy,
         material_view_sha256=material_view_sha256,
         selected_material_reference_ids=selected_material_reference_ids,
         previous_candidate=previous_candidate,
+        adopted_candidate_origin=adopted_candidate_origin,
     )
     relative = _request_seal_relative(workspace, attempt)
     key_id, key = signing_key()
@@ -587,7 +609,7 @@ def _load_request_seal(
     predecessor = value.get("immediate_predecessor_authority")
     if (
         (attempt == 1 and strategy != "initial")
-        or (attempt > 1 and strategy not in {"edit_previous", "regenerate_from_materials"})
+        or (attempt > 1 and strategy != "edit_previous")
         or (strategy == "edit_previous") != (candidate is not None)
         or (attempt == 1) != (predecessor is None)
     ):
@@ -646,8 +668,27 @@ def _validate_immediate_predecessor(
     if not isinstance(authority, dict) or authority.get("attempt") != attempt - 1:
         raise ValueError("correction attempt requires immediate predecessor authority")
     root = workspace.project_copy.resolve(strict=True)
-    expected_archive = _archive_relative(workspace, attempt - 1)
+    predecessor_attempt = attempt - 1
+    expected_archive = _archive_relative(workspace, predecessor_attempt)
     archive_path = authority.get("archive_path")
+    if (
+        attempt == 2
+        and workspace.recovery_round is not None
+        and workspace.prior_experiment_id is not None
+        and archive_path != expected_archive.as_posix()
+    ):
+        recovery = validate_recovery_authority(workspace)
+        candidate = cast(Mapping[str, object], recovery["candidate"])
+        predecessor_attempt = cast(int, recovery["provider_attempt"])
+        expected_archive = PurePosixPath(str(recovery["provider_archive_path"]))
+        if (
+            archive_path != expected_archive.as_posix()
+            or authority.get("attempt") != 1
+            or authority.get("candidate_path") != candidate["path"]
+            or authority.get("candidate_sha256") != candidate["sha256"]
+            or authority.get("request_identity") != candidate["request_identity"]
+        ):
+            raise ValueError("recovery predecessor differs from signed recovery authority")
     if archive_path != expected_archive.as_posix():
         raise ValueError("immediate predecessor archive path is not canonical")
     archive_bytes = read_bytes(root, expected_archive)
@@ -696,7 +737,7 @@ def _validate_immediate_predecessor(
     capability_expected = {
         "schema_version": "awesome-image-request-capability-v3",
         "nonce": authority["capability_nonce"],
-        "attempt": attempt - 1,
+        "attempt": predecessor_attempt,
         "page_number": workspace.page_number,
         "source_identity": archive["source_identity"],
         "operation": archive["operation"],
@@ -734,11 +775,204 @@ def _validate_immediate_predecessor(
         raise ValueError("immediate predecessor journal state or output binding is invalid")
 
 
-def _capability_candidates(workspace: ExperimentWorkspace, attempt: int) -> list[Path]:
+def validate_recovery_authority(workspace: ExperimentWorkspace) -> dict[str, object]:
+    """Verify the sole signed cross-round predecessor authority for this workspace."""
+    if workspace.recovery_round is None or workspace.prior_experiment_id is None:
+        raise ValueError("cross-round predecessor requires an explicit recovery workspace")
+    root = workspace.project_copy.resolve(strict=True)
+    relative = PurePosixPath(
+        "04_v6", "experiments", workspace.experiment_id, "recovery_authority.json",
+    )
+    value = _json_object(read_bytes(root, relative), "failed-page recovery authority")
+    top_keys = {
+        "schema_version", "experiment_id", "prior_experiment_id", "recovery_round",
+        "page_number", "source_snapshot_sha256", "material_view_sha256",
+        "failed_outcome", "director_authority", "candidate", "prior_review",
+        "failure_problems", "prior_correction_count", "key_id", "hmac_sha256",
+    }
+    if set(value) != top_keys:
+        raise ValueError("failed-page recovery authority schema is invalid")
+    signature = value.get("hmac_sha256")
+    unsigned = dict(value)
+    unsigned.pop("hmac_sha256")
+    try:
+        key = verification_key(value.get("key_id"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("failed-page recovery authority key is invalid") from exc
+    expected_signature = hmac.new(
+        key, _canonical(unsigned).rstrip(b"\n"), hashlib.sha256,
+    ).hexdigest()
+    if not isinstance(signature, str) or not hmac.compare_digest(signature, expected_signature):
+        raise ValueError("failed-page recovery authority signature is invalid")
+    if (
+        value.get("schema_version") != "awesome-failed-page-recovery-authority-v1"
+        or value.get("experiment_id") != workspace.experiment_id
+        or value.get("prior_experiment_id") != workspace.prior_experiment_id
+        or value.get("recovery_round") != workspace.recovery_round
+        or value.get("page_number") != workspace.page_number
+        or value.get("source_snapshot_sha256") != workspace.source_snapshot_sha256
+    ):
+        raise ValueError("failed-page recovery authority identity is invalid")
+    failed = value.get("failed_outcome")
+    director = value.get("director_authority")
+    candidate = value.get("candidate")
+    prior_review = value.get("prior_review")
+    if (
+        not isinstance(failed, dict) or set(failed) != {"path", "sha256"}
+        or not isinstance(director, dict) or set(director) != {"path", "sha256"}
+        or not isinstance(candidate, dict)
+        or set(candidate) != {"attempt", "path", "sha256", "request_identity"}
+        or prior_review is not None
+        and (not isinstance(prior_review, dict) or set(prior_review) != {"path", "sha256"})
+        or not isinstance(value.get("failure_problems"), list)
+        or type(value.get("prior_correction_count")) is not int
+    ):
+        raise ValueError("failed-page recovery authority bindings are invalid")
+    origin_attempt = _strict_attempt(candidate.get("attempt"))
+    expected_paths = {
+        "failed_outcome": PurePosixPath(
+            "04_v6", "experiments", workspace.prior_experiment_id, "failed_outcome.json",
+        ),
+        "director_authority": PurePosixPath(
+            "02_v6", "experiments", workspace.prior_experiment_id, "director_v2.json",
+        ),
+    }
+    bound_payloads: dict[str, bytes] = {}
+    for label, expected_path in expected_paths.items():
+        binding = cast(Mapping[str, object], value[label])
+        if binding.get("path") != expected_path.as_posix():
+            raise ValueError(f"failed-page recovery {label} path is not canonical")
+        payload = read_bytes(root, expected_path, max_bytes=4 * 1024 * 1024)
+        if binding.get("sha256") != _digest(payload):
+            raise ValueError(f"failed-page recovery {label} changed")
+        bound_payloads[label] = payload
+    candidate_path = PurePosixPath(str(candidate["path"]))
+    candidate_payload = read_bytes(root, candidate_path)
+    if candidate.get("sha256") != _digest(candidate_payload):
+        raise ValueError("failed-page recovery candidate changed")
+    canonical_archive = PurePosixPath(
+        "04_v6", "experiments", workspace.prior_experiment_id,
+        f"attempt_{origin_attempt}.json",
+    )
+    failed_value = _json_object(
+        bound_payloads["failed_outcome"], "failed-page recovery prior outcome",
+    )
+    failed_attempts = failed_value.get("attempts")
+    if (
+        not isinstance(failed_attempts, list)
+        or not failed_attempts
+        or not isinstance(failed_attempts[-1], dict)
+    ):
+        raise ValueError("failed-page recovery prior outcome has no terminal candidate")
+    terminal = cast(Mapping[str, object], failed_attempts[-1])
+    if (
+        terminal.get("attempt") != candidate["attempt"]
+        or terminal.get("path") != candidate["path"]
+        or terminal.get("sha256") != candidate["sha256"]
+        or terminal.get("request_identity") != candidate["request_identity"]
+    ):
+        raise ValueError("failed-page recovery candidate differs from the prior sealed failure")
+    archive_relative = PurePosixPath(str(terminal.get("prompt_path")))
+    if archive_relative != canonical_archive:
+        match = re.fullmatch(
+            rf"live-page-{workspace.page_number:03d}-recovery-(?P<round>[0-9]{{3}})",
+            workspace.prior_experiment_id,
+        )
+        if origin_attempt != 1 or match is None:
+            raise ValueError("failed-page recovery adopted candidate archive is not canonical")
+        prior_round = int(match.group("round"))
+        prior_workspace = ExperimentWorkspace(
+            experiment_id=workspace.prior_experiment_id,
+            source_project=root,
+            experiment_root=(
+                root / "04_v6" / "experiments" / workspace.prior_experiment_id
+            ).resolve(strict=True),
+            project_copy=root,
+            page_number=workspace.page_number,
+            source_snapshot_sha256=workspace.source_snapshot_sha256,
+            recovery_round=prior_round,
+            prior_experiment_id=(
+                f"live-page-{workspace.page_number:03d}"
+                if prior_round == 1
+                else f"live-page-{workspace.page_number:03d}-recovery-{prior_round - 1:03d}"
+            ),
+        )
+        prior_authority = validate_recovery_authority(prior_workspace)
+        prior_candidate = cast(Mapping[str, object], prior_authority["candidate"])
+        if (
+            archive_relative.as_posix() != prior_authority["provider_archive_path"]
+            or candidate["path"] != prior_candidate["path"]
+            or candidate["sha256"] != prior_candidate["sha256"]
+            or candidate["request_identity"] != prior_candidate["request_identity"]
+        ):
+            raise ValueError("failed-page recovery adopted candidate chain is invalid")
+    archive_parts = archive_relative.parts
+    if (
+        len(archive_parts) != 4
+        or archive_parts[:2] != ("04_v6", "experiments")
+        or not re.fullmatch(r"attempt_[1-3]\.json", archive_parts[3])
+    ):
+        raise ValueError("failed-page recovery provider archive path is invalid")
+    provider_experiment_id = archive_parts[2]
+    provider_attempt = int(archive_parts[3][8])
+    archive = _json_object(read_bytes(root, archive_relative), "recovery candidate archive")
+    if (
+        archive.get("candidate_path") != candidate_path.as_posix()
+        or archive.get("candidate_sha256") != candidate["sha256"]
+        or archive.get("request_identity") != candidate["request_identity"]
+        or archive.get("attempt") != provider_attempt
+        or archive.get("experiment_id") != provider_experiment_id
+        or archive.get("page_number") != workspace.page_number
+        or archive.get("source_snapshot_sha256") != workspace.source_snapshot_sha256
+    ):
+        raise ValueError("failed-page recovery candidate archive binding is invalid")
+    if prior_review is not None:
+        review = cast(Mapping[str, object], prior_review)
+        review_path = PurePosixPath(str(review["path"]))
+        expected_review = PurePosixPath(
+            "04_v6", "experiments", workspace.prior_experiment_id,
+            "review_inputs", f"attempt_{origin_attempt}", "review_result.json",
+        )
+        if review_path != expected_review:
+            raise ValueError("failed-page recovery review path is not canonical")
+        if review.get("sha256") != _digest(read_bytes(root, review_path, max_bytes=4 * 1024 * 1024)):
+            raise ValueError("failed-page recovery review changed")
+    return {
+        **value,
+        "provider_archive_path": archive_relative.as_posix(),
+        "provider_experiment_id": provider_experiment_id,
+        "provider_attempt": provider_attempt,
+    }
+
+
+def _capability_candidates(
+    workspace: ExperimentWorkspace, attempt: int, *, output_relative: PurePosixPath,
+) -> list[Path]:
     directory = workspace.project_copy / "04_v6" / "image_request_capabilities"
     if not directory.is_dir():
         return []
-    return sorted(directory.glob(f"page_{workspace.page_number:03d}.attempt_{attempt}.*.json"))
+    matches: list[Path] = []
+    expected_output = output_relative.as_posix()
+    for path in sorted(directory.glob(
+        f"page_{workspace.page_number:03d}.attempt_{attempt}.*.json"
+    )):
+        payload = b""
+        try:
+            payload = read_bytes(
+                workspace.project_copy,
+                path.relative_to(workspace.project_copy),
+            )
+            value = _json_object(
+                payload,
+                "Provider capability",
+            )
+        except (OSError, ValueError):
+            if expected_output.encode("utf-8") in payload:
+                matches.append(path)
+            continue
+        if value.get("output_path") == expected_output:
+            matches.append(path)
+    return matches
 
 
 def _verified_capability(
@@ -1241,12 +1475,15 @@ def run_provider_attempt(
             pass
         return completed
     if attempt > 1:
-        prior = root / Path(*_archive_relative(workspace, attempt - 1).parts)
+        predecessor = cast(Mapping[str, object], seal["immediate_predecessor_authority"])
+        prior = root / Path(*PurePosixPath(str(predecessor["archive_path"])).parts)
         if not prior.is_file():
             raise ValueError("preceding attempt must be completed and archived before bridge replacement")
 
     prompt_path, receipt = _publish_bridge(workspace, request, attempt=attempt)
-    capabilities = _capability_candidates(workspace, attempt)
+    capabilities = _capability_candidates(
+        workspace, attempt, output_relative=image_relative,
+    )
     if len(capabilities) > 1:
         raise RuntimeError("outcome_unknown: multiple Provider capabilities exist for this attempt")
     capability = capabilities[0] if capabilities else None

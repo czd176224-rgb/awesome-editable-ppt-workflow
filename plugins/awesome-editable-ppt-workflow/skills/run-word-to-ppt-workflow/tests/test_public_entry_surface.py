@@ -31,9 +31,10 @@ def test_final_plugin_has_one_word_to_ppt_entry_and_no_legacy_prompt_skill() -> 
     assert workflow_skills == ["run-word-to-ppt-workflow"]
 
 
-def test_production_cli_exposes_run_pages_without_replaced_single_page_entries() -> None:
+def test_production_cli_exposes_run_pages_and_explicit_failed_page_recovery() -> None:
     commands = _commands()
     assert "run-pages" in commands
+    assert "recover-failed-pages" in commands
     assert "generate-page" not in commands
     assert "seal-page-image-prompt" not in commands
 
@@ -42,9 +43,11 @@ def test_private_experiment_cli_is_not_shipped_as_an_independent_entry() -> None
     assert not (SCRIPTS / "complex_page_experiment" / "cli.py").exists()
 
 
-def test_main_skill_documents_only_run_pages_for_body_generation() -> None:
+def test_main_skill_documents_run_pages_and_explicit_failed_page_recovery() -> None:
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert "run-pages" in skill
+    assert "recover-failed-pages --project" in skill
+    assert "--recovery-round" in skill
     assert "generate-page" not in skill
     assert "seal-page-image-prompt" not in skill
     assert "compile-page-image-prompt" not in skill

@@ -10,6 +10,7 @@ from jsonschema import Draft202012Validator
 from complex_page_experiment.evidence import (
     EvidenceRecorder,
     _safe_experiment_id,
+    _validate_summary,
     sample_resources,
 )
 
@@ -584,6 +585,38 @@ def test_resume_rejects_tampered_summary(tmp_path: Path) -> None:
             project_copy=recorder.project_copy,
             experiment_id="evidence-unit",
         )
+
+
+def test_resume_accepts_preserved_legacy_v1_summary_without_candidate_adoptions(
+    tmp_path: Path,
+) -> None:
+    recorder = _recorder(tmp_path)
+    recorder.record_attachment_cache(hits=1, misses=0)
+    recorder.finalize()
+    summary_path = recorder.experiment_root / "summary.json"
+    legacy = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert legacy.pop("candidate_adoptions") == []
+    legacy_bytes = (
+        json.dumps(legacy, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    summary_path.write_bytes(legacy_bytes)
+
+    EvidenceRecorder(
+        recorder.experiment_root,
+        project_copy=recorder.project_copy,
+        experiment_id="evidence-unit",
+    )
+
+    assert summary_path.read_bytes() == legacy_bytes
+
+    recovery_shape = dict(legacy)
+    recovery_shape["experiment_id"] = "live-page-001-recovery-001"
+    with pytest.raises(ValueError, match="candidate adoption"):
+        _validate_summary(recovery_shape)
+    recovery_shape["candidate_adoptions"] = []
+    with pytest.raises(ValueError, match="candidate adoption"):
+        _validate_summary(recovery_shape)
 
 
 def test_restart_accepts_valid_tail_after_old_summary_and_rejects_tampered_tail(

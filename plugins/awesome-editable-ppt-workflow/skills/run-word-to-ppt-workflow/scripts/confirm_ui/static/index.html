@@ -16,7 +16,7 @@
     <nav class="steps" aria-label="确认进度">
       <button type="button" data-step-target="1"><span>1</span>导演类型</button>
       <button type="button" data-step-target="2"><span>2</span>全局视觉</button>
-      <button type="button" data-step-target="3"><span>3</span>导演任务书</button>
+      <button type="button" data-step-target="3"><span>3</span>任务书与结构</button>
     </nav>
     <p id="error" class="error" role="alert" hidden></p>
 
@@ -39,6 +39,7 @@
       <form id="visual-form" class="settings-grid">
         <label>主色<input name="primary_color" type="color" required></label>
         <label>辅助色<input name="secondary_color" type="color" required></label>
+        <label>重点色<input name="highlight_color" type="color" required></label>
         <label>整页 PPT 背景色<input name="background_color" type="color" required></label>
         <label>中文字体<input name="cjk_font" type="text" maxlength="120" required></label>
         <label>西文字体<input name="latin_font" type="text" maxlength="120" required></label>
@@ -64,7 +65,16 @@
         <label>需要重点呈现的 Word 已有内容（可留空）<textarea name="emphasis" maxlength="2000" rows="3"></textarea></label>
         <label>不希望展开或不适合披露的内容<textarea name="deemphasis" maxlength="2000" rows="3" required></textarea></label>
       </form>
-      <footer class="actions"><button type="button" data-action="back">返回</button><button type="button" class="primary" data-action="submit">确认并生成</button></footer>
+      <section id="structure" aria-labelledby="structure-heading" hidden>
+        <h3 id="structure-heading">演示文稿结构</h3>
+        <p>Word 正文分页和顺序保持不变。以下新增首页、目录页、章节页和尾页默认保留，可取消勾选不需要的新增页。</p>
+        <p>章节页按来源标题建议生成，请检查章节标题及其插入位置。取消新增页不会删除 Word 原页。</p>
+        <fieldset><legend>批量选择新增页</legend><div id="structure-groups"></div></fieldset>
+        <ul id="structure-warnings" hidden></ul>
+        <p id="structure-count" role="status" aria-live="polite"></p>
+        <ol id="structure-pages" aria-label="按生成顺序排列的页面"></ol>
+      </section>
+      <footer class="actions"><button type="button" data-action="back">返回</button><button type="button" class="primary" data-action="submit">确认任务书与结构并生成</button></footer>
     </section>
 
     <section id="done" class="panel done" hidden>

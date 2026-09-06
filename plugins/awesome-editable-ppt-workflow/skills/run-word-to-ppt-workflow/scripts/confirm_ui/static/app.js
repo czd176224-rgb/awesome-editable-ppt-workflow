@@ -7,7 +7,7 @@
   "use strict";
 
   var VISUAL_FIELDS = [
-    "primary_color", "secondary_color", "background_color", "cjk_font", "latin_font",
+    "primary_color", "secondary_color", "highlight_color", "background_color", "cjk_font", "latin_font",
     "title_size_pt", "body_size_pt", "caption_size_pt"
   ];
   var TASKBOOK_FIELDS = [
@@ -25,7 +25,9 @@
     fields.forEach(function (field) { values[field] = copy(source[field]); });
     return values;
   }
-  function createState(templates, templateId, revision, taskbook, reason, confidence) {
+  var PAGE_LABELS = {cover: "首页", toc: "目录页", section: "章节页", content: "正文", closing: "尾页", appendix: "附录"};
+  function isAddedPage(page) { return String(page.composition_page_id || "").startsWith("structure:"); }
+  function createState(templates, templateId, revision, taskbook, reason, confidence, composition) {
     if (!Array.isArray(templates) || templates.length === 0) throw new Error("templates are required");
     var selected = templateById(templates, templateId);
     return {
@@ -36,7 +38,9 @@
       taskbook: exactFields(taskbook || selected.director_taskbook, TASKBOOK_FIELDS),
       baseRevision: revision || 0,
       recommendationReason: String(reason || ""),
-      recommendationConfidence: String(confidence || "low")
+      recommendationConfidence: String(confidence || "low"),
+      composition: composition ? copy(composition) : null,
+      excludedPages: []
     };
   }
   function applyTemplate(state, templateId) {
@@ -67,6 +71,15 @@
     if (next.step < 3) next.step += 1;
     return next;
   }
+  function selectStructurePage(state, pageId, selected) {
+    if (state.step !== 3) throw new Error("structure can only be changed in step 3");
+    var page = state.composition && state.composition.pages.find(function (item) { return item.composition_page_id === pageId; });
+    if (!page || !isAddedPage(page)) throw new Error("only added structure pages can be removed");
+    var next = copy(state);
+    next.excludedPages = next.excludedPages.filter(function (id) { return id !== pageId; });
+    if (!selected) next.excludedPages.push(pageId);
+    return next;
+  }
   function goBack(state) {
     var next = copy(state);
     if (next.step > 1) next.step -= 1;
@@ -81,6 +94,17 @@
       director_taskbook: exactFields(state.taskbook, TASKBOOK_FIELDS)
     };
     VISUAL_FIELDS.forEach(function (field) { payload[field] = copy(state.values[field]); });
+    if (state.composition) {
+      payload.confirmed_pages = state.composition.pages.filter(function (page) {
+        return !isAddedPage(page) || state.excludedPages.indexOf(page.composition_page_id) === -1;
+      }).map(function (page, index) {
+        var record = copy(page);
+        delete record.source_preview;
+        record.output_page_number = index + 1;
+        return record;
+      });
+      payload.structure_confirmed = true;
+    }
     return payload;
   }
   function requestJson(url, options) {
@@ -104,6 +128,7 @@
     var recommendation = document.getElementById("recommendation");
     var error = document.getElementById("error");
     var done = document.getElementById("done");
+    var structure = document.getElementById("structure");
     var state = null;
 
     function showError(message) { error.textContent = message || ""; error.hidden = !message; }
@@ -115,6 +140,88 @@
     }
     function readTaskbook() {
       TASKBOOK_FIELDS.forEach(function (field) { state = updateTaskbook(state, field, taskbookForm.elements[field].value); });
+    }
+    function renderStructure() {
+      if (!structure || !state.composition) return;
+      structure.hidden = false;
+      var list = document.getElementById("structure-pages");
+      var groups = document.getElementById("structure-groups");
+      var checkboxes = [];
+      var groupCheckboxes = [];
+      list.replaceChildren();
+      groups.replaceChildren();
+      function selected(page) { return state.excludedPages.indexOf(page.composition_page_id) === -1; }
+      function refresh() {
+        var count = 0;
+        checkboxes.forEach(function (row) {
+          var keep = !isAddedPage(row.page) || selected(row.page);
+          if (row.input) row.input.checked = keep;
+          row.item.classList.toggle("excluded", !keep);
+          row.number.textContent = keep ? "第 " + (++count) + " 页" : "不生成";
+        });
+        groupCheckboxes.forEach(function (group) {
+          var kept = group.pages.filter(selected).length;
+          group.input.checked = kept === group.pages.length;
+          group.input.indeterminate = kept > 0 && kept < group.pages.length;
+        });
+        document.getElementById("structure-count").textContent = "确认后共 " + count + " 页";
+      }
+      ["cover", "toc", "section", "closing"].forEach(function (role) {
+        var pages = state.composition.pages.filter(function (page) { return isAddedPage(page) && page.page_role === role; });
+        if (!pages.length) return;
+        var label = document.createElement("label");
+        var input = document.createElement("input");
+        input.type = "checkbox";
+        input.addEventListener("change", function () {
+          pages.forEach(function (page) { state = selectStructurePage(state, page.composition_page_id, input.checked); });
+          refresh();
+        });
+        label.append(input, "新增" + PAGE_LABELS[role] + "（" + pages.length + "）");
+        groups.append(label);
+        groupCheckboxes.push({input: input, pages: pages});
+      });
+      state.composition.pages.forEach(function (page) {
+        var item = document.createElement("li");
+        var number = document.createElement("span");
+        number.className = "structure-number";
+        var label = document.createElement("label");
+        var input = null;
+        if (isAddedPage(page)) {
+          input = document.createElement("input");
+          input.type = "checkbox";
+          input.addEventListener("change", function () {
+            state = selectStructurePage(state, page.composition_page_id, input.checked);
+            refresh();
+          });
+          label.append(input);
+        }
+        var title = document.createElement("strong");
+        title.textContent = (PAGE_LABELS[page.page_role] || "页面") + " · " + (page.fixed_page_title || page.chapter_title || "无标题");
+        label.append(title);
+        var source = document.createElement("small");
+        source.textContent = (isAddedPage(page) ? "新增页" : "原 Word 第 " + page.source_page_number + " 页（保留）") +
+          (isAddedPage(page) && page.source_page_number ? " · 内容来源：Word 第 " + page.source_page_number + " 页" : "");
+        var details = document.createElement("div");
+        details.append(label, source);
+        if (page.source_preview) {
+          var preview = document.createElement("p");
+          preview.className = "structure-preview";
+          preview.textContent = page.source_preview;
+          details.append(preview);
+        }
+        item.append(number, details);
+        list.append(item);
+        checkboxes.push({page: page, input: input, item: item, number: number});
+      });
+      var warnings = document.getElementById("structure-warnings");
+      warnings.replaceChildren();
+      (state.composition.warnings || []).forEach(function (warning) {
+        var item = document.createElement("li");
+        item.textContent = typeof warning === "string" ? warning : String(warning.message || warning.detail || warning.code || "请检查原文分页");
+        warnings.append(item);
+      });
+      warnings.hidden = !warnings.children.length;
+      refresh();
     }
     function renderTemplates() {
       templatesNode.replaceChildren();
@@ -148,6 +255,7 @@
       });
       recommendation.textContent = "系统推荐（" + state.recommendationConfidence + "）：" + state.recommendationReason;
       renderTemplates();
+      if (state.step === 3) renderStructure();
     }
     document.addEventListener("click", function (event) {
       var action = event.target.closest("[data-action]");
@@ -184,7 +292,7 @@
     requestJson("/api/recommendations").then(function (data) {
       state = createState(
         data.templates, data.recommended_template_id, data.revision,
-        data.director_taskbook, data.recommendation_reason, data.recommendation_confidence
+        data.director_taskbook, data.recommendation_reason, data.recommendation_confidence, data.composition
       );
       fill(visualForm, state.values, VISUAL_FIELDS);
       fill(taskbookForm, state.taskbook, TASKBOOK_FIELDS);
@@ -198,6 +306,7 @@
     applyTemplate: applyTemplate,
     updateField: updateField,
     updateTaskbook: updateTaskbook,
+    selectStructurePage: selectStructurePage,
     goNext: goNext,
     goBack: goBack,
     buildSubmission: buildSubmission,

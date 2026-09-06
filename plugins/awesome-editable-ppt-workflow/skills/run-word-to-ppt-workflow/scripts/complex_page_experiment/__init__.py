@@ -4,6 +4,9 @@ from .workspace import (
     ExperimentWorkspace,
     create_experiment_copy,
     fingerprint_project,
+    open_accepted_page_workspace,
+    open_current_page_workspace,
+    open_live_page_recovery_workspace,
     open_live_page_workspace,
     verify_source_unchanged,
 )
@@ -15,10 +18,8 @@ from .materials import (
     validate_published_complete_page_material_view,
 )
 from .director import (
-    CorrectionDecision,
     DirectorArtifact,
     compile_consulting_six_part_prompt,
-    decide_correction,
     direct_page,
 )
 from .evidence import EvidenceRecorder, sample_resources
@@ -40,12 +41,16 @@ from .loop import (
     load_accepted_image_seal,
     run_candidate_loop,
     seal_accepted_image,
+    verify_signed_acceptance_receipt,
 )
 
 __all__ = [
     "ExperimentWorkspace",
     "create_experiment_copy",
     "fingerprint_project",
+    "open_accepted_page_workspace",
+    "open_current_page_workspace",
+    "open_live_page_recovery_workspace",
     "open_live_page_workspace",
     "verify_source_unchanged",
     "CompletePageMaterialView",
@@ -53,10 +58,8 @@ __all__ = [
     "build_complete_page_material_view",
     "validate_complete_page_material_view",
     "validate_published_complete_page_material_view",
-    "CorrectionDecision",
     "DirectorArtifact",
     "compile_consulting_six_part_prompt",
-    "decide_correction",
     "direct_page",
     "EvidenceRecorder",
     "sample_resources",
@@ -73,4 +76,5 @@ __all__ = [
     "load_accepted_image_seal",
     "run_candidate_loop",
     "seal_accepted_image",
+    "verify_signed_acceptance_receipt",
 ]

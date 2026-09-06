@@ -6,13 +6,32 @@ import posixpath
 import re
 import sys
 import zipfile
+from decimal import Decimal
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 try:
-    from .build_pptx_from_manifest import normalize_manifest
+    from .build_pptx_from_manifest import (
+        _chart_basis_labels,
+        _chart_mark_geometry,
+        _number_text,
+        _chart_shape_description,
+        _chart_shared_text,
+        _special_chart_records,
+        SPECIAL_CHART_PRIMITIVES,
+        normalize_manifest,
+    )
 except ImportError:  # direct runtime script execution through the editppt launcher
-    from build_pptx_from_manifest import normalize_manifest
+    from build_pptx_from_manifest import (
+        _chart_basis_labels,
+        _chart_mark_geometry,
+        _number_text,
+        _chart_shape_description,
+        _chart_shared_text,
+        _special_chart_records,
+        SPECIAL_CHART_PRIMITIVES,
+        normalize_manifest,
+    )
 
 
 NS = {
@@ -106,6 +125,27 @@ FORBIDDEN_FOREGROUND_FALLBACK_TERMS = {
     "裁剪",
     "降级",
 }
+BOUNDED_ACCEPTED_REGION_TERMS = {
+    "bounded accepted-image region",
+    "bounded extraction of accepted source pixels",
+    "accepted source bounded extraction",
+    "有界提取",
+}
+BOUNDED_REGION_CROP_TERMS = {"crop", "cropped", "裁切", "裁剪"}
+STRUCTURAL_RASTER_TERMS = {
+    "whole card",
+    "whole panel",
+    "whole table",
+    "whole chart",
+    "whole dashboard",
+    "整张卡片",
+    "整个卡片",
+    "整张表格",
+    "整个表格",
+    "整张图表",
+    "整个图表",
+    "整个仪表盘",
+}
 
 
 def read_manifest(path):
@@ -147,12 +187,75 @@ def is_foreground_visual_item(item):
     return contains_any(text, FOREGROUND_TERMS)
 
 
+def _bounded_accepted_source_region(manifest, entry, image):
+    """Recognize the existing zero-Image2 bounded-region contract without trusting prose alone."""
+    if entry.get("source_type") != "user-provided" or not isinstance(image, dict):
+        return False
+    source = manifest.get("source")
+    if not isinstance(source, dict):
+        return False
+    source_path = source.get("path")
+    if (
+        not isinstance(source_path, str)
+        or not source_path.strip()
+        or Path(str(entry.get("source", ""))).as_posix() != Path(source_path).as_posix()
+    ):
+        return False
+    note = compact_text(entry.get("provenance_note"))
+    if not contains_any(note, BOUNDED_ACCEPTED_REGION_TERMS):
+        return False
+    role_text = compact_text({"image": image, "provenance": entry})
+    if contains_any(role_text, STRUCTURAL_RASTER_TERMS) or not is_foreground_visual_item(
+        {"image": image, "provenance": entry}
+    ):
+        return False
+    inventory_text = compact_text(manifest.get("visual_inventory", []))
+    role_terms = {term for term in FOREGROUND_TERMS if term in role_text}
+    if not role_terms or not any(term in inventory_text for term in role_terms):
+        return False
+    box = image.get("box_px")
+    width = source.get("width_px")
+    height = source.get("height_px")
+    if (
+        not isinstance(box, list)
+        or len(box) != 4
+        or any(type(value) not in (int, float) for value in box)
+        or type(width) not in (int, float)
+        or type(height) not in (int, float)
+    ):
+        return False
+    left, top, region_width, region_height = map(float, box)
+    source_width, source_height = float(width), float(height)
+    if (
+        source_width <= 0
+        or source_height <= 0
+        or left < 0
+        or top < 0
+        or region_width <= 0
+        or region_height <= 0
+        or left + region_width > source_width
+        or top + region_height > source_height
+    ):
+        return False
+    return not (
+        left <= source_width * 0.02
+        and top <= source_height * 0.02
+        and region_width >= source_width * 0.98
+        and region_height >= source_height * 0.98
+    )
+
+
 def foreground_asset_contract_violations(manifest):
     violations = []
     provenance_by_path = {
         Path(entry.get("path", "")).as_posix(): entry
         for entry in manifest.get("asset_provenance", [])
         if entry.get("path")
+    }
+    images_by_path = {
+        Path(image.get("path", "")).as_posix(): image
+        for image in manifest.get("images", [])
+        if isinstance(image, dict) and image.get("path")
     }
 
     for index, item in enumerate(manifest.get("visual_inventory", [])):
@@ -196,9 +299,14 @@ def foreground_asset_contract_violations(manifest):
         source_type = entry.get("source_type")
         path = Path(entry.get("path", "")).as_posix()
         field = f"asset_provenance[{index}]"
-        if source_type in {"user-provided", "user-approved-rasterization"} and contains_any(
-            text, FOREGROUND_TERMS | FORBIDDEN_FOREGROUND_FALLBACK_TERMS
-        ):
+        bounded_claim = contains_any(text, BOUNDED_ACCEPTED_REGION_TERMS)
+        bounded_region = _bounded_accepted_source_region(
+            manifest, entry, images_by_path.get(path)
+        )
+        if source_type in {"user-provided", "user-approved-rasterization"} and (
+            contains_any(text, FOREGROUND_TERMS | FORBIDDEN_FOREGROUND_FALLBACK_TERMS)
+            or bounded_claim
+        ) and not bounded_region:
             violations.append(
                 {
                     "field": field,
@@ -206,7 +314,12 @@ def foreground_asset_contract_violations(manifest):
                     "reason": "foreground-like raster provenance cannot be direct user-provided/cropped source material",
                 }
             )
-        if contains_any(text, FORBIDDEN_FOREGROUND_FALLBACK_TERMS):
+        matched_fallback_terms = {
+            term for term in FORBIDDEN_FOREGROUND_FALLBACK_TERMS if term in text
+        }
+        if matched_fallback_terms and not (
+            bounded_region and matched_fallback_terms <= BOUNDED_REGION_CROP_TERMS
+        ):
             violations.append(
                 {
                     "field": field,
@@ -443,6 +556,247 @@ def collect_notes_texts(z, names):
     return notes
 
 
+def _chart_xml_values(chart, tag):
+    values = []
+    for series in chart._element.xpath(".//c:ser"):
+        dimension = series.xpath(f"./c:{tag}")
+        points = dimension[0].xpath(".//c:pt") if dimension else []
+        indexed = []
+        for point in points:
+            value = point.xpath("./c:v")
+            indexed.append((int(point.get("idx")), float(value[0].text)))
+        values.append([value for _index, value in sorted(indexed)])
+    return values
+
+
+def _shape_geometry(shape):
+    xfrm = shape._element.xpath(".//a:xfrm")[0]
+    off, ext = xfrm.xpath("./a:off")[0], xfrm.xpath("./a:ext")[0]
+    return tuple(int(round(float(value))) for value in (off.get("x"), off.get("y"), ext.get("cx"), ext.get("cy")))
+
+
+def _connector_endpoints(shape):
+    left, top, width, height = _shape_geometry(shape)
+    xfrm = shape._element.xpath(".//a:xfrm")[0]
+    flip_h = xfrm.get("flipH") in {"1", "true"}
+    flip_v = xfrm.get("flipV") in {"1", "true"}
+    return (
+        left + width if flip_h else left,
+        top + height if flip_v else top,
+        left if flip_h else left + width,
+        top if flip_v else top + height,
+    )
+
+
+def _shape_kind(shape):
+    local = shape._element.tag.rsplit("}", 1)[-1]
+    if local == "cxnSp":
+        return "connector"
+    geometry = shape._element.xpath(".//a:prstGeom")
+    return geometry[0].get("prst") if geometry else local
+
+
+def _shape_arrowheads(shape):
+    line = shape._element.xpath(".//a:ln")
+    if not line:
+        return {}
+    return {
+        node.tag.rsplit("}", 1)[-1]: node.get("type")
+        for node in line[0]
+        if node.tag.rsplit("}", 1)[-1] in {"headEnd", "tailEnd"}
+    }
+
+
+def quantitative_chart_readback_violations(pptx_path, manifests):
+    """Read exact chart objects and direct marks back from the generated PPTX."""
+    if not any(manifest.get("charts") for manifest in manifests):
+        return []
+    from pptx import Presentation
+    from pptx.enum.chart import XL_CHART_TYPE
+
+    chart_types = {
+        "column": XL_CHART_TYPE.COLUMN_CLUSTERED,
+        "bar": XL_CHART_TYPE.BAR_CLUSTERED,
+        "line": XL_CHART_TYPE.LINE,
+        "scatter": XL_CHART_TYPE.XY_SCATTER,
+        "bubble": XL_CHART_TYPE.BUBBLE,
+    }
+    violations = []
+    try:
+        normalized = [normalize_manifest(manifest) for manifest in manifests]
+        presentation = Presentation(pptx_path)
+    except Exception as exc:
+        return [{"field": "charts", "reason": str(exc)}]
+    if len(presentation.slides) != len(normalized):
+        return [{"field": "charts", "reason": "slide count does not match chart manifests"}]
+
+    def add(field, expected, actual):
+        if actual != expected:
+            violations.append({"field": field, "expected": expected, "actual": actual})
+
+    def validate_mark(named, chart, role, field, kind, geometry, arrowheads=None):
+        shape = named.get(f"{chart['name']} {role}")
+        if shape is None:
+            violations.append({"field": field, "reason": "missing mark"})
+            return
+        description = shape._element.xpath(".//p:cNvPr")[0].get("descr")
+        add(f"{field}.object_id", _chart_shape_description(chart, role), description)
+        add(f"{field}.type", kind, _shape_kind(shape))
+        actual_geometry = _connector_endpoints(shape) if kind == "connector" else _shape_geometry(shape)
+        add(f"{field}.geometry", geometry, actual_geometry)
+        if arrowheads is not None:
+            add(f"{field}.arrowheads", arrowheads, _shape_arrowheads(shape))
+
+    def validate_special_records(slide, chart, prefix):
+        records = _special_chart_records(chart)
+        for section in ("shapes", "text_boxes"):
+            for record in records[section]:
+                field = prefix + (f".{record['_field']}" if record["_field"] else "")
+                matches = [shape for shape in slide.shapes if shape.name == record["name"]]
+                if len(matches) != 1:
+                    violations.append({"field": field, "reason": f"expected one editable object, found {len(matches)}"})
+                    continue
+                shape = matches[0]
+                description = shape._element.xpath(".//p:cNvPr")[0].get("descr")
+                add(f"{field}.object_id", f"object_id:{record['object_id']}", description)
+                expected_kind = "text_box" if section == "text_boxes" else record["type"]
+                actual_kind = (
+                    "text_box"
+                    if shape._element.xpath(".//p:cNvSpPr[@txBox='1']")
+                    else _shape_kind(shape)
+                )
+                add(f"{field}.type", expected_kind, actual_kind)
+                add(
+                    f"{field}.geometry",
+                    tuple(int(round(float(record[key]) * 914400)) for key in ("left", "top", "width", "height")),
+                    _shape_geometry(shape),
+                )
+                if section == "text_boxes":
+                    add(field, str(record["text"]), shape.text)
+
+    for slide_index, (slide, manifest) in enumerate(zip(presentation.slides, normalized)):
+        named = {shape.name: shape for shape in slide.shapes}
+        for chart_index, expected in enumerate(manifest.get("charts", [])):
+            prefix = f"slides[{slide_index}].charts[{chart_index}]" if len(normalized) > 1 else f"charts[{chart_index}]"
+            if expected["rendering_primitive"] in SPECIAL_CHART_PRIMITIVES:
+                validate_special_records(slide, expected, prefix)
+                continue
+            root = named.get(expected["name"])
+            if root is None:
+                violations.append({"field": prefix, "reason": "missing chart root object"})
+                continue
+            description = root._element.xpath(".//p:cNvPr")[0].get("descr")
+            add(
+                f"{prefix}.object_id",
+                _chart_shape_description(expected),
+                description,
+            )
+            add(f"{prefix}.box.left", int(expected["left"] * 914400), root.left)
+            add(f"{prefix}.box.top", int(expected["top"] * 914400), root.top)
+            add(f"{prefix}.box.width", int(expected["width"] * 914400), root.width)
+            add(f"{prefix}.box.height", int(expected["height"] * 914400), root.height)
+            variant = expected["chart_variant"]
+            unit = _chart_shared_text(expected, "unit") if expected["rendering_primitive"] != "xy" else None
+            if expected["rendering_primitive"] == "xy":
+                unit = f"x: {expected['x_unit']} | y: {expected['y_unit']}"
+                if variant == "bubble":
+                    unit += f" | size: {expected['size_unit']}"
+            metadata = [("Unit", unit)]
+            if expected.get("period"):
+                metadata.append(("Period", expected["period"]))
+            metadata.extend(_chart_basis_labels(expected))
+            for role, text in metadata:
+                shape = named.get(f"{expected['name']} {role}")
+                field = role.lower().replace(" ", "_")
+                add(f"{prefix}.{field}", text, shape.text if shape is not None else None)
+
+            if variant == "dot":
+                title_shape = named.get(f"{expected['name']} Title")
+                add(f"{prefix}.title", expected["title"], title_shape.text if title_shape is not None else None)
+                point_count = sum(len(item["values"]) for item in expected["series"])
+                add(
+                    f"{prefix}.points",
+                    point_count,
+                    sum(name.startswith(f"{expected['name']} Point ") for name in named),
+                )
+                add(
+                    f"{prefix}.connectors",
+                    point_count,
+                    sum(name.startswith(f"{expected['name']} Connector ") for name in named),
+                )
+                for series_index, item in enumerate(expected["series"], start=1):
+                    series_shape = named.get(f"{expected['name']} Series {series_index}")
+                    add(f"{prefix}.series[{series_index - 1}].name", item["name"], series_shape.text if series_shape is not None else None)
+                point_index = 1
+                mark_geometry = _chart_mark_geometry(expected)
+                for series_index, item in enumerate(expected["series"]):
+                    for category, value in zip(item["categories"], item["values"]):
+                        validate_mark(
+                            named,
+                            expected,
+                            f"Point {point_index}",
+                            f"{prefix}.points[{point_index - 1}]",
+                            "ellipse",
+                            mark_geometry[f"Point {point_index}"],
+                        )
+                        validate_mark(
+                            named,
+                            expected,
+                            f"Connector {point_index}",
+                            f"{prefix}.connectors[{point_index - 1}]",
+                            "connector",
+                            mark_geometry[f"Connector {point_index}"],
+                        )
+                        category_shape = named.get(f"{expected['name']} Category {point_index}")
+                        value_shape = named.get(f"{expected['name']} Value {point_index}")
+                        add(f"{prefix}.series[{series_index}].categories[{point_index - 1}]", category, category_shape.text if category_shape is not None else None)
+                        add(f"{prefix}.series[{series_index}].values[{point_index - 1}]", _number_text(value), value_shape.text if value_shape is not None else None)
+                        point_index += 1
+            else:
+                if not root.has_chart:
+                    violations.append({"field": prefix, "reason": "expected native chart object"})
+                    continue
+                native = root.chart
+                add(f"{prefix}.chart_variant", chart_types[variant], native.chart_type)
+                add(f"{prefix}.title", expected["title"], native.chart_title.text_frame.text if native.has_title else None)
+                if expected["rendering_primitive"] == "xy":
+                    add(f"{prefix}.x_label", expected["x_label"], native.category_axis.axis_title.text_frame.text if native.category_axis.has_title else None)
+                    add(f"{prefix}.y_label", expected["y_label"], native.value_axis.axis_title.text_frame.text if native.value_axis.has_title else None)
+                add(f"{prefix}.series.names", [item["name"] for item in expected["series"]], [item.name for item in native.series])
+                if variant in {"column", "bar", "line"}:
+                    add(f"{prefix}.categories", expected["series"][0]["categories"], [item.label for item in native.plots[0].categories])
+                    for series_index, item in enumerate(expected["series"]):
+                        add(f"{prefix}.series[{series_index}].values", item["values"], list(native.series[series_index].values))
+                else:
+                    x_values = _chart_xml_values(native, "xVal")
+                    y_values = _chart_xml_values(native, "yVal")
+                    size_values = _chart_xml_values(native, "bubbleSize") if variant == "bubble" else []
+                    for series_index, item in enumerate(expected["series"]):
+                        add(f"{prefix}.series[{series_index}].x_values", item["x_values"], x_values[series_index])
+                        add(f"{prefix}.series[{series_index}].y_values", item["y_values"], y_values[series_index])
+                        if variant == "bubble":
+                            add(f"{prefix}.series[{series_index}].size_values", item["size_values"], size_values[series_index])
+
+            if expected.get("target_value") is not None:
+                for role, value in (
+                    ("Target", f"Target: {_number_text(expected['target_value'])}"),
+                    ("Actual", f"Actual: {_number_text(expected['actual_value'])}"),
+                    ("Difference", f"Difference: {_number_text(Decimal(str(expected['actual_value'])) - Decimal(str(expected['target_value'])))}"),
+                ):
+                    shape = named.get(f"{expected['name']} {role}")
+                    add(f"{prefix}.{role.lower()}", value, shape.text if shape is not None else None)
+                mark_geometry = _chart_mark_geometry(expected)
+                validate_mark(
+                    named, expected, "Target Line", f"{prefix}.target_line", "connector",
+                    mark_geometry["Target Line"],
+                )
+                validate_mark(
+                    named, expected, "Difference Arrow", f"{prefix}.difference_arrow", "connector",
+                    mark_geometry["Difference Arrow"], {"headEnd": "triangle", "tailEnd": "triangle"},
+                )
+    return violations
+
+
 def validate_deck(args):
     deck_path = Path(args.deck_manifest).resolve()
     deck = read_manifest(deck_path)
@@ -469,10 +823,13 @@ def validate_deck(args):
         "notes_expected": len(notes_manifest.get("notes", [])),
         "notes_found": 0,
         "notes_hash_mismatches": [],
+        "chart_readback_violations": [],
         "missing_parts": [],
         "warnings": [],
         "passed": False,
     }
+
+    page_manifests = []
 
     for page in deck.get("pages", []):
         manifest_path = Path(page.get("manifest", ""))
@@ -486,6 +843,7 @@ def validate_deck(args):
         else:
             try:
                 raw_manifest = read_manifest(manifest_path)
+                page_manifests.append(raw_manifest)
                 normalized_manifest, authoring_violations = normalize_for_validation(raw_manifest)
                 violations = (
                     authoring_violations
@@ -538,6 +896,9 @@ def validate_deck(args):
     except Exception as exc:
         report["warnings"].append(f"Unable to read pptx: {exc}")
 
+    if page_manifests:
+        report["chart_readback_violations"] = quantitative_chart_readback_violations(args.pptx, page_manifests)
+
     report["passed"] = (
         report["slides"] == expected_pages
         and not report["page_manifests_missing"]
@@ -546,6 +907,7 @@ def validate_deck(args):
         and not report["page_contract_violations"]
         and not report["missing_parts"]
         and not report["notes_hash_mismatches"]
+        and not report["chart_readback_violations"]
     )
     output = json.dumps(report, ensure_ascii=False, indent=2)
     if args.report:
@@ -573,7 +935,7 @@ def resolve_target(rels_name, target):
     if not target or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target):
         return None
     source = rel_source_part(rels_name)
-    return posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
+    return posixpath.normpath(posixpath.join(posixpath.dirname(source), target)).lstrip("/")
 
 
 def relationship_targets(z, rels_name, names):
@@ -646,6 +1008,7 @@ def main():
         "relationship_targets_checked": 0,
         "warnings": [],
         "page_contract_violations": [],
+        "chart_readback_violations": [],
     }
 
     try:
@@ -770,6 +1133,8 @@ def main():
     report["page_contract_violations"] = (
         authoring_violations + page_contract_violations(manifest) + quality_contract_violations(raw_manifest)
     )
+    if raw_manifest.get("charts"):
+        report["chart_readback_violations"] = quantitative_chart_readback_violations(args.pptx, [raw_manifest])
 
     report["passed"] = (
         report["zip_ok"]
@@ -784,6 +1149,7 @@ def main():
         and not report["missing_provenance_sources"]
         and not report["invalid_asset_provenance"]
         and not report["page_contract_violations"]
+        and not report["chart_readback_violations"]
         and (report["editable_text_shapes"] > 0 or not required)
     )
 

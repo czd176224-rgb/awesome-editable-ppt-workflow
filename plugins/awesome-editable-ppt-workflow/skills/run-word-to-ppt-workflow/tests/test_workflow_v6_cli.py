@@ -87,6 +87,21 @@ def test_v6_cli_exposes_run_pages_as_the_multi_page_command():
     assert overridden.timeout == 300
 
 
+def test_v6_cli_exposes_only_explicit_numbered_failed_page_recovery():
+    args = workflow_v6_cli._parser().parse_args([
+        "recover-failed-pages", "--project", "project", "--pages", "16", "27",
+        "--recovery-round", "1",
+    ])
+
+    assert args.command == "recover-failed-pages"
+    assert args.pages == [16, 27]
+    assert args.recovery_round == 1
+    with pytest.raises(SystemExit):
+        workflow_v6_cli._parser().parse_args([
+            "recover-failed-pages", "--project", "project", "--pages", "16",
+        ])
+
+
 def test_init_cli_reports_all_44_logical_marker_pages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -109,7 +124,7 @@ def test_init_cli_reports_all_44_logical_marker_pages(
     project = tmp_path / "project"
     monkeypatch.setattr(sys, "argv", [
         "workflow_v6_cli.py", "init", "--word", str(word), "--logo", str(logo),
-        "--project", str(project),
+        "--project", str(project), "--preserve-source-layout",
     ])
 
     assert workflow_v6_cli.main() == 0
@@ -205,6 +220,39 @@ def test_run_pages_cli_emits_json_safe_summary_for_a_real_creative_loop_outcome(
         "scheduler_concurrency": 2,
         "stage_peaks": {"assembly": 0, "director": 1, "image2": 1, "reconstruction": 0, "review": 1},
     }
+
+
+def test_recover_failed_pages_cli_passes_the_explicit_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from workflow_v6_pipeline import PipelineReport
+
+    project = tmp_path / "project"
+    create(project, new_project(
+        word_source={"path": "source.docx", "sha256": "a" * 64},
+        logo_source={"path": "logo.svg", "sha256": "b" * 64},
+        pages=[new_page(1, title="one")],
+    ))
+    report = PipelineReport(
+        completed_pages=(), failed_pages={1: "still failed"}, page_outcomes={},
+        stage_peaks={"director": 0, "image2": 0, "review": 0, "reconstruction": 0, "assembly": 0},
+        scheduler_concurrency=1,
+    )
+    captured: dict[str, object] = {}
+
+    def recover(root, pages, *, recovery_round, configuration):
+        captured.update(root=root, pages=pages, recovery_round=recovery_round)
+        return report
+
+    monkeypatch.setattr(workflow_v6_cli, "recover_failed_pages", recover)
+    monkeypatch.setattr(sys, "argv", [
+        "workflow_v6_cli.py", "recover-failed-pages", "--project", str(project),
+        "--pages", "1", "--recovery-round", "3",
+    ])
+
+    assert workflow_v6_cli.main() == 1
+    assert captured == {"root": project, "pages": [1], "recovery_round": 3}
+    assert json.loads(capsys.readouterr().out)["failed_pages"] == {"1": "still failed"}
 
 
 @pytest.mark.skip(reason="external reference routes removed from awesome production")

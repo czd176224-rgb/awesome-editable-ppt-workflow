@@ -17,7 +17,8 @@ Push-Location $RepoRoot
 try {
     $IsGitWorkTree = Test-Path -LiteralPath (Join-Path $RepoRoot ".git")
     if (-not $PublicSnapshotOnly) {
-        $wordTests = @(Get-ChildItem "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests" -Filter "test_*.py" -File | Sort-Object Name)
+        $HuangshiAcceptanceTest = Join-Path $RepoRoot "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_huangshi_v123_acceptance.py"
+        $wordTests = @(Get-ChildItem "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests" -Filter "test_*.py" -File | Where-Object { $_.FullName -ne $HuangshiAcceptanceTest } | Sort-Object Name)
         if ($SkipOfficeTests) {
             $wordTests = @($wordTests | Where-Object { $_.Name -ne "test_awesome_attachment_render.py" })
         }
@@ -28,6 +29,7 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "Word V6 test split failed at offset $offset." }
         }
         foreach ($suite in @(
+            "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/complex_page_experiment",
             "plugins/awesome-editable-ppt-workflow/skills/generate-slide-body-image/tests",
             "plugins/awesome-editable-ppt-workflow/skills/reconstruct-editable-slide/cli/tests",
             "tests"
@@ -35,6 +37,11 @@ try {
             & python -m pytest -p no:cacheprovider $suite -q
             if ($LASTEXITCODE -ne 0) { throw "Release test suite failed: $suite" }
         }
+        & python -m pytest -p no:cacheprovider $HuangshiAcceptanceTest -q
+        if ($LASTEXITCODE -ne 0) { throw "Post-authority Huangshi acceptance failed." }
+
+        & node plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_confirm_ui_structure.js
+        if ($LASTEXITCODE -ne 0) { throw "Confirmed page structure UI validation failed." }
 
         & python scripts/check_python_syntax.py
         if ($LASTEXITCODE -ne 0) { throw "Python compilation failed." }
@@ -46,17 +53,6 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Git whitespace validation failed." }
     } else {
         Write-Output "Git whitespace validation skipped for manifest-verified exported snapshot."
-    }
-
-    $parseErrors = @()
-    Get-ChildItem -Recurse -Filter *.ps1 -File | ForEach-Object {
-        $tokens = $null; $errors = $null
-        [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
-        $parseErrors += $errors
-    }
-    if ($parseErrors.Count) { $parseErrors | Format-List; throw "PowerShell parsing failed." }
-    Get-ChildItem -Recurse -Filter *.json -File | Where-Object { $_.FullName -notmatch '[\\/](\.git|dist|\.superpowers)[\\/]' } | ForEach-Object {
-        Get-Content -Raw -Encoding UTF8 -LiteralPath $_.FullName | ConvertFrom-Json | Out-Null
     }
 
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("editable-ppt-release-gate-" + [guid]::NewGuid().ToString("N"))
@@ -72,6 +68,18 @@ try {
             & python scripts/check_public_release.py . --write-report public-release-audit.json
         }
         if ($LASTEXITCODE -ne 0) { throw "Public snapshot validation failed." }
+
+        $parseErrors = @()
+        Get-ChildItem -LiteralPath $publicRoot -Recurse -Filter *.ps1 -File | ForEach-Object {
+            $tokens = $null; $errors = $null
+            $source = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8)
+            [void][System.Management.Automation.Language.Parser]::ParseInput($source, $_.FullName, [ref]$tokens, [ref]$errors)
+            $parseErrors += $errors
+        }
+        if ($parseErrors.Count) { $parseErrors | Format-List; throw "PowerShell parsing failed." }
+        Get-ChildItem -LiteralPath $publicRoot -Recurse -Filter *.json -File | ForEach-Object {
+            Get-Content -Raw -Encoding UTF8 -LiteralPath $_.FullName | ConvertFrom-Json | Out-Null
+        }
 
         $distA = Join-Path $tempRoot "dist-a"; $distB = Join-Path $tempRoot "dist-b"
         & (Join-Path $publicRoot "scripts/package_release.ps1") -SourceRoot $publicRoot -OutputDirectory $distA
@@ -89,6 +97,9 @@ try {
             $runtime = Join-Path $tempRoot "runtime"; $bin = Join-Path $tempRoot "bin"
             & (Join-Path $publicRoot "plugins/awesome-editable-ppt-workflow/scripts/install_runtime.ps1") -RuntimeRoot $runtime -BinDir $bin -PortableSmokeTest
             if ($LASTEXITCODE -ne 0) { throw "Portable runtime installation failed." }
+            Write-Output "Portable same-version runtime repair smoke"
+            & (Join-Path $publicRoot "plugins/awesome-editable-ppt-workflow/scripts/install_runtime.ps1") -RuntimeRoot $runtime -BinDir $bin -PortableSmokeTest
+            if ($LASTEXITCODE -ne 0) { throw "Portable runtime repair failed." }
             & (Join-Path $publicRoot "verify.ps1") -RuntimeRoot $runtime -PortableSmokeTest
             if ($LASTEXITCODE -ne 0) { throw "Portable runtime verification failed." }
         }

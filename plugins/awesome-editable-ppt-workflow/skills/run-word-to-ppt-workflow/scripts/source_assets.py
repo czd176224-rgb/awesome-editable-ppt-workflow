@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import posixpath
+import re
 import zipfile
 from collections import OrderedDict
 from io import BytesIO
@@ -96,35 +97,143 @@ def _chart_record(asset: dict[str, Any], data: bytes) -> dict[str, Any] | None:
     def descendants(node: ElementTree.Element, name: str) -> list[ElementTree.Element]:
         return [item for item in node.iter() if item.tag.rsplit("}", 1)[-1] == name]
 
-    title_node = next(iter(descendants(root, "title")), None)
-    title = _element_text(title_node) if title_node is not None else ""
-    if not title:
-        return None
+    def local_name(node: ElementTree.Element) -> str:
+        return node.tag.rsplit("}", 1)[-1]
+
+    def child_value(node: ElementTree.Element, name: str) -> str:
+        child = next(iter(descendants(node, name)), None)
+        return child.get("val", "") if child is not None else ""
+
+    def label_unit(text: str) -> tuple[str, str | None]:
+        match = re.fullmatch(r"\s*(.*?)\s*[\(\uff08]([^\)\uff09]+)[\)\uff09]\s*", text)
+        return (match.group(1).strip(), match.group(2).strip()) if match else (text.strip(), None)
+
+    plot_area = next(iter(descendants(root, "plotArea")), None)
+    plot_children = list(plot_area) if plot_area is not None else []
+    plot_nodes = [
+        node for node in plot_children
+        if local_name(node).endswith("Chart") and descendants(node, "ser")
+    ]
+    chart_node = plot_nodes[0] if len(plot_nodes) == 1 else None
+    chart_type = chart_node.tag.rsplit("}", 1)[-1] if chart_node is not None else ""
+    variant = {"lineChart": "line", "scatterChart": "scatter", "bubbleChart": "bubble"}.get(chart_type)
+    if chart_type == "barChart":
+        variant = {"col": "column", "bar": "bar"}.get(child_value(chart_node, "barDir"))
+    primitive = (
+        "column_bar" if variant in {"column", "bar"}
+        else "line_point" if variant == "line"
+        else "xy" if variant in {"scatter", "bubble"}
+        else None
+    )
+
+    axes = [
+        node for node in plot_children
+        if local_name(node) in {"catAx", "dateAx", "valAx"}
+    ]
+    axes_by_id = {child_value(axis, "axId"): axis for axis in axes if child_value(axis, "axId")}
+    chart_children = list(chart_node) if chart_node is not None else []
+    plot_axis_ids = [child.get("val", "") for child in chart_children if local_name(child) == "axId"]
+    linked_axes = [axes_by_id[axis_id] for axis_id in plot_axis_ids if axis_id in axes_by_id]
+
+    def axis_metadata(axis: ElementTree.Element | None, prefix: str) -> dict[str, str]:
+        if axis is None:
+            return {}
+        axis_title = next(iter(descendants(axis, "title")), None)
+        text = _element_text(axis_title) if axis_title is not None else ""
+        if not text:
+            return {}
+        label, unit = label_unit(text)
+        result = {f"{prefix}_label": label}
+        if unit:
+            result[f"{prefix}_unit"] = unit
+        return result
+
+    metadata: dict[str, str] = {}
+    if primitive == "xy" and len(linked_axes) >= 2:
+        metadata.update(axis_metadata(linked_axes[0], "x"))
+        metadata.update(axis_metadata(linked_axes[1], "y"))
+    elif primitive in {"column_bar", "line_point"}:
+        value_axis = next((axis for axis in linked_axes or axes if local_name(axis) == "valAx"), None)
+        metadata.update(axis_metadata(value_axis, "value"))
+
     series: list[dict[str, Any]] = []
-    for series_node in descendants(root, "ser"):
+    index_mismatch = False
+    for series_node in (series_node for plot in plot_nodes for series_node in descendants(plot, "ser")):
         series_title = ""
         tx_node = next(iter(descendants(series_node, "tx")), None)
         if tx_node is not None:
-            series_title = _element_text(tx_node)
-        values: list[str] = []
-        times: list[str] = []
+            cache = next(
+                (node for node in tx_node.iter() if local_name(node) in {"strCache", "numCache"}),
+                None,
+            )
+            if cache is not None:
+                cached_points = descendants(cache, "pt")
+                series_title = next((_element_text(point) for point in cached_points if _element_text(point)), "")
+            else:
+                direct_value = next((child for child in tx_node if local_name(child) == "v"), None)
+                series_title = _element_text(direct_value) if direct_value is not None else ""
+        dimensions: dict[str, Any] = {}
         for child in series_node:
-            local = child.tag.rsplit("}", 1)[-1]
+            local = local_name(child)
             points = descendants(child, "pt")
-            if local in {"cat", "xVal"}:
-                times = [_element_text(point) for point in points]
-            elif local in {"val", "yVal"}:
-                values = [_element_text(point) for point in points]
-        record: dict[str, Any] = {"series": series_title, "values": values}
-        if times:
-            record["times"] = times
+            key = {"cat": "categories", "val": "values", "xVal": "x_values", "yVal": "y_values", "bubbleSize": "size_values"}.get(local)
+            if key:
+                indexed: list[tuple[int, str]] = []
+                for point in points:
+                    try:
+                        index = int(point.get("idx", ""))
+                    except ValueError:
+                        index_mismatch = True
+                        continue
+                    indexed.append((index, _element_text(point)))
+                indexed.sort(key=lambda item: item[0])
+                indices = [index for index, _value in indexed]
+                if len(indices) != len(points) or len(indices) != len(set(indices)):
+                    index_mismatch = True
+                dimensions[key] = [value for _index, value in indexed]
+                if key == "categories":
+                    dimensions["times"] = list(dimensions[key])
+                dimensions[{"categories": "category_indices", "values": "value_indices", "x_values": "x_indices", "y_values": "y_indices", "size_values": "size_indices"}[key]] = indices
+        for names in (("category_indices", "value_indices"), ("x_indices", "y_indices"), ("x_indices", "y_indices", "size_indices")):
+            present = [dimensions[name] for name in names if name in dimensions]
+            if len(present) > 1 and any(indices != present[0] for indices in present[1:]):
+                index_mismatch = True
+        record: dict[str, Any] = {"series": series_title, **dimensions}
         series.append(record)
-    return {
+    chart_root = next(iter(descendants(root, "chart")), None)
+    title_node = next(
+        (child for child in chart_root if local_name(child) == "title"),
+        None,
+    ) if chart_root is not None else None
+    source_title = _element_text(title_node) if title_node is not None else ""
+    title = source_title or "Untitled source chart"
+    result = {
         "page_numbers": list(asset["page_numbers"]),
         "source_asset_id": asset["asset_id"],
         "title": title,
         "series": series,
     }
+    if len(asset["page_numbers"]) == 1:
+        result["source_page"] = asset["page_numbers"][0]
+    incomplete_reason = (
+        "combination" if len(plot_nodes) > 1
+        else primitive if not source_title or index_mismatch
+        else "source_chart" if not primitive
+        else None
+    )
+    if incomplete_reason:
+        result["disabled_primitive"] = incomplete_reason
+        result["fallback"] = "native_table"
+        if not source_title:
+            result["source_wording"] = "Untitled source chart; cached labels and values retained."
+    elif primitive and variant:
+        result["rendering_primitive"] = primitive
+        result["chart_variant"] = variant
+    if primitive == "xy":
+        result.update(metadata)
+    elif "value_unit" in metadata:
+        result["unit"] = metadata["value_unit"]
+    return result
 
 
 def _read_relationships(docx_path: Path) -> dict[str, str | None]:

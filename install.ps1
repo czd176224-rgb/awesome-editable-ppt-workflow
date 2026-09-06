@@ -40,6 +40,17 @@ if (Test-Path -LiteralPath $ReceiptPath -PathType Leaf) {
         throw "The existing Editable PPT install receipt is invalid; refusing to modify registration."
     }
 }
+if (-not $RuntimeRoot) {
+    $RuntimeRoot = if ($PreviousReceipt.runtimeRoot) { [string]$PreviousReceipt.runtimeRoot } else { Join-Path $env:USERPROFILE '.codex\plugin-runtimes\awesome-editable-ppt-workflow-fixed-canvas-cm-v2' }
+}
+if (-not $BinDir) {
+    $BinDir = if ($PreviousReceipt.binDir) { [string]$PreviousReceipt.binDir } else { Join-Path $env:USERPROFILE '.codex\bin' }
+}
+$RuntimeRoot = [IO.Path]::GetFullPath($RuntimeRoot)
+$BinDir = [IO.Path]::GetFullPath($BinDir)
+. (Join-Path $PluginRoot 'scripts\runtime_root_safety.ps1')
+. (Join-Path $PluginRoot 'scripts\runtime_transaction.ps1')
+$RuntimeSnapshot = $null
 $TransactionPath = "$ReceiptPath.transaction.json"
 if (Test-Path -LiteralPath $TransactionPath -PathType Leaf) {
     throw "RECOVERY-REQUIRED: an unfinished install transaction exists at $TransactionPath. Resolve it before retrying."
@@ -55,6 +66,7 @@ function Write-InstallTransaction([string]$Status, [string]$Detail) {
             status = $Status
             detail = $Detail
             previous = $PreviousReceipt
+            runtimeSnapshot = $RuntimeSnapshot
             desired = [ordered]@{
                 plugin = $PluginName
                 marketplace = $MarketplaceName
@@ -121,6 +133,7 @@ if (-not $PreviousReceipt -and $Existing -match "(?m)^\s*$([regex]::Escape($Mark
 }
 
 function Restore-PreviousRegistration {
+    if ($RuntimeSnapshot) { Restore-EditablePptRuntime $RuntimeSnapshot }
     & $CodexPath plugin remove "$PluginName@$MarketplaceName" 2>$null
     & $CodexPath plugin marketplace remove $MarketplaceName 2>$null
     if ($PreviousReceipt) {
@@ -131,7 +144,8 @@ function Restore-PreviousRegistration {
     }
 }
 
-if ($PreviousReceipt) { Write-InstallTransaction "switching" "Preparing exact-ref registration transition." }
+$RuntimeSnapshot = Backup-EditablePptRuntime $RuntimeRoot $BinDir $PluginRoot $PreviousReceipt
+Write-InstallTransaction "switching" "Preparing exact-ref registration and runtime transition."
 
 try {
     if ($PreviousReceipt) {
@@ -181,6 +195,9 @@ try {
         releaseTag = $ReleaseTag
         pluginVersion = [string]$PackageInfo.pluginVersion
         workflowContractVersion = [string]$PackageInfo.workflowContractVersion
+        runtimeRoot = $RuntimeRoot
+        binDir = $BinDir
+        rollbackSnapshot = $RuntimeSnapshot.backupRoot
         installedAtUtc = [DateTime]::UtcNow.ToString("o")
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $ReceiptTemporary -Encoding utf8
     Move-Item -LiteralPath $ReceiptTemporary -Destination $ReceiptPath -Force

@@ -84,6 +84,219 @@ def test_native_special_page_bypasses_creative_stages_and_assembles_with_content
     assert set(assembled[0]) == {1, 2}
 
 
+def test_explicit_failed_page_recovery_uses_only_numbered_recovery_workspace(tmp_path: Path) -> None:
+    from workflow_v6_pipeline import (
+        PipelineConfiguration,
+        PipelineDependencies,
+        recover_failed_pages,
+    )
+
+    project = _project(tmp_path, pages=1)
+    calls: list[tuple[int, int]] = []
+
+    def loop(workspace, **_kwargs):
+        assert workspace == {"page": 1, "recovery_round": 2}
+        return SimpleNamespace(
+            status="accepted", accepted={"page": 1}, attempts=(),
+            failure_problems=(), correction_count=0,
+        )
+
+    report = recover_failed_pages(
+        project, [1], recovery_round=2,
+        dependencies=PipelineDependencies(
+            open_workspace=lambda *_args: pytest.fail("ordinary workspace was opened"),
+            open_recovery_workspace=lambda _root, page, recovery_round: (
+                calls.append((page, recovery_round))
+                or {"page": page, "recovery_round": recovery_round}
+            ),
+            evidence_recorder=lambda _workspace: object(),
+            candidate_loop=loop,
+        ),
+        configuration=PipelineConfiguration(page_workers=1),
+    )
+
+    assert calls == [(1, 2)]
+    assert report.completed_pages == (1,)
+
+
+def test_explicit_failed_page_recovery_uses_the_default_keyword_only_workspace_factory(
+    tmp_path: Path,
+) -> None:
+    from workflow_v6_pipeline import (
+        PipelineConfiguration,
+        PipelineDependencies,
+        recover_failed_pages,
+    )
+
+    project = _project(tmp_path, pages=1)
+    prior = project / "04_v6/experiments/live-page-001"
+    prior.mkdir(parents=True)
+    (prior / "failed_outcome.json").write_text("{}\n", encoding="utf-8")
+
+    report = recover_failed_pages(
+        project, [1], recovery_round=1,
+        dependencies=PipelineDependencies(
+            evidence_recorder=lambda _workspace: object(),
+            candidate_loop=lambda workspace, **_kwargs: SimpleNamespace(
+                status="accepted", accepted={"experiment_id": workspace.experiment_id},
+                attempts=(), failure_problems=(), correction_count=0,
+            ),
+        ),
+        configuration=PipelineConfiguration(page_workers=1),
+    )
+
+    assert report.failed_pages == {}
+    assert report.page_outcomes[1].accepted == {
+        "experiment_id": "live-page-001-recovery-001",
+    }
+
+
+@pytest.mark.parametrize("page_state", ["accepted", "page_complete"])
+def test_ordinary_run_pages_reuses_recovery_acceptance_workspace_without_external_calls(
+    tmp_path: Path, page_state: str,
+) -> None:
+    # Break caught: ordinary re-entry verifies a recovery receipt against the
+    # original live-page identity instead of its signed recovery experiment.
+    from workflow_v6_pipeline import PipelineConfiguration, PipelineDependencies, run_pages
+    from workflow_v6_state import load, save
+
+    project = _project(tmp_path, pages=1)
+    recovery_id = "live-page-001-recovery-001"
+    (project / "04_v6/experiments" / recovery_id).mkdir(parents=True)
+    (project / "04_v6/images").mkdir(parents=True)
+    (project / "04_v6/images/page_001.json").write_text(
+        json.dumps({"experiment_id": recovery_id}), encoding="utf-8",
+    )
+    state = load(project)
+    state["pages"][0]["state"] = page_state
+    save(project, state)
+    seen: list[str] = []
+
+    def loop(workspace, **_kwargs):
+        seen.append(workspace.experiment_id)
+        assert workspace.experiment_id == recovery_id
+        return SimpleNamespace(
+            status="accepted", accepted={"experiment_id": workspace.experiment_id},
+            attempts=(), failure_problems=(), correction_count=0,
+        )
+
+    report = run_pages(
+        project, [1],
+        dependencies=PipelineDependencies(
+            evidence_recorder=lambda _workspace: object(),
+            candidate_loop=loop,
+            director_invoke=lambda *_a, **_k: pytest.fail("ordinary reentry called director"),
+            provider_runner=lambda *_a, **_k: pytest.fail("ordinary reentry called Image2"),
+            reviewer_invoke=lambda *_a, **_k: pytest.fail("ordinary reentry called reviewer"),
+        ),
+        configuration=PipelineConfiguration(page_workers=1),
+    )
+
+    assert report.failed_pages == {}
+    assert report.completed_pages == (1,)
+    assert seen == [recovery_id]
+
+
+@pytest.mark.parametrize("recovery_round", [0, -1, True, 1000])
+def test_explicit_failed_page_recovery_rejects_invalid_round_before_opening(
+    tmp_path: Path, recovery_round: object,
+) -> None:
+    from workflow_v6_pipeline import PipelineConfiguration, recover_failed_pages
+
+    project = _project(tmp_path, pages=1)
+    with pytest.raises(ValueError, match="1 through 999"):
+        recover_failed_pages(
+            project, [1], recovery_round=recovery_round,  # type: ignore[arg-type]
+            configuration=PipelineConfiguration(page_workers=1),
+        )
+
+
+@pytest.mark.parametrize(
+    "assembler,expected",
+    [
+        (
+            lambda _root, _outcomes: {
+                "status": "complete", "output": "08_final/deck.pptx", "sha256": "a" * 64,
+            },
+            {"status": "complete", "output": "08_final/deck.pptx", "sha256": "a" * 64},
+        ),
+        (
+            lambda _root, _outcomes: {"status": "deferred", "reason": "pages incomplete"},
+            {"status": "deferred", "reason": "pages incomplete"},
+        ),
+        (
+            lambda _root, _outcomes: {
+                "status": "validation_incomplete",
+                "release_ready": False,
+                "candidate_output": {
+                    "relative_path": "08_candidate/deck.pptx",
+                    "sha256": "b" * 64,
+                },
+            },
+            {
+                "status": "validation_incomplete",
+                "release_ready": False,
+                "candidate_output": {
+                    "relative_path": "08_candidate/deck.pptx",
+                    "sha256": "b" * 64,
+                },
+            },
+        ),
+        (None, {"status": "not_run"}),
+    ],
+)
+def test_pipeline_report_preserves_real_assembly_status_without_inventing_a_digest(
+    tmp_path: Path, assembler, expected: dict[str, str],
+) -> None:
+    from workflow_v6_pipeline import PipelineConfiguration, PipelineDependencies, run_pages
+
+    project = _project(tmp_path, pages=1)
+    report = run_pages(
+        project, [1],
+        dependencies=PipelineDependencies(
+            open_workspace=lambda root, page: {"page": page},
+            evidence_recorder=lambda workspace: object(),
+            candidate_loop=lambda workspace, **kwargs: {"accepted": workspace["page"]},
+            assemble_project=assembler,
+        ),
+        configuration=PipelineConfiguration(
+            page_workers=1, initial_page_concurrency=1, maximum_page_concurrency=1,
+        ),
+    )
+
+    assert report.assembly == expected
+    assert report.to_dict()["assembly"] == expected
+    if expected["status"] != "complete":
+        assert "sha256" not in report.assembly
+
+
+def test_pipeline_report_marks_assembly_exception_failed_without_fabricating_digest(
+    tmp_path: Path,
+) -> None:
+    from workflow_v6_pipeline import PipelineConfiguration, PipelineDependencies, run_pages
+
+    project = _project(tmp_path, pages=1)
+
+    def fail(_root, _outcomes):
+        raise RuntimeError("assembly stopped")
+
+    report = run_pages(
+        project, [1],
+        dependencies=PipelineDependencies(
+            open_workspace=lambda root, page: {"page": page},
+            evidence_recorder=lambda workspace: object(),
+            candidate_loop=lambda workspace, **kwargs: {"accepted": workspace["page"]},
+            assemble_project=fail,
+        ),
+        configuration=PipelineConfiguration(
+            page_workers=1, initial_page_concurrency=1, maximum_page_concurrency=1,
+        ),
+    )
+
+    assert report.assembly == {"status": "failed", "reason": "RuntimeError: assembly stopped"}
+    assert "sha256" not in report.assembly
+
+
 def test_pipeline_dispatch_reads_composition_through_secure_project_io(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -257,6 +470,33 @@ def test_rate_limit_contracts_future_launches_without_cancelling_running_pages_a
     assert scheduler.record_round(RoundOutcome(rate_limits=1)).concurrency == 1
     assert scheduler.record_round(RoundOutcome(successes=1, completed=1, expected=1)).concurrency == 2
     assert scheduler.record_round(RoundOutcome(successes=1, completed=1, expected=1)).concurrency == 3
+
+
+def test_non_429_failure_recovers_after_a_later_provider_success(tmp_path: Path) -> None:
+    # A semantic/reconstruction failure may contract page concurrency, but it
+    # must not create a synthetic 429 epoch that prevents later normal success
+    # from restoring the configured page limit.
+    import workflow_v6_pipeline as pipeline
+    from adaptive_scheduler import AdaptiveScheduler, ProjectGenerationGate, RoundOutcome
+
+    scheduler = AdaptiveScheduler(2, initial_concurrency=2, maximum_concurrency=2)
+    gate = ProjectGenerationGate(tmp_path, profile="balanced")
+    epoch = pipeline._ThrottleEpoch(scheduler)
+
+    assert scheduler.record_round(
+        RoundOutcome(failures=1, completed=0, expected=1),
+    ).concurrency == 1
+
+    call = epoch.provider_started()
+    generation = epoch.provider_succeeded(call)
+
+    assert generation == 0
+    assert epoch.record_round(
+        gate,
+        RoundOutcome(successes=1, completed=1, expected=1),
+        [generation],
+    ) is True
+    assert scheduler.snapshot().concurrency == 2
 
 
 def test_mixed_429_batch_holds_gate_and_scheduler_at_one_until_a_later_round(tmp_path: Path) -> None:
