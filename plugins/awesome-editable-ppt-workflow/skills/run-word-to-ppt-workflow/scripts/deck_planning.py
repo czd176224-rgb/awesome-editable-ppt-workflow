@@ -1,8 +1,11 @@
 """Model-authored deck planning, reviewed in the existing final confirmation."""
+from copy import deepcopy
 from dataclasses import asdict
+from functools import lru_cache
 import hashlib
 import json
 from pathlib import Path
+from threading import Lock
 
 from director_taskbook import taskbook_digest, validate_taskbook
 
@@ -26,10 +29,25 @@ def source_digest(project):
     return hashlib.sha256(source_path(project).read_bytes()).hexdigest()
 
 
-def complete_source(project):
+_source_parse_lock = Lock()
+
+
+@lru_cache(maxsize=4)
+def _parsed_source(path, source_hash, marker):
     from extract_docx_pages import extract_auto
+    result = extract_auto(path, marker_pattern=marker)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != source_hash:
+        raise ValueError("Word source changed during full-source parsing")
+    return result
+
+
+def complete_source(project):
     from workflow_v6_source import V6_PAGE_MARKER
-    return extract_auto(source_path(project), marker_pattern=V6_PAGE_MARKER)
+    # ponytail: one lock serializes source reads/parses; split per source if cross-deck contention matters.
+    with _source_parse_lock:
+        path = source_path(project).resolve()
+        source_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        return deepcopy(_parsed_source(path, source_hash, V6_PAGE_MARKER))
 
 
 def validate_pages(value, selected):
