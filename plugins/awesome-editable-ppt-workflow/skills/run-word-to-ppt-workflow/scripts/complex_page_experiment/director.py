@@ -23,8 +23,6 @@ from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 from workflow_v6_materials import resolve_numeric_authorities
 from director_taskbook import confirmed_taskbook_prompt
 
-from .consulting_prompt import _render_complete_source_block
-
 from .materials import (
     CompletePageMaterialView,
     validate_published_complete_page_material_view,
@@ -73,6 +71,30 @@ def _load_schema() -> dict[str, Any]:
 
 def _canonical_text(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _render_complete_source_block(block: object) -> str:
+    if not isinstance(block, Mapping):
+        raise ValueError("complete Word content block must be a mapping")
+    block_type = block.get("type")
+    if block_type in {"paragraph", "list"}:
+        text = block.get("text")
+        if not isinstance(text, str):
+            raise ValueError(f"complete Word {block_type} block text is missing")
+        if block_type == "paragraph":
+            return text
+        marker = "1." if block.get("list_kind") == "number" else "-"
+        level = block.get("level", 0)
+        indent = "  " * level if isinstance(level, int) and level > 0 else ""
+        return f"{indent}{marker} {text}"
+    if block_type == "table":
+        rows = block.get("rows")
+        if not isinstance(rows, list) or any(not isinstance(row, list) for row in rows):
+            raise ValueError("complete Word table rows are missing")
+        if any(any(not isinstance(cell, str) for cell in row) for row in rows):
+            raise ValueError("complete Word table cells must be text")
+        return "\n".join(" | ".join(row) for row in rows)
+    raise ValueError(f"unsupported complete Word block type: {block_type}")
 
 
 def _canonical_bytes(value: object) -> bytes:

@@ -1,14 +1,11 @@
-# 1.2.3 public release runbook
+# New-director release runbook
 
-Release identity is fixed by `package-info.json`: version `1.2.3`, tag `v1.2.3`, workflow `awesome-word-ppt-workflow-v1`, prompt contract `consulting-page-director-v3-compact-page-plan`, and policy `generate-without-refs-edit-with-confirmed-refs`. The immutable `v1.2.2` release remains the supported rollback baseline.
+This development branch is not release-ready. The existing immutable `v1.2.3` archive remains the old-version rollback package; never overwrite its tag or assets. Select a new version in the final release milestone and update all package, plugin and marketplace identities together.
 
-The single final UI submission remains the sole material/reference authority. Word remains the page-content and factual authority. The confirmed background color becomes the native whole-slide background on every final page. The workflow conservatively matches the taskbook's confirmed emphasis content to Word pages; only matched emphasis pages may use secondary-color-family text. Non-emphasis pages may use related colors in shapes, lines and text-box fills, while text emphasis uses weight, size, position or another non-accent treatment. The page director exposes source-backed process, hierarchy, parallelism, ownership, comparison and causality through color, position, shape, connectors and visual hierarchy.
+The new prompt contract is `awesome-page-design-v1`. Only the new full-context page director runs. Complete source facts, a single confirmation, independent review, bounded corrections, signed recovery and editable accepted-image reconstruction are release requirements.
 
-The final adapted candidate receives one independent visual review; only explicit acceptance may enter reconstruction, and a rejected page may use at most two corrections. Service-original dimensions and quality remain truthful in the trace. After acceptance, the Codex page worker performs object-level reconstruction before fixed layers and final assembly. There is no V4/V5 runtime fallback, forced candidate acceptance, exact overlay, or post-reconstruction visual repair. Authentication failure is an external credential failure, not a successful reconstruction.
-
-1. Complete real-document acceptance, including the confirmed cover, TOC, section and closing pages and preserved source-page order. Run `scripts/release_gate.ps1` locally, including portable smoke. Keep `releaseStatus` at `development-not-release-ready` until both acceptance and the gate pass.
-2. After successful acceptance and gate verification, explicitly set `package-info.json` `releaseStatus` to `release-ready` and update the README status. Commit the reviewed changes, then rerun the gate and refresh the public source manifest and release audit through the export gate. Export accepts development and release-ready snapshots; exporting alone does not approve a release.
-3. Merge the reviewed release commit into `main` with green bounded Windows CI.
-4. Create annotated tag `v1.2.3` on the exact reviewed merge commit and push it.
-5. The release workflow rejects any status other than `release-ready`, repeats the gate, builds the deterministic Windows ZIP and publishes the GitHub Release.
-6. Download the published ZIP and `SHA256SUMS.txt`, verify the digest, perform a clean installation, restart Codex and confirm the installed plugin reports `1.2.3`.
+1. Complete real sample-page, whole-deck and supported recovery acceptance. Keep `releaseStatus` at `development-not-release-ready` until acceptance and `scripts/release_gate.ps1` pass, including the portable installation check.
+2. Verify the old package and its separate runtime remain usable. Record installation identity, checksums and actual validation evidence.
+3. Set `release-ready` only after the final milestone is satisfied. Refresh the public manifest and audit using the export gate; exporting alone does not approve a release.
+4. Merge the reviewed release commit with green Windows CI, then create the new annotated tag from `package-info.json` on that exact commit. Do not reuse an existing tag.
+5. Let the release workflow build the deterministic Windows ZIP. Download the ZIP and SHA256SUMS, verify the digest, install into the intended environment and verify the installed version and representative use.

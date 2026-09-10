@@ -7,7 +7,7 @@ import pytest
 from docx import Document
 from pptx import Presentation
 
-from test_confirm_ui_contract import load_server, valid_contract
+from test_confirm_ui_contract import attach_deck_plan, load_server, valid_contract
 from test_workflow_v6_composition import page
 from workflow_v6_composition import compose_pages, validate_structure_selection
 from workflow_v6_source import initialize_v6_project
@@ -69,6 +69,7 @@ def test_confirm_and_render_all_structure_roles(tmp_path: Path):
     selected = [{k: v for k, v in p.items() if k != "source_preview"} for p in data["composition"]["pages"]]
     payload = {**valid_contract(revision=0), "selected_director_template_id": data["recommended_template_id"],
                "director_taskbook": data["director_taskbook"], "confirmed_pages": selected, "structure_confirmed": True}
+    attach_deck_plan(project, payload, structured=True)
     bad = copy.deepcopy(payload)
     bad["confirmed_pages"] = [p for p in selected if p["source_page_number"] is None]
     assert client.post("/api/confirm", json=bad).status_code == 400

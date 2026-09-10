@@ -238,7 +238,7 @@ def confirmed_page(
         "source_page_id": output_page_number,
         "page_role": page_role,
         "role_source": role_source,
-        "chapter_title": "Chapter" if page_role == "section" else "",
+        "chapter_title": "Chapter",
         "fixed_page_title": f"Page {output_page_number}",
         "source_page_number": output_page_number,
         "material_source_block_ids": [f"block-{output_page_number}"],
@@ -365,6 +365,8 @@ def write_preconfirmation_files(project: Path, *, page_count: int) -> None:
 def authority_bytes(project: Path) -> dict[str, bytes]:
     paths = [
         project / "workflow_v6.json",
+        project / "00_source" / "source.docx",
+        project / "02_v6" / "deck_plan_draft.json",
         project / "02_v6" / "page_composition.json",
         project / "02_v6" / "paginated_word_source.json",
     ]
@@ -376,6 +378,52 @@ def authority_bytes(project: Path) -> dict[str, bytes]:
             for number in (1, 2, 3, 999)
         )
     return {path.relative_to(project).as_posix(): path.read_bytes() for path in paths if path.is_file()}
+
+
+def attach_deck_plan(project: Path, payload: dict, *, structured: bool = False) -> None:
+    """Stage a real draft so confirmation tests exercise the production seal."""
+    from docx import Document
+    from deck_planning import digest, source_digest
+
+    if "confirmed_pages" not in payload:
+        composition = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
+        payload["confirmed_pages"] = composition["pages"]
+    source_path = project / "00_source/source.docx"
+    if not source_path.exists():
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source = json.loads((project / "02_v6/paginated_word_source.json").read_text(encoding="utf-8"))
+        document = Document()
+        for page in source["pages"]:
+            document.add_paragraph(f"【第{page['page_number']}页】")
+            for block in page["blocks"]:
+                document.add_paragraph(block["text"])
+        document.save(source_path)
+    director = load_server()._director_confirmation(project, payload)
+    plan = {"pages": [{
+        "output_page_number": page["output_page_number"],
+        "chapter_title": page["chapter_title"] or "Source chapter",
+        "title": page["fixed_page_title"],
+        "emphasis": f"Present the source facts for {page['fixed_page_title']}",
+        "previous_connection": "",
+        "next_connection": "",
+    } for page in payload["confirmed_pages"]]}
+    draft = {
+        "plan": plan,
+        "taskbook_digest": director["taskbook_digest"],
+        "source_digest": source_digest(project),
+        "selection_digest": digest(payload["confirmed_pages"]),
+        "runtime": {"provider": "test-fixture"},
+    }
+    (project / "02_v6/deck_plan_draft.json").write_text(
+        json.dumps(draft, ensure_ascii=False), encoding="utf-8",
+    )
+    payload["deck_plan"] = plan
+    if structured:
+        payload.update({
+            "selected_director_template_id": director["template_id"],
+            "director_taskbook": director["taskbook"],
+            "structure_confirmed": True,
+        })
 
 
 def same_toc_synthesized_project(tmp_path: Path) -> tuple[Path, dict]:
@@ -439,6 +487,7 @@ def test_v6_final_submission_freezes_visuals_and_complete_composition(tmp_path: 
     ]
     payload["confirmed_pages"][0]["role_source"] = "automatic"
     write_preconfirmation_files(project, page_count=3)
+    attach_deck_plan(project, payload)
 
     result = load_server()._v6_final_submission(project, visual_contract(payload), payload)
 
@@ -448,7 +497,7 @@ def test_v6_final_submission_freezes_visuals_and_complete_composition(tmp_path: 
     assert result["confirmed_pages"][-1]["visible_page_number"] is False
 
 
-def test_v6_confirmation_persists_director_and_uses_automatic_composition(tmp_path: Path):
+def test_v6_confirmation_persists_director_and_selected_composition(tmp_path: Path):
     project = make_v6_project(tmp_path, page_count=3)
     proposed = write_composition(project, roles=["cover", "content", "closing"])
     write_preconfirmation_files(project, page_count=3)
@@ -457,6 +506,7 @@ def test_v6_confirmation_persists_director_and_uses_automatic_composition(tmp_pa
         "selected_director_template_id": "investment-committee",
         "director_taskbook": valid_taskbook(),
     })
+    attach_deck_plan(project, payload, structured=True)
 
     result = load_server()._save_visual_contract(project, payload)
     state = json.loads((project / "workflow_v6.json").read_text(encoding="utf-8"))
@@ -466,6 +516,7 @@ def test_v6_confirmation_persists_director_and_uses_automatic_composition(tmp_pa
     assert result["director_confirmation"]["template_version"] == "1.0"
     assert len(result["director_confirmation"]["taskbook_digest"]) == 64
     assert state["director_confirmation"] == result["director_confirmation"]
+    assert result["director_confirmation"]["deck_plan"]["plan"] == payload["deck_plan"]
     assert set(result["global_visual_contract"]) == REQUIRED_VISUAL_FIELDS
 
 
@@ -478,6 +529,7 @@ def test_v6_confirmation_preserves_optional_highlight_color(tmp_path: Path):
         "selected_director_template_id": "corporate-planning",
         "director_taskbook": valid_taskbook(),
     })
+    attach_deck_plan(project, payload, structured=True)
 
     result = load_server()._save_visual_contract(project, payload)
 
@@ -665,6 +717,7 @@ def test_v6_recommendations_show_composition_and_one_post_freezes_it(tmp_path: P
         "selected_director_template_id": data["recommended_template_id"],
         "director_taskbook": data["director_taskbook"],
     })
+    attach_deck_plan(project, payload, structured=True)
     response = client.post("/api/confirm", json=payload)
 
     assert response.status_code == 200
@@ -725,6 +778,7 @@ def test_v6_final_submission_transactionally_migrates_all_page_authority(tmp_pat
     payload = valid_contract(revision=0)
     payload["confirmed_pages"] = reordered
     server = load_server()
+    attach_deck_plan(project, payload)
     original_replace = server._transaction_replace
     replaced = []
 
@@ -819,14 +873,22 @@ def test_synthesized_identity_tampering_is_rejected_before_seal(tmp_path: Path, 
 
 
 @pytest.mark.parametrize(
-    "corruption", ["missing", "invalid_json", "noncontinuous", "identity_mismatch"],
+    ("corruption", "message"), [
+        ("missing", "literal regular file"),
+        ("invalid_json", "Expecting property name"),
+        ("noncontinuous", "must be continuous"),
+        ("identity_mismatch", "identity is incorrect"),
+    ],
 )
 def test_current_confirmation_requires_valid_word_source_authority_before_seal(
-    tmp_path: Path, corruption: str,
+    tmp_path: Path, corruption: str, message: str,
 ):
     project = make_v6_project(tmp_path, page_count=2)
     proposed = write_composition(project, roles=["cover", "content"])
     write_preconfirmation_files(project, page_count=2)
+    payload = valid_contract(revision=0)
+    payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload, structured=True)
     source = project / "02_v6/paginated_word_source.json"
     if corruption == "missing":
         source.unlink()
@@ -840,12 +902,11 @@ def test_current_confirmation_requires_valid_word_source_authority_before_seal(
         value = json.loads(source.read_text(encoding="utf-8"))
         value["pages"][1]["source_page_id"] = 999
         source.write_text(json.dumps(value), encoding="utf-8")
-    payload = valid_contract(revision=0)
-    payload["confirmed_pages"] = proposed["pages"]
 
     response = load_server().create_app(project).test_client().post("/api/confirm", json=payload)
 
     assert response.status_code == 400, response.get_json()
+    assert message in response.get_json()["error"]
     assert not (project / "confirm_ui/result.json").exists()
 
 
@@ -853,6 +914,9 @@ def test_current_confirmation_rejects_reparse_word_source_authority_before_seal(
     project = make_v6_project(tmp_path, page_count=1)
     proposed = write_composition(project, roles=["content"])
     write_preconfirmation_files(project, page_count=1)
+    payload = valid_contract(revision=0)
+    payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload, structured=True)
     source = project / "02_v6/paginated_word_source.json"
     outside = tmp_path / "outside-source.json"
     source.replace(outside)
@@ -860,12 +924,11 @@ def test_current_confirmation_rejects_reparse_word_source_authority_before_seal(
         source.symlink_to(outside)
     except OSError:
         pytest.skip("file symlinks are unavailable")
-    payload = valid_contract(revision=0)
-    payload["confirmed_pages"] = proposed["pages"]
 
     response = load_server().create_app(project).test_client().post("/api/confirm", json=payload)
 
     assert response.status_code == 400, response.get_json()
+    assert "literal regular file" in response.get_json()["error"]
     assert outside.is_file()
     assert not (project / "confirm_ui/result.json").exists()
 
@@ -874,16 +937,18 @@ def test_current_confirmation_rejects_aliased_word_source_authority_before_seal(
     project = make_v6_project(tmp_path, page_count=1)
     proposed = write_composition(project, roles=["content"])
     write_preconfirmation_files(project, page_count=1)
+    payload = valid_contract(revision=0)
+    payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload, structured=True)
     source = project / "02_v6/paginated_word_source.json"
     outside = tmp_path / "outside-source-hardlink.json"
     source.replace(outside)
     os.link(outside, source)
-    payload = valid_contract(revision=0)
-    payload["confirmed_pages"] = proposed["pages"]
 
     response = load_server().create_app(project).test_client().post("/api/confirm", json=payload)
 
     assert response.status_code == 400, response.get_json()
+    assert "unaliased project file" in response.get_json()["error"]
     assert outside.is_file()
     assert not (project / "confirm_ui/result.json").exists()
 
@@ -892,9 +957,10 @@ def test_v6_transaction_write_failure_preserves_all_authority_bytes(tmp_path: Pa
     project = make_v6_project(tmp_path, page_count=3)
     proposed = write_composition(project, roles=["cover", "content", "closing"])
     write_preconfirmation_files(project, page_count=3)
-    before = authority_bytes(project)
     payload = valid_contract(revision=0)
     payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload)
+    before = authority_bytes(project)
     server = load_server()
     original = server._transaction_write_bytes
     calls = 0
@@ -918,9 +984,10 @@ def test_v6_transaction_replace_failure_rolls_back_and_retry_succeeds(tmp_path: 
     project = make_v6_project(tmp_path, page_count=3)
     proposed = write_composition(project, roles=["cover", "content", "closing"])
     write_preconfirmation_files(project, page_count=3)
-    before = authority_bytes(project)
     payload = valid_contract(revision=0)
     payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload)
+    before = authority_bytes(project)
     server = load_server()
     original = server._transaction_replace
     calls = 0
@@ -950,6 +1017,7 @@ def test_v6_first_preparing_manifest_write_interruption_leaves_no_formal_transac
     write_preconfirmation_files(project, page_count=1)
     payload = valid_contract(revision=0)
     payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload)
     server = load_server()
     original = server._transaction_write_bytes
     calls = 0
@@ -982,6 +1050,7 @@ def test_v6_leftover_literal_preparing_directory_is_cleaned_before_submission(tm
     (preparing / "partial.tmp").write_text("incomplete", encoding="utf-8")
     payload = valid_contract(revision=0)
     payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload)
 
     assert load_server()._v6_final_submission(
         project, visual_contract(payload), payload
@@ -1024,6 +1093,7 @@ def test_v6_interrupted_commit_is_recovered_by_next_submission(tmp_path: Path, m
     write_preconfirmation_files(project, page_count=3)
     payload = valid_contract(revision=0)
     payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload)
     server = load_server()
     original = server._transaction_replace
     calls = 0
@@ -1080,6 +1150,7 @@ def test_v6_committed_manifest_continues_same_submission_after_cleanup_interrupt
     write_preconfirmation_files(project, page_count=1)
     payload = valid_contract(revision=0)
     payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload)
     server = load_server()
     original = server._remove_transaction
 
@@ -1120,6 +1191,7 @@ def test_v6_rejects_reparse_page_authority_directory_outside_project(tmp_path: P
         pytest.skip(f"junction creation unavailable: {completed.stderr}")
     payload = valid_contract(revision=0)
     payload["confirmed_pages"] = proposed["pages"]
+    attach_deck_plan(project, payload)
 
     with pytest.raises(ValueError, match="literal project directory|reparse"):
         load_server()._v6_final_submission(project, visual_contract(payload), payload)
@@ -1182,6 +1254,7 @@ def test_server_exposes_only_the_simplified_ui_and_lifecycle_routes(tmp_path: Pa
         "/api/health",
         "/api/session",
         "/api/recommendations",
+        "/api/deck-plan",
         "/api/confirm",
         "/api/shutdown",
     }
@@ -1375,6 +1448,7 @@ def test_sealed_submission_rejects_replacement_and_preserves_result_and_state_by
     client = load_server().create_app(str(project)).test_client()
     first = valid_contract(revision=0)
     first["confirmed_pages"] = composition["pages"]
+    attach_deck_plan(project, first, structured=True)
     assert client.post("/api/confirm", json=first).status_code == 200
     assert load_server()._wait(project, "final", 1) == 0
     result_path = confirm_dir / "result.json"
@@ -1382,7 +1456,7 @@ def test_sealed_submission_rejects_replacement_and_preserves_result_and_state_by
     result_before = result_path.read_bytes()
     state_before = state_path.read_bytes()
 
-    replacement = valid_contract(revision=0)
+    replacement = dict(first)
     replacement["submission_id"] = "submission-0002"
     replacement["primary_color"] = "#000000"
     replacement["confirmed_pages"] = composition["pages"]

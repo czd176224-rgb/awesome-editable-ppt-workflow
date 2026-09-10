@@ -3,21 +3,17 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import re
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from jsonschema import Draft202012Validator
 
-from awesome_page_materials import collect_page_materials
 from codex_subscription_runtime import CodexStructuredResult
-from complex_page_experiment.consulting_prompt import _color_constraints
+from complex_page_experiment.director import _render_complete_source_block
 from complex_page_experiment.director import (
     DirectorArtifact,
     _resolve_director_numeric_authorities,
     _validate_director_value,
-    compile_consulting_six_part_prompt,
     direct_page,
 )
 from workflow_v6_materials import index_source_numeric_candidates
@@ -30,14 +26,6 @@ from conftest import awesome_four_page_project as awesome_four_page_project_fixt
 from test_materials import _prepare_complete_page_one
 
 
-HEADINGS = (
-    "Task and Canvas",
-    "Core Proposition and Content",
-    "Consulting Information Architecture",
-    "Visual Style and Color",
-    "Text and Typography",
-    "Strict Prohibitions",
-)
 VISUAL_DIRECTOR_REFERENCE = (
     Path(__file__).resolve().parents[2]
     / "scripts"
@@ -48,7 +36,7 @@ VISUAL_DIRECTOR_REFERENCE = (
 DIRECTOR_SCHEMA = (
     Path(__file__).resolve().parents[2]
     / "schemas"
-    / "consulting_page_director_v3.schema.json"
+    / "page_design_v1.schema.json"
 )
 TASKBOOK_VALUES = (
     "董事会追加投资审议",
@@ -61,8 +49,8 @@ TASKBOOK_VALUES = (
 )
 TASKBOOK_BOUNDARY = (
     "This taskbook is a user-confirmed presentation constraint, not factual source material. "
-    "It may guide only how Word information maps to the compact page plan. Lossless within-page "
-    "rewording and regrouping are "
+    "It may guide only how the complete Word context informs the whole-deck page purpose, "
+    "information hierarchy, and continuity. Lossless within-page rewording and layering are "
     "allowed; the taskbook cannot authorize new facts, omitted information, altered meaning, "
     "or moving content between pages."
 )
@@ -73,32 +61,17 @@ _TEST_VIEWS: dict[Path, CompletePageMaterialView] = {}
 
 def _top_level_prompt_sections(prompt: str) -> dict[str, str]:
     headings = (
-        "WORD BODY AND MATERIAL AUTHORITY",
-        "GENERAL VISUAL DIRECTOR PRINCIPLES",
-        "CONFIRMED PRESENTATION TASKBOOK",
-        "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
-        "STRUCTURED OUTPUT REQUIREMENTS",
+        "页面设计方法", "已确认任务书", "已确认页面任务与章节衔接",
+        "完整全文（用于理解章节、关系及衔接，不限于邻页；其他页详细内容仍留在各自页面）",
+        "已确认本页编排（完整适用UI字段，含章节、页面角色和原文对应关系）",
+        "完整页面原文、已确认视觉设置与材料", "本次图片输入顺序", "交付一份可直接执行的画面设计说明",
     )
-    positions = [prompt.index(heading) for heading in headings]
+    positions = [prompt.index("\n" + heading + "\n") + 1 for heading in headings]
     assert positions == sorted(positions)
-    sections: dict[str, str] = {}
-    for index, heading in enumerate(headings):
-        start = positions[index] + len(heading)
-        end = positions[index + 1] if index + 1 < len(headings) else len(prompt)
-        sections[heading] = prompt[start:end].strip()
-    return sections
-
-
-def _compiled_prompt_sections(prompt: str) -> dict[str, str]:
-    markers = tuple(f"## {heading}" for heading in HEADINGS)
-    positions = [prompt.index(marker) for marker in markers]
-    assert positions == sorted(positions)
-    sections: dict[str, str] = {}
-    for index, (heading, marker) in enumerate(zip(HEADINGS, markers, strict=True)):
-        start = positions[index] + len(marker)
-        end = positions[index + 1] if index + 1 < len(markers) else len(prompt)
-        sections[heading] = prompt[start:end].strip()
-    return sections
+    return {
+        heading: prompt[positions[index] + len(heading):positions[index + 1] if index + 1 < len(headings) else len(prompt)].strip()
+        for index, heading in enumerate(headings)
+    }
 
 
 def _captured_director_request(tmp_path: Path) -> tuple[dict[str, object], dict[str, str]]:
@@ -120,38 +93,11 @@ def _captured_director_request(tmp_path: Path) -> tuple[dict[str, object], dict[
     return calls[0], _top_level_prompt_sections(prompt)
 
 
-def _assert_semantic_groups(text: str, groups: tuple[tuple[str, ...], ...]) -> None:
-    normalized = " ".join(text.casefold().split())
-    missing = [group for group in groups if not any(term in normalized for term in group)]
-    assert missing == []
-
-
-def _unsupported_structured_output_paths(schema: object) -> list[str]:
-    unsupported: list[str] = []
-
-    def visit(value: object, path: str = "$") -> None:
-        if isinstance(value, dict):
-            if ("const" in value or "enum" in value) and "type" not in value:
-                unsupported.append(f"{path}: missing type")
-            if "const" in value and isinstance(value["const"], (dict, list)):
-                unsupported.append(f"{path}: non-scalar const")
-            if "uniqueItems" in value:
-                unsupported.append(f"{path}: uniqueItems")
-            for key, child in value.items():
-                visit(child, f"{path}.{key}")
-        elif isinstance(value, list):
-            for index, child in enumerate(value):
-                visit(child, f"{path}[{index}]")
-
-    visit(schema)
-    return unsupported
-
-
 def test_director_output_schema_types_every_const_and_enum() -> None:
     schema_path = (
         Path(__file__).resolve().parents[2]
         / "schemas"
-        / "consulting_page_director_v3.schema.json"
+        / "page_design_v1.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     missing: list[str] = []
@@ -174,7 +120,7 @@ def test_director_output_schema_uses_only_scalar_constants() -> None:
     schema_path = (
         Path(__file__).resolve().parents[2]
         / "schemas"
-        / "consulting_page_director_v3.schema.json"
+        / "page_design_v1.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     non_scalar: list[str] = []
@@ -197,7 +143,7 @@ def test_director_output_schema_avoids_unsupported_unique_items() -> None:
     schema_path = (
         Path(__file__).resolve().parents[2]
         / "schemas"
-        / "consulting_page_director_v3.schema.json"
+        / "page_design_v1.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
@@ -265,7 +211,7 @@ def _prepare_compact_page_facts(source: Path) -> None:
 
     material_path = source / "02_v6" / "awesome_page_materials" / "page_001.json"
     material = json.loads(material_path.read_text(encoding="utf-8"))
-    material["complete_word_content"] = facts
+    material["complete_word_content"] = page["blocks"]
     payload = (
         json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         + "\n"
@@ -278,154 +224,6 @@ def _prepare_compact_page_facts(source: Path) -> None:
         json.dumps(state, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-
-
-def _workspace_without_viewable_materials(
-    tmp_path: Path,
-) -> tuple[ExperimentWorkspace, CompletePageMaterialView]:
-    source = awesome_four_page_project_fixture.__wrapped__(tmp_path)
-    _prepare_complete_page_one(source)
-    page_number = 2
-    material = collect_page_materials(source, page_number)
-    assert material["word_images"] == []
-    assert material["attachment_inputs"] == []
-    payload = (
-        json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        + "\n"
-    ).encode("utf-8")
-    material_path = (
-        source
-        / "02_v6"
-        / "awesome_page_materials"
-        / f"page_{page_number:03d}.json"
-    )
-    material_path.write_bytes(payload)
-    state_path = source / "workflow_v6.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    state["pages"][page_number - 1]["material_receipt"]["digest"] = hashlib.sha256(
-        payload
-    ).hexdigest()
-    state_path.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    from complex_page_experiment import create_experiment_copy
-
-    workspace = create_experiment_copy(
-        source,
-        tmp_path / "experiment-no-viewable-materials",
-        experiment_id="director-no-viewable-materials",
-        page_number=page_number,
-    )
-    view = build_complete_page_material_view(workspace)
-    assert view.multimodal_images == ()
-    return workspace, view
-
-
-def _prompt_sections(*, suffix: str = "") -> dict[str, str]:
-    return {
-        "task_and_canvas": f"A calm luminous field with subtle depth{suffix}.",
-        "core_proposition_and_content": f"Make the verified relationship immediately legible{suffix}.",
-        "text_and_typography": f"Keep names and figures crisp and restrained{suffix}.",
-        "visual_style_and_color": f"Use a wide editorial composition with a clear reading path{suffix}.",
-        "consulting_information_architecture": f"Use the supplied photograph for identity and the rendered page for factual context{suffix}.",
-        "strict_prohibitions": (
-            "Preserve verified identities, source-exact visible copy, and source-supported relationships."
-        ),
-    }
-
-
-def _compiler_material_view(
-    background_color: str = "#FFFFFF",
-    primary_color: str = "#17365D",
-    secondary_color: str = "#CD202A",
-) -> CompletePageMaterialView:
-    return CompletePageMaterialView(
-        {
-            "complete_word_content": copy.deepcopy(
-                _compact_material_view().value["complete_word_content"]
-            ),
-            "visual_contract": {
-                "background_color": background_color,
-                "primary_color": primary_color,
-                "secondary_color": secondary_color,
-            }
-        },
-        (),
-        (),
-        "",
-    )
-
-
-def test_compile_prompt_injects_confirmed_color_roles_and_budgets_once():
-    view = _compiler_material_view("#F7F7F7", "#161616", "#CD202A")
-    value = _director_value()
-
-    prompt = compile_consulting_six_part_prompt(
-        value, view, font_accent_allowed=True
-    )
-    sections = _compiled_prompt_sections(prompt)
-    positive, prohibited = _color_constraints(view, font_accent_allowed=True)
-
-    assert prompt.count(positive) == 1
-    assert prompt.count(prohibited) == 1
-    assert positive in sections["Visual Style and Color"]
-    assert prohibited in sections["Visual Style and Color"]
-    assert "primary color #161616 for long body text" in positive
-    assert "secondary color #CD202A" in positive
-    assert "This is a user-confirmed emphasis page" in positive
-    for obsolete_quota in ("70%-85%", "15%-25%", "3%-7%", "never above 10%"):
-        assert obsolete_quota not in positive + prohibited
-    assert [line[3:] for line in prompt.splitlines() if line.startswith("## ")] == list(HEADINGS)
-
-
-@pytest.mark.parametrize("secondary_color", ["#CD202A", "#1F5AA6", "#287A55"])
-def test_compile_prompt_color_contract_is_hue_independent(secondary_color: str):
-    value = _director_value()
-    prompt = compile_consulting_six_part_prompt(
-        value,
-        _compiler_material_view(secondary_color=secondary_color),
-    )
-    baseline = compile_consulting_six_part_prompt(
-        value,
-        _compiler_material_view(secondary_color="#CD202A"),
-    )
-
-    assert re.sub(r"#[0-9A-F]{6}", "#COLOR", prompt) == re.sub(
-        r"#[0-9A-F]{6}", "#COLOR", baseline
-    )
-    if secondary_color == "#1F5AA6":
-        compiler_owned = " ".join(
-            _color_constraints(
-                _compiler_material_view(secondary_color=secondary_color)
-            )
-        ).casefold()
-        assert " red " not in f" {compiler_owned} "
-        assert not any(term in compiler_owned for term in ("红色", "scarlet", "crimson"))
-
-
-def test_compile_prompt_subordinates_director_color_words_without_deleting_facts():
-    view = _compiler_material_view(secondary_color="#1F5AA6")
-    value = _director_value()
-    positive, prohibited = _color_constraints(view)
-    value["page_plan"]["page_purpose"] += " " + positive
-    value["page_plan"]["primary_relationship"]["visual_instruction"] += (
-        " " + prohibited
-    )
-    source_fact = (
-        "Source fact: Red Beacon, 红色标识, Scarlet Ledger, and Crimson Record are exact names."
-    )
-    value["page_plan"]["support_groups"][0]["label"] += " " + source_fact
-
-    prompt = compile_consulting_six_part_prompt(value, view)
-    sections = _compiled_prompt_sections(prompt)
-
-    assert positive in sections["Consulting Information Architecture"]
-    assert prohibited in sections["Consulting Information Architecture"]
-    assert "has no execution authority" in sections["Consulting Information Architecture"]
-    assert positive in sections["Visual Style and Color"]
-    assert prohibited in sections["Visual Style and Color"]
-    assert prompt.count(source_fact) == 1
 
 
 def _compact_material_view() -> CompletePageMaterialView:
@@ -471,91 +269,28 @@ def _director_value(
     material_view = view or _compact_material_view()
     blocks = material_view.value.get("complete_word_content")
     assert isinstance(blocks, list) and blocks, "director fixture requires source facts"
-    fact_ids = [
-        str(block["source_block_id"])
+    inventory = [
+        {"source_block_id": str(block["source_block_id"]),
+         "source_quote": _render_complete_source_block(block),
+         "display_copy": _render_complete_source_block(block), "target": "body"}
         for block in blocks
     ]
-    primary_fact_ids = fact_ids[:2]
-    destination_fact_id = primary_fact_ids[-1]
-    support_groups = [
-        {
-            "role": "support" if index == 0 else "note",
-            "label": (
-                "Operating support"
-                if index == 0
-                else "Source limitation" if index == 1 else f"Source limitation {index}"
-            ),
-            "fact_ids": [fact_id],
-        }
-        for index, fact_id in enumerate(fact_ids[2:])
-    ]
-    selected_material_id = next(
-        (
-            str(material["material_id"])
-            for material in material_view.value.get("materials", [])
-            if material.get("viewable_image")
-        ),
-        None,
-    )
-    selected_references = (
-        []
-        if selected_material_id is None
-        else [
-            {
-                "material_id": selected_material_id,
-                "use": "Anchor the real source evidence.",
-                "preserve": "Preserve recognizable identity.",
-            }
-        ]
-    )
+    material_id = next((str(item["material_id"]) for item in material_view.value.get("materials", [])
+                        if item.get("viewable_image")), None)
     return {
-        "schema_version": "awesome-consulting-page-director-v3",
+        "schema_version": "awesome-page-design-v1",
         "page_number": int(material_view.value.get("page_number", 5)),
         "quality": "high",
+        "selected_references": [] if material_id is None else [{
+            "material_id": material_id, "use": "Anchor the real source evidence.",
+            "preserve": "Preserve recognizable identity.",
+        }],
         "page_plan": {
-            "page_purpose": "Explain how regional resources enter the fund system.",
-            "primary_relationship": {
-                "grammar": "geography",
-                "description": "Regional resource entrances feed the fund platform.",
-                "fact_ids": primary_fact_ids,
-                "visual_instruction": "Use a map-led resource-entry diagram with explicit connectors.",
-                "nodes": [
-                    {
-                        "node_id": "regional-resources",
-                        "label": "Regional resources",
-                        "fact_ids": [primary_fact_ids[0]],
-                    },
-                    {
-                        "node_id": "fund-platform",
-                        "label": "Fund platform",
-                        "fact_ids": [destination_fact_id],
-                    },
-                ],
-                "edges": [
-                    {
-                        "from_node": "regional-resources",
-                        "to_node": "fund-platform",
-                        "label": "enter",
-                        "fact_ids": [destination_fact_id],
-                    }
-                ],
-            },
-            "core_exhibit": {
-                "grammar": "geography",
-                "description": "A regional map with labeled resource flows.",
-                "fact_ids": primary_fact_ids,
-            },
-            "support_groups": support_groups,
-            "reading_path": "Read the map first, then the operating support and limitation.",
-            "local_visuals": [
-                {
-                    "grammar": "flow",
-                    "instruction": "Use one small arrow sequence for the source-supported entry path.",
-                    "fact_ids": [destination_fact_id],
-                }
-            ],
+            "content_inventory": inventory,
+            "context_bridges": [],
+            "image_prompt": "以清楚的总体关系组织页面，完整显示以下内容：\n" +
+                            "\n".join(item["display_copy"] for item in inventory),
         },
-        "selected_references": selected_references,
     }
 
 
@@ -615,7 +350,6 @@ def test_director_selects_source_ids_then_freezes_resolved_numeric_authority() -
         (), (), "numeric-view",
     )
     value = _director_value(view)
-    value["page_plan"]["core_exhibit"]["grammar"] = "quantitative_chart"
     value["page_plan"]["quantitative_exhibits"] = [{
         "chart_id": "chart:revenue",
         "rendering_primitive": "column_bar",
@@ -634,10 +368,12 @@ def test_director_selects_source_ids_then_freezes_resolved_numeric_authority() -
 
     assert "numeric_authorities" not in value["page_plan"]
     assert resolved["page_plan"]["numeric_authorities"][0]["series"][0]["values"] == [120, 150]
-    prompt = compile_consulting_six_part_prompt(resolved, view)
-    assert "chart:revenue" in prompt
-    assert '"values": [120, 150]' in prompt
-    assert len(_compiled_prompt_sections(prompt)) == 6
+    assert resolved["page_plan"]["image_prompt"] == value["page_plan"]["image_prompt"]
+    _validate_director_value(resolved, view)
+    forged = copy.deepcopy(resolved)
+    forged["page_plan"]["numeric_authorities"][0]["series"][0]["values"][0] = 999
+    with pytest.raises(ValueError, match="numeric authorities"):
+        _validate_director_value(forged, view)
 
 
 def test_empty_quantitative_selection_does_not_freeze_empty_plural_authority() -> None:
@@ -648,239 +384,6 @@ def test_empty_quantitative_selection_does_not_freeze_empty_plural_authority() -
     resolved = _resolve_director_numeric_authorities(value, view)
 
     assert "numeric_authorities" not in resolved["page_plan"]
-
-
-def test_director_fixture_uses_the_supplied_view_facts_and_page_metadata() -> None:
-    view = _compact_material_view()
-    view.value["page_number"] = 9
-    view.value["complete_word_content"] = view.value["complete_word_content"][:3]
-    supplied_ids = ["source-a", "source-b", "source-c"]
-    for block, source_id in zip(
-        view.value["complete_word_content"], supplied_ids, strict=True
-    ):
-        block["source_block_id"] = source_id
-
-    value = _director_value(view)
-    serialized = json.dumps(value, ensure_ascii=False)
-    allocated = [*value["page_plan"]["core_exhibit"]["fact_ids"]]
-    allocated.extend(
-        fact_id
-        for group in value["page_plan"]["support_groups"]
-        for fact_id in group["fact_ids"]
-    )
-
-    assert value["page_number"] == 9
-    assert allocated == supplied_ids
-    assert all(source_id in serialized for source_id in supplied_ids)
-    assert "body-1" not in serialized
-
-
-def _validate_compact_value(value: dict[str, object]) -> tuple[str, ...]:
-    return _validate_director_value(value, _compact_material_view())
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        lambda value: value["page_plan"]["primary_relationship"]["fact_ids"].append("body-unknown"),
-        lambda value: value["page_plan"]["primary_relationship"]["nodes"][0]["fact_ids"].append("body-unknown"),
-        lambda value: value["page_plan"]["primary_relationship"]["edges"][0]["fact_ids"].append("body-unknown"),
-        lambda value: value["page_plan"]["core_exhibit"]["fact_ids"].append("body-unknown"),
-        lambda value: value["page_plan"]["support_groups"][0]["fact_ids"].append("body-unknown"),
-        lambda value: value["page_plan"]["local_visuals"][0]["fact_ids"].append("body-unknown"),
-    ],
-    ids=("relationship", "node", "edge", "core", "support", "local-visual"),
-)
-def test_compact_director_rejects_unknown_fact_references(mutate) -> None:
-    value = copy.deepcopy(_director_value())
-    mutate(value)
-
-    with pytest.raises(ValueError, match="unknown fact|source_block_id"):
-        _validate_compact_value(value)
-
-
-@pytest.mark.parametrize(
-    ("mutate", "message"),
-    [
-        (
-            lambda value: value["page_plan"]["support_groups"].pop(),
-            "allocate every Word fact exactly once",
-        ),
-        (
-            lambda value: value["page_plan"]["support_groups"][0]["fact_ids"].append("body-1"),
-            "each Word fact must be allocated exactly once",
-        ),
-        (
-            lambda value: value["page_plan"].update({"primary_relationship": {}}),
-            "primary_relationship|primary relationship",
-        ),
-        (
-            lambda value: value["page_plan"].update(
-                {"core_exhibit": [value["page_plan"]["core_exhibit"]] * 2}
-            ),
-            "core_exhibit|core exhibit",
-        ),
-        (
-            lambda value: value["page_plan"]["core_exhibit"].update(
-                {"grammar": "radial_orbit"}
-            ),
-            "grammar|radial_orbit",
-        ),
-        (
-            lambda value: value["page_plan"]["primary_relationship"]["edges"][0].update(
-                {"to_node": "missing-node"}
-            ),
-            "edge endpoint|declared node|missing-node",
-        ),
-    ],
-    ids=("omitted", "duplicated", "empty-relationship", "multiple-core", "grammar", "edge-endpoint"),
-)
-def test_compact_director_rejects_invalid_fact_allocation_or_structure(
-    mutate, message: str
-) -> None:
-    value = copy.deepcopy(_director_value())
-    mutate(value)
-
-    with pytest.raises(ValueError, match=message):
-        _validate_compact_value(value)
-
-
-def test_compact_director_accepts_analytical_table_for_comparison() -> None:
-    value = copy.deepcopy(_director_value())
-    relationship = value["page_plan"]["primary_relationship"]
-    relationship.update(
-        {
-            "grammar": "analytical_table",
-            "description": "Compare the regional entrance with the fund platform.",
-            "visual_instruction": "Use a source-bound comparison table.",
-            "nodes": [],
-            "edges": [],
-        }
-    )
-    value["page_plan"]["core_exhibit"]["grammar"] = "analytical_table"
-
-    assert _validate_compact_value(value) == ()
-
-
-@pytest.mark.parametrize("grammar", ["flow", "hierarchy", "geography", "causality"])
-def test_structural_grammars_accept_source_bound_nodes_edges_and_instruction(
-    grammar: str,
-) -> None:
-    value = copy.deepcopy(_director_value())
-    value["page_plan"]["primary_relationship"]["grammar"] = grammar
-    value["page_plan"]["core_exhibit"]["grammar"] = grammar
-
-    assert _validate_compact_value(value) == ()
-
-
-@pytest.mark.parametrize("grammar", ["flow", "hierarchy", "causality"])
-@pytest.mark.parametrize(
-    ("mutate", "message"),
-    [
-        (
-            lambda relationship: relationship.update({"visual_instruction": "   "}),
-            "visual_instruction|visual instruction",
-        ),
-        (
-            lambda relationship: relationship.update({"nodes": []}),
-            "nodes|source-bound node",
-        ),
-        (
-            lambda relationship: relationship.update({"edges": []}),
-            "edges|at least one edge",
-        ),
-    ],
-    ids=("instruction", "nodes", "edges"),
-)
-def test_structural_grammars_require_nodes_edges_and_visual_instruction(
-    grammar: str, mutate, message: str
-) -> None:
-    value = copy.deepcopy(_director_value())
-    relationship = value["page_plan"]["primary_relationship"]
-    relationship["grammar"] = grammar
-    mutate(relationship)
-
-    with pytest.raises(ValueError, match=message):
-        _validate_compact_value(value)
-
-
-def test_geography_accepts_source_bound_nodes_without_edges() -> None:
-    value = copy.deepcopy(_director_value())
-    relationship = value["page_plan"]["primary_relationship"]
-    relationship["grammar"] = "geography"
-    relationship["edges"] = []
-
-    assert _validate_compact_value(value) == ()
-
-
-def test_geography_still_rejects_edges_to_undeclared_nodes() -> None:
-    value = copy.deepcopy(_director_value())
-    relationship = value["page_plan"]["primary_relationship"]
-    relationship["grammar"] = "geography"
-    relationship["edges"][0]["to_node"] = "undeclared-place"
-
-    with pytest.raises(ValueError, match="edge endpoint|declared node"):
-        _validate_compact_value(value)
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        lambda relationship: relationship["nodes"][0].pop("fact_ids"),
-        lambda relationship: relationship["nodes"][0].update({"fact_ids": []}),
-        lambda relationship: relationship["nodes"][1].pop("fact_ids"),
-        lambda relationship: relationship["nodes"][1].update({"fact_ids": []}),
-        lambda relationship: relationship["edges"][0].pop("fact_ids"),
-        lambda relationship: relationship["edges"][0].update({"fact_ids": []}),
-    ],
-    ids=(
-        "first-node-missing",
-        "first-node-empty",
-        "second-node-missing",
-        "second-node-empty",
-        "edge-missing",
-        "edge-empty",
-    ),
-)
-def test_relationship_nodes_and_edges_require_non_empty_fact_ids(mutate) -> None:
-    value = copy.deepcopy(_director_value())
-    mutate(value["page_plan"]["primary_relationship"])
-
-    with pytest.raises(ValueError, match="fact_ids|required|non-empty|at least one"):
-        _validate_compact_value(value)
-
-
-@pytest.mark.parametrize(
-    ("mutate", "message"),
-    [
-        (lambda value: value.update({"page_number": 6}), "page_number"),
-        (
-            lambda value: value["page_plan"]["primary_relationship"]["nodes"][0].update(
-                {"node_id": "   "}
-            ),
-            "node_id",
-        ),
-        (
-            lambda value: value["page_plan"]["primary_relationship"]["nodes"][0].update(
-                {"label": "   "}
-            ),
-            "label",
-        ),
-        (
-            lambda value: value["page_plan"]["primary_relationship"]["edges"][0].update(
-                {"label": "   "}
-            ),
-            "edge label",
-        ),
-    ],
-    ids=("page-number", "node-id", "node-label", "edge-label"),
-)
-def test_compact_director_binds_page_and_rejects_blank_structure(mutate, message) -> None:
-    value = copy.deepcopy(_director_value())
-    mutate(value)
-
-    with pytest.raises(ValueError, match=message):
-        _validate_compact_value(value)
 
 
 def _result(value: dict[str, object]) -> CodexStructuredResult:
@@ -900,361 +403,6 @@ def _result(value: dict[str, object]) -> CodexStructuredResult:
     )
 
 
-def test_direct_page_sends_non_color_material_authority_and_ordered_image_mapping(tmp_path: Path):
-    workspace = _workspace(tmp_path)
-    view = _material_view(workspace)
-    calls: list[dict[str, object]] = []
-
-    def invoke(project: Path, **kwargs):
-        calls.append({"project": project, **kwargs})
-        return _result(_director_value(view))
-
-    artifact = direct_page(workspace, view, timeout=60, invoke=invoke)
-
-    assert len(calls) == 1
-    call = calls[0]
-    assert call["project"] == workspace.project_copy
-    assert call["role"] == "awesome-page-director"
-    assert call["images"] == view.multimodal_images
-    prompt = str(call["prompt"])
-    director_view = copy.deepcopy(view.value)
-    for key in (
-        "background_color",
-        "primary_color",
-        "secondary_color",
-        "highlight_color",
-    ):
-        director_view["visual_contract"].pop(key, None)
-    assert json.dumps(director_view, ensure_ascii=False, sort_keys=True) in prompt
-    assert json.dumps(view.value, ensure_ascii=False, sort_keys=True) not in prompt
-    assert "Authoritative body 1" in prompt
-    assert "Keep this original direction exactly.  " in prompt
-    assert "Image-1 = word-image:word-photo" in prompt
-    assert "Image-2 = word-image:word-photo-copy" in prompt
-    reference = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8").strip()
-    assert prompt.count(reference) == 1
-    ordered_markers = (
-        "WORD BODY AND MATERIAL AUTHORITY",
-        "GENERAL VISUAL DIRECTOR PRINCIPLES",
-        "CONFIRMED PRESENTATION TASKBOOK",
-        "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
-        "STRUCTURED OUTPUT REQUIREMENTS",
-    )
-    assert tuple(prompt.index(marker) for marker in ordered_markers) == tuple(
-        sorted(prompt.index(marker) for marker in ordered_markers)
-    )
-    assert prompt.index("Word body text is the primary authority") < prompt.index(reference)
-    assert prompt.index(reference) < prompt.index("Image-1 = word-image:word-photo")
-    assert prompt.index("COMPLETE PAGE MATERIAL VIEW") < prompt.index(
-        "STRUCTURED OUTPUT REQUIREMENTS"
-    )
-    assert "Select only mapped image material IDs" in prompt
-    assert "material audit" not in prompt.casefold()
-    assert "prompt_sections" not in prompt
-    assert "neutral non-trademark marker" not in prompt
-    assert "3:2" not in prompt
-    schema = json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
-    Draft202012Validator.check_schema(schema)
-    assert schema["properties"]["schema_version"]["const"] == (
-        "awesome-consulting-page-director-v3"
-    )
-    assert artifact.selected_reference_ids == ("word-image:word-photo",)
-    assert artifact.quality == "high"
-    assert artifact.model == "gpt-test-current"
-    assert artifact.model_provider == "openai-test"
-    assert artifact.effort == "high"
-    assert artifact.usage == {"input_tokens": 123, "output_tokens": 45}
-    assert artifact.duration_seconds == 3.25
-    assert artifact.page_plan == artifact.value["page_plan"]
-    assert artifact.actual_prompt == compile_consulting_six_part_prompt(artifact.value, view)
-    authority_path = (
-        workspace.project_copy
-        / "02_v6"
-        / "experiments"
-        / workspace.experiment_id
-        / "director_v2.json"
-    )
-    authority = json.loads(authority_path.read_text(encoding="utf-8"))
-    assert authority["schema_version"] == "awesome-consulting-page-director-authority-v2"
-    assert authority["material_view_sha256"] == view.sha256
-    assert authority["actual_prompt"] == artifact.actual_prompt
-    assert authority["selected_reference_ids"] == list(artifact.selected_reference_ids)
-    assert authority["value"] == artifact.value
-    assert isinstance(authority["key_id"], str)
-    assert isinstance(authority["hmac_sha256"], str)
-
-
-def test_director_request_injects_one_reference_between_authority_and_materials_without_schema_change(
-    tmp_path: Path,
-):
-    call, sections = _captured_director_request(tmp_path)
-    reference = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8").strip()
-
-    assert list(sections) == [
-        "WORD BODY AND MATERIAL AUTHORITY",
-        "GENERAL VISUAL DIRECTOR PRINCIPLES",
-        "CONFIRMED PRESENTATION TASKBOOK",
-        "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES",
-        "STRUCTURED OUTPUT REQUIREMENTS",
-    ]
-    assert sections["GENERAL VISUAL DIRECTOR PRINCIPLES"] == reference
-    assert reference not in "\n".join(
-        body
-        for heading, body in sections.items()
-        if heading != "GENERAL VISUAL DIRECTOR PRINCIPLES"
-    )
-    assert "Word body text is the primary authority" in sections[
-        "WORD BODY AND MATERIAL AUTHORITY"
-    ]
-    assert "COMPLETE PAGE MATERIAL VIEW" in sections[
-        "COMPLETE PAGE MATERIAL VIEW AND VIEWABLE IMAGES"
-    ]
-    assert call["output_schema"] == json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
-
-
-def test_director_request_excludes_compiler_owned_color_authority(tmp_path: Path):
-    call, sections = _captured_director_request(tmp_path)
-    prompt = str(call["prompt"])
-
-    assert "COMPILER-OWNED COLOR CONTRACT FOR PLANNING" not in prompt
-    for compiler_owned_color in (
-        '"background_color"',
-        '"primary_color"',
-        '"secondary_color"',
-        '"highlight_color"',
-        "#F7F7F7",
-        "#161616",
-        "#CD202A",
-    ):
-        assert compiler_owned_color not in prompt
-    assert "GENERAL VISUAL DIRECTOR PRINCIPLES" in sections
-    assert "source-supported primary relationship" in prompt
-
-
-def test_director_request_defines_only_the_compact_page_plan(tmp_path: Path):
-    call, _sections = _captured_director_request(tmp_path)
-    prompt = str(call["prompt"])
-    assert "Return only selected references and these compact v3 page-plan fields" in prompt
-    authoritative_fields = prompt.split(
-        "Return only selected references and these compact v3 page-plan fields:", 1
-    )[1].split(".", 1)[0]
-    assert "quantitative_exhibits" in authoritative_fields
-    assert "complete data does not require a chart" in prompt
-    assert "analytical_table" in prompt
-    assert "flow, hierarchy, geography" in prompt
-    assert "causality, quantitative_chart, or composition_architecture" in prompt
-    assert "source_block_id exactly once" in prompt
-    for removed in (
-        "machine audit",
-        "creative direction",
-        "prompt_sections",
-        "business_proposition",
-        "analytical_backbone",
-        "explanatory_lead",
-        "content_hierarchy",
-        "reading_path_and_density",
-        "takeaway_statement",
-        "evidence_interpretation_conclusion",
-        "supporting_visual_policy",
-    ):
-        assert removed not in prompt.casefold()
-
-
-def test_director_request_does_not_restate_compiler_owned_fields(tmp_path: Path):
-    call, _sections = _captured_director_request(tmp_path)
-    prompt = str(call["prompt"])
-    for removed in ("fixed_layer_exclusions", "task_and_canvas", "six prompt sections"):
-        assert removed not in prompt
-
-
-def test_director_request_uses_only_confirmed_taskbook_without_template_metadata(tmp_path: Path):
-    call, sections = _captured_director_request(tmp_path)
-    taskbook = sections["CONFIRMED PRESENTATION TASKBOOK"]
-
-    assert all(value in taskbook for value in TASKBOOK_VALUES)
-    assert TASKBOOK_BOUNDARY in taskbook
-    prompt = str(call["prompt"])
-    for forbidden in (
-        "investment-committee",
-        "template_version",
-        "taskbook_digest",
-        '"defaults"',
-    ):
-        assert forbidden not in prompt
-
-
-def test_director_request_requires_source_bound_page_structure(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"].casefold()
-
-    _assert_semantic_groups(
-        requirements,
-        (
-            (("core exhibit",)),
-            (("support groups",)),
-            (("source_block_id exactly once",)),
-            (("source-bound nodes",)),
-            (("flow, hierarchy, or causality",)),
-            (("geography", "edges are optional")),
-            (("non-empty visual instruction",)),
-        ),
-    )
-
-
-def test_director_request_defines_the_three_body_only_title_roles(
-    tmp_path: Path,
-) -> None:
-    _call, sections = _captured_director_request(tmp_path)
-    prompt = "\n".join(sections.values()).casefold()
-
-    for title_role in (
-        "fixed powerpoint page title",
-        "source-authored chapter/section heading",
-        "local exhibit heading",
-    ):
-        assert title_role in prompt
-    assert "context only" in prompt
-    assert "never a second page title" in prompt
-    assert "heading 1" in prompt
-
-
-def test_fixed_title_meaning_does_not_require_a_duplicate_body_note(tmp_path: Path) -> None:
-    from complex_page_experiment.consulting_prompt import _source_heading_role, _title_contract
-
-    _call, sections = _captured_director_request(tmp_path)
-    for prompt in (sections["WORD BODY AND MATERIAL AUTHORITY"], _title_contract(_compiler_material_view())):
-        assert "Fixed title meaning is covered externally" in prompt
-        assert "do not repeat it as a body note, lead, label, or paraphrase" in prompt
-        assert "Preserve extra chapter context, facts and qualifiers" in prompt
-    for style in ("Heading 1", "Heading 2"):
-        role = _source_heading_role({"type": "paragraph", "paragraph_style": style})
-        assert "preserve only meaning beyond the fixed title" in role
-        assert "never as a second page title" in role
-
-
-def test_director_reference_keeps_metaphors_local(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    principles = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"].casefold()
-
-    assert "illustrative metaphors local" in principles
-    assert "never as an invented whole-page scene" in principles
-
-
-def test_review_uses_the_same_title_roles_without_misclassifying_local_headings() -> None:
-    from complex_page_experiment.review import _review_prompt
-
-    material_view = _compiler_material_view()
-    material_view.value["fixed_page_title"] = "Fixed decision title"
-    prompt = _review_prompt(
-        material_view,
-        SimpleNamespace(selected_reference_ids=()),
-        "sealed body-only prompt",
-        (),
-        "confirmed taskbook",
-    ).casefold()
-
-    for title_role in (
-        "fixed powerpoint page title",
-        "source-authored chapter/section heading",
-        "local exhibit heading",
-    ):
-        assert title_role in prompt
-    assert "duplicate of the fixed page title" in prompt
-    assert "severe_usability" in prompt
-    assert "full-width text is not a hard error by itself" in prompt
-    assert "preserve its unique source meaning" in prompt
-
-
-def test_director_request_omits_compiler_owned_execution_details(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"].casefold()
-
-    for removed in (
-        "task_and_canvas",
-        "prompt_sections",
-        "fixed-layer",
-        "canvas background",
-        "central safe region",
-    ):
-        assert removed not in requirements
-
-
-def test_director_request_limits_reference_selection_to_mapped_ids(
-    tmp_path: Path,
-):
-    _call, sections = _captured_director_request(tmp_path)
-    requirements = sections["STRUCTURED OUTPUT REQUIREMENTS"]
-
-    assert "Select only mapped image material IDs" in requirements
-    assert "state their use and what to preserve" in requirements
-
-
-def test_compiler_owns_the_sealed_ui_canvas_background() -> None:
-    value = _director_value()
-    prompt = compile_consulting_six_part_prompt(
-        value, _compiler_material_view("#FFFFFF")
-    )
-    style = _compiled_prompt_sections(prompt)["Visual Style and Color"]
-
-    assert "#FFFFFF" in style
-    assert prompt.count("#FFFFFF") == 1
-
-
-def test_visual_direction_contains_only_compact_page_plan_decisions(tmp_path: Path):
-    _call, sections = _captured_director_request(tmp_path)
-    reference = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"]
-
-    _assert_semantic_groups(
-        reference,
-        (
-            (("page purpose",)),
-            (("primary relationship",)),
-            (("core exhibit",)),
-            (("analytical_table",)),
-            (("flow",)),
-            (("hierarchy",)),
-            (("geography",)),
-            (("causality",)),
-            (("local to the evidence",)),
-            (("whole-page scene",)),
-        ),
-    )
-
-
-def test_page_plan_schema_requires_the_tts_body_analysis_contract() -> None:
-    schema = json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
-    page_plan = schema["properties"].get("page_plan")
-
-    assert isinstance(page_plan, dict), "v3 schema must define page_plan"
-    assert page_plan["properties"]["quantitative_exhibits"]["minItems"] == 1
-    serialized = json.dumps(page_plan, ensure_ascii=False).casefold()
-    _assert_semantic_groups(
-        serialized,
-        (
-            ("page_purpose",),
-            ("core_exhibit",),
-            ("primary_relationship",),
-            ("support_groups",),
-            ("reading_path",),
-        ),
-    )
-
-
-def test_visual_direction_keeps_reference_instructions_image_specific(tmp_path: Path):
-    _call, sections = _captured_director_request(tmp_path)
-    reference = sections["GENERAL VISUAL DIRECTOR PRINCIPLES"]
-
-    assert "pixel-relevant use" in reference
-    assert "identity features to preserve" in reference
-    assert len(reference.split()) < 180
-
-
 def test_direct_page_rejects_existing_different_signed_authority(tmp_path: Path):
     workspace = _workspace(tmp_path)
     view = _material_view(workspace)
@@ -1265,7 +413,7 @@ def test_direct_page_rejects_existing_different_signed_authority(tmp_path: Path)
         invoke=lambda *_args, **_kwargs: _result(_director_value(view)),
     )
     different = _director_value(view)
-    different["page_plan"]["reading_path"] = "A different signed reading path."
+    different["page_plan"]["image_prompt"] += " 改为纵向阅读。"
 
     with pytest.raises(ValueError, match="published director authority"):
         direct_page(
@@ -1274,7 +422,7 @@ def test_direct_page_rejects_existing_different_signed_authority(tmp_path: Path)
             timeout=60,
             invoke=lambda *_args, **_kwargs: _result(different),
         )
-    assert first.actual_prompt == compile_consulting_six_part_prompt(first.value, view)
+    assert first.actual_prompt == first.page_plan["image_prompt"]
 
 
 def test_direct_page_rejects_swapped_image_paths_before_codex(tmp_path: Path):
@@ -1621,98 +769,145 @@ def test_direct_page_rejects_republished_derivative_set_or_parent_tamper(
         )
 
 
-def test_compile_prompt_has_exact_natural_language_sections_and_single_fixed_exclusions():
-    value = _director_value()
-    prompt = compile_consulting_six_part_prompt(value, _compiler_material_view())
-
-    assert [line[3:] for line in prompt.splitlines() if line.startswith("## ")] == list(HEADINGS)
-    for term in ("logo", "footer", "page number"):
-        assert prompt.lower().count(term) == 1
-    assert prompt.count("Do not generate title, logo, footer, or page number") == 1
-    assert prompt.count("central largest 17:8 content region") == 1
-    assert prompt.count("visibly empty perimeter") == 1
-    assert "cinematic evidence wall" not in prompt  # creativity stays open, not flattened into the prompt compiler
-
-
-def test_visual_director_reference_is_short_generic_and_template_free():
-    text = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8")
-    lines = [line for line in text.splitlines() if line.strip()]
-
-    assert 6 <= len(lines) <= 14
-    assert len(text) < 2_400
-    assert all(line.startswith("- ") for line in lines)
-    forbidden = (
-        "的卢",
-        "并购",
-        "房地产",
-        "金融",
-        "科技行业",
-        "dashboard",
-        "timeline",
-        "three-column",
-        "page type",
-        "template",
-    )
-    assert not any(term.casefold() in text.casefold() for term in forbidden)
+@pytest.mark.parametrize(("mutate", "message"), [
+    (lambda v: v["page_plan"]["content_inventory"].pop(), "omits"),
+    (lambda v: v["page_plan"]["content_inventory"][0].update(source_block_id="invented"), "unknown"),
+    (lambda v: v["page_plan"]["content_inventory"][0].update(source_quote="invented fact"), "source-exact"),
+    (lambda v: v["page_plan"]["content_inventory"][0].update(display_copy="absent copy"), "image_prompt"),
+    (lambda v: v["page_plan"]["content_inventory"][0].update(target="fixed_title"), "fixed title"),
+    (lambda v: v["page_plan"].update(image_prompt=" "), "image_prompt"),
+    (lambda v: v["page_plan"].update(image_prompt=" " + v["page_plan"]["image_prompt"]), "outer whitespace"),
+    (lambda v: v.update(page_number=999), "page_number"),
+])
+def test_direct_design_rejects_missing_or_unbound_source_content(mutate, message):
+    view = _compact_material_view()
+    value = _director_value(view)
+    mutate(value)
+    with pytest.raises(ValueError, match=message):
+        _validate_director_value(value, view)
 
 
-def test_visual_director_reference_matches_page_purpose_without_invented_takeaway():
-    text = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8").casefold()
-
-    _assert_semantic_groups(
-        text,
-        (
-            (("page purpose",)),
-            (("one source-supported primary relationship",)),
-            (("one core exhibit",)),
-            (("analytical_table",)),
-            (("flow",)),
-            (("hierarchy",)),
-            (("geography",)),
-            (("causality",)),
-            (("local to the evidence",)),
-            (("never as an invented whole-page scene",)),
-        ),
-    )
+def test_source_block_can_split_into_multiple_visible_parts_without_slots():
+    view = _compact_material_view()
+    value = _director_value(view)
+    item = value["page_plan"]["content_inventory"].pop(0)
+    source = item["source_quote"]
+    split = source.index(" ")
+    value["page_plan"]["content_inventory"] += [
+        {**item, "source_quote": source[:split], "display_copy": source[:split]},
+        {**item, "source_quote": source[split:], "display_copy": source[split:]},
+    ]
+    assert _validate_director_value(value, view) == ()
+    assert set(value["page_plan"]) == {"content_inventory", "context_bridges", "image_prompt"}
 
 
-def test_visual_director_request_keeps_spatial_guidance_without_color_contract(tmp_path: Path):
-    call, _ = _captured_director_request(tmp_path)
-    prompt = str(call["prompt"])
+def test_fixed_title_target_requires_actual_confirmed_title_coverage():
+    view = _compact_material_view()
+    value = _director_value(view)
+    item = value["page_plan"]["content_inventory"][0]
+    view.value["fixed_page_title"] = item["display_copy"]
+    item["target"] = "fixed_title"
+    value["page_plan"]["image_prompt"] = value["page_plan"]["image_prompt"].replace(item["display_copy"], "")
+    assert _validate_director_value(value, view) == ()
 
-    assert "source-bound nodes" in prompt
-    assert "concrete visual instruction" in prompt
-    assert "authority is limited to spatial composition" in prompt
-    assert "secondary-color-family" not in prompt
-    assert "assign ordered color depth" not in prompt
 
-
-@pytest.mark.parametrize(
-    ("mutate", "message"),
-    [
-        (
-            lambda value: value["selected_references"][0].update(
-                {"material_id": "attachment:non-viewable"}
-            ),
-            "selected reference",
-        ),
-        (
-            lambda value: value["selected_references"][0].update({"use": "   "}),
-            "selected reference|use|non-whitespace|blank",
-        ),
-        (
-            lambda value: value["page_plan"].update({"page_purpose": " \t "}),
-            "page_purpose|page purpose|non-whitespace|blank",
-        ),
-    ],
-)
-def test_direct_page_rejects_invalid_compact_output(
-    tmp_path: Path, mutate, message: str
-):
+def test_direct_page_preserves_complete_materials_style_and_verbatim_design(tmp_path):
     workspace = _workspace(tmp_path)
     view = _material_view(workspace)
-    value = copy.deepcopy(_director_value(view))
-    mutate(value)
+    value = _director_value(view)
+    calls = []
+    def invoke(project, **kwargs):
+        calls.append({"project": project, **kwargs})
+        return _result(value)
+    artifact = direct_page(workspace, view, timeout=60, invoke=invoke)
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["project"] == workspace.project_copy
+    assert call["role"] == "awesome-page-director"
+    assert call["images"] == view.multimodal_images
+    prompt = call["prompt"]
+    assert json.dumps(view.value, ensure_ascii=False, sort_keys=True) in prompt
+    assert "Authoritative body 1" in prompt
+    assert "Keep this original direction exactly.  " in prompt
+    assert "Image-1 = word-image:word-photo" in prompt
+    assert "Image-2 = word-image:word-photo-copy" in prompt
+    assert all(str(view.value["visual_contract"][key]) in prompt for key in ("primary_color", "secondary_color", "background_color", "cjk_font"))
+    assert artifact.actual_prompt == value["page_plan"]["image_prompt"]
+    assert artifact.page_plan == value["page_plan"]
+    assert artifact.selected_reference_ids == ("word-image:word-photo",)
+    assert artifact.model == "gpt-test-current"
+    assert artifact.model_provider == "openai-test"
+    assert artifact.duration_seconds == 3.25
+    assert artifact.usage == {"input_tokens": 123, "output_tokens": 45}
+    authority = json.loads((workspace.project_copy / "02_v6/experiments" / workspace.experiment_id / "director_v2.json").read_text(encoding="utf-8"))
+    assert authority["actual_prompt"] == artifact.actual_prompt
+    assert authority["material_view_sha256"] == view.sha256
+    assert authority["value"] == value
+    assert authority["selected_reference_ids"] == list(artifact.selected_reference_ids)
+    assert authority["hmac_sha256"] and authority["key_id"]
 
-    with pytest.raises(ValueError, match=message):
-        direct_page(workspace, view, timeout=60, invoke=lambda *args, **kwargs: _result(value))
+
+def test_director_loads_one_method_and_complete_confirmed_taskbook(tmp_path):
+    call, sections = _captured_director_request(tmp_path)
+    reference = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8").strip()
+    assert call["prompt"].count(reference) == 1
+    assert sections["页面设计方法"] == reference
+    assert all(value in sections["已确认任务书"] for value in TASKBOOK_VALUES)
+    assert TASKBOOK_BOUNDARY in sections["已确认任务书"]
+    assert call["output_schema"] == json.loads(DIRECTOR_SCHEMA.read_text(encoding="utf-8"))
+    assert "完整全文" in call["prompt"]
+    assert "不是另一套固定设计标题" in call["prompt"]
+    assert "原样交给 Image2" in call["prompt"]
+    assert "numeric_authorities 固定返回 null" in call["prompt"]
+    for forbidden in ("template_version", "taskbook_digest", '"defaults"'):
+        assert forbidden not in sections["已确认任务书"]
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "duplicate", "blank_use", "input_order"])
+def test_director_references_remain_bound_to_viewable_inputs(tmp_path, mutation):
+    workspace = _workspace(tmp_path)
+    view = _material_view(workspace)
+    value = _director_value(view)
+    if mutation == "unknown":
+        value["selected_references"][0]["material_id"] = "attachment:non-viewable"
+    elif mutation == "duplicate":
+        value["selected_references"] *= 2
+    elif mutation == "blank_use":
+        value["selected_references"][0]["use"] = "  "
+    else:
+        value["page_plan"]["image_prompt"] += " Image-2"
+    with pytest.raises(ValueError, match="reference"):
+        direct_page(workspace, view, timeout=60, invoke=lambda *a, **kw: _result(value))
+
+
+def test_new_director_method_keeps_joint_design_and_source_bound_title():
+    text = VISUAL_DIRECTOR_REFERENCE.read_text(encoding="utf-8")
+    for obligation in ("全文", "内部关系", "同一次设计", "字数统一", "不确定性", "已确认设置", "不得包含分析过程", "不重新选择布局或正文颜色"):
+        assert obligation in text
+
+
+def test_replanning_advances_signed_revision_without_rewriting_prior_authority(tmp_path):
+    workspace = _workspace(tmp_path)
+    view = _material_view(workspace)
+    first = direct_page(workspace, view, timeout=60, invoke=lambda *a, **kw: _result(_director_value(view)))
+    authority_path = workspace.project_copy / "02_v6/experiments" / workspace.experiment_id / "director_v2.json"
+    original = authority_path.read_bytes()
+    image = workspace.project_copy / "rejected.png"
+    image.write_bytes(b"offline-diagnostic-candidate")
+    calls = []
+    revised = _director_value(view)
+    revised["page_plan"]["image_prompt"] += " 改正关系方向。"
+    def invoke(*args, **kwargs):
+        calls.append(kwargs)
+        return _result(revised)
+    result = direct_page(workspace, view, timeout=60, invoke=invoke, revision=2,
+                         previous_director=first, previous_image=image,
+                         review_feedback={"category": "primary_relationship", "detail": "reverse arrow", "repair_route": "replan"})
+    assert result.revision == 2
+    assert result.actual_prompt == revised["page_plan"]["image_prompt"]
+    assert authority_path.read_bytes() == original
+    assert calls[0]["images"] == (*view.multimodal_images, image)
+    assert "for diagnosis only" in calls[0]["prompt"]
+    assert "Previous plan (not factual authority)" in calls[0]["prompt"]
+    with pytest.raises(ValueError, match="three-candidate budget"):
+        direct_page(workspace, view, timeout=60, invoke=lambda *a, **kw: pytest.fail("budget exceeded"), revision=4)
