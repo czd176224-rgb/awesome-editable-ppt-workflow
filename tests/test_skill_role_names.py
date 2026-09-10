@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "plugins" / "awesome-editable-ppt-workflow" / "skills"
 
 EXPECTED = {
-    "run-word-to-ppt-workflow": "Word 转可编辑 PPT 总流程",
+    "run-word-to-ppt-workflow": "Word 转可编辑 PPT",
     "generate-slide-body-image": "生成 PPT 页面主体图",
     "reconstruct-editable-slide": "重建可编辑 PPT 页面",
     "validate-ppt-output": "校验与修复 PPT 成品",
@@ -38,11 +38,14 @@ def test_skill_frontmatter_and_ui_metadata_use_folder_name() -> None:
         skill_text = (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
         assert f"name: {name}\n" in skill_text
 
-        metadata = yaml.safe_load(
+        configuration = yaml.safe_load(
             (SKILLS / name / "agents" / "openai.yaml").read_text(encoding="utf-8")
-        )["interface"]
+        )
+        metadata = configuration["interface"]
         assert metadata["display_name"] == display_name
         assert f"${name}" in metadata["default_prompt"]
+        if name != "run-word-to-ppt-workflow":
+            assert configuration["policy"]["allow_implicit_invocation"] is False
 
 
 def test_slide_body_generator_cannot_bypass_v6_authority() -> None:
@@ -69,7 +72,8 @@ def test_adaptive_role_metadata_has_no_generate_only_claims() -> None:
     for name in ("run-word-to-ppt-workflow", "generate-slide-body-image"):
         metadata_text = (SKILLS / name / "agents" / "openai.yaml").read_text(encoding="utf-8")
         folded = metadata_text.casefold()
-        assert "adaptive" in folded
+        if name == "generate-slide-body-image":
+            assert "adaptive" in folded
         assert "generate-only" not in folded
         assert "generate only" not in folded
 

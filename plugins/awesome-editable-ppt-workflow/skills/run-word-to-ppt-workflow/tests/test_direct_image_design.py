@@ -111,9 +111,9 @@ class DirectDesignTest(unittest.TestCase):
             with patch.object(director, "_validate_material_view", return_value=()), \
                  patch.object(director, "project_emphasis_pages", return_value=[1], create=True), \
                  patch.object(director, "confirmed_taskbook_prompt", return_value="已确认受众和目的"), \
-                 patch("deck_planning.confirmed_page_plan", return_value={"title": "已有进展与判断边界", "emphasis": "边界"}), \
-                 patch("deck_planning.confirmed_page_context", return_value=[]), \
-                 patch("deck_planning.confirmed_page_composition", return_value={"page_role": "content", "chapter_title": "运营判断"}), \
+                 patch("deck_planning.confirmed_page_inputs", return_value={
+                     "plan": {"title": "已有进展与判断边界", "emphasis": "边界"}, "context": [],
+                     "composition": {"page_role": "content", "chapter_title": "运营判断"}}), \
                  patch.object(director, "_publish_director_authority"):
                 complete_prompt = value["page_plan"]["image_prompt"]
                 value["page_plan"]["image_prompt"] = "正文只显示已签约。"

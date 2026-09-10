@@ -34,17 +34,31 @@ def test_full_context_and_ui_page_role_reach_the_director_boundary():
                 "page_role": "chapter", "chapter_title": "章节", "visible_page_number": False}
         (project / "02_v6/page_composition.json").write_text(json.dumps({"pages": [page]}), encoding="utf-8")
         full = {"pages": [{"page_number": n, "blocks": [{"text": f"完整原文{n}"}]} for n in range(1, 43)]}
-        with patch.object(deck_planning, "confirmed_page_plan", return_value={"title": "推导标题", "chapter_title": "章节"}), \
-             patch("extract_docx_pages.extract_auto", return_value=full):
+        plan = {"title": "推导标题", "chapter_title": "章节"}
+        with patch.object(deck_planning, "confirmed_page_plan", return_value=plan) as validate, \
+             patch("extract_docx_pages.extract_auto", return_value=full) as extract:
             assert deck_planning.confirmed_page_context(project, 1) == full["pages"]
             assert deck_planning.confirmed_page_composition(project, 1) == page
-        with patch.object(deck_planning, "confirmed_page_plan", return_value={"title": "冲突标题"}):
+            validate.reset_mock()
+            extract.reset_mock()
+            assert deck_planning.confirmed_page_inputs(project, 1, include_composition=True) == {
+                "plan": plan, "context": full["pages"], "composition": page}
+            validate.assert_called_once_with(project, 1)
+            assert extract.call_count == 1
+        with patch.object(deck_planning, "confirmed_page_plan", return_value={"title": "冲突标题"}), \
+             patch("extract_docx_pages.extract_auto", return_value=full):
             try:
                 deck_planning.confirmed_page_composition(project, 1)
             except ValueError:
                 pass
             else:
                 raise AssertionError("conflicting derived and outer title was accepted")
+            try:
+                deck_planning.confirmed_page_inputs(project, 1, include_composition=True)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("combined inputs accepted conflicting title")
 
 
 def test_disposable_ui_confirmation_seals_derived_chapters_and_preserves_word():
@@ -93,3 +107,24 @@ def test_disposable_ui_confirmation_seals_derived_chapters_and_preserves_word():
             assert page["chapter_title"] == "全文理解的章节"
             assert page["fixed_page_title"] == materials["fixed_page_title"] == f"推导标题{number}"
             assert materials["complete_word_content"] == before["pages"][number - 1]["blocks"]
+        import pytest
+        with patch("workflow_v6_state.load", wraps=load) as read_state, \
+             patch.object(deck_planning, "source_digest", wraps=deck_planning.source_digest) as hash_source, \
+             patch("extract_docx_pages._render_pdf_with_word", side_effect=AssertionError("offline test must not invoke Office")):
+            director_inputs = deck_planning.confirmed_page_inputs(project, 1, include_composition=True)
+            assert read_state.call_count == hash_source.call_count == 1
+            review_inputs = deck_planning.confirmed_page_inputs(project, 1)
+            assert read_state.call_count == hash_source.call_count == 2
+            assert review_inputs == {key: director_inputs[key] for key in ("plan", "context")}
+            assert len(review_inputs["context"]) == 2
+        source = deck_planning.source_path(project)
+        original = source.read_bytes()
+        source.write_bytes(original + b"changed")
+        with pytest.raises(ValueError, match="校验失败"):
+            deck_planning.confirmed_page_inputs(project, 1)
+        source.write_bytes(original)
+        state = load(project)
+        state["director_confirmation"]["deck_plan"]["plan"]["pages"][0]["emphasis"] = "unsealed change"
+        (project / "workflow_v6.json").write_text(json.dumps(state), encoding="utf-8")
+        with pytest.raises(ValueError, match="deck plan digest is invalid"):
+            deck_planning.confirmed_page_inputs(project, 1, include_composition=True)

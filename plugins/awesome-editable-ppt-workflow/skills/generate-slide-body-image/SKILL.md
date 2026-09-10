@@ -1,6 +1,6 @@
 ---
 name: generate-slide-body-image
-description: Use when a V6 page has sealed confirmed materials and needs an adaptive gpt-image-2 body candidate through Codex authentication.
+description: Internal editable PPT workflow provider module; invoke only with a sealed V6 page ImageRequest from the runtime.
 ---
 
 # Generate Slide Body Image V6
