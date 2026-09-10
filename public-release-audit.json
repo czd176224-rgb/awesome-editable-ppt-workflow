@@ -6,7 +6,7 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "awesome-page-design-v1",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "b9f9b09cbd134c0cd460815d333707448f3090aab03276627f3e4b424663650d",
+  "sourceManifestSha256": "2555c546cf73649410179a830ee4b828b9ff67a74f3a0eb531536515b62558de",
   "root": ".",
   "passed": true,
   "errors": [],
@@ -38,8 +38,8 @@
     },
     {
       "path": "docs/CONSULTING_DIRECTOR_VISUAL_QA.md",
-      "bytes": 3014,
-      "sha256": "1651e67545c65b157e4b1fd5c844c0bb7557eb54170f8430103f77833b20d4ee"
+      "bytes": 2930,
+      "sha256": "62a2f02f5c55ec762f558dddf0ede9fafb91ce76c1f7de7a7dd7855ea6b751ab"
     },
     {
       "path": "docs/NEW_PAGE_DIRECTOR.md",
@@ -438,8 +438,8 @@
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/README.md",
-      "bytes": 2492,
-      "sha256": "4f06c57ca7432977e809fc4e3ed98ef48839f6cc4da0d8ec3b65cc15f50b7ba9"
+      "bytes": 2344,
+      "sha256": "be9f644cfc70d60348d9be358e7bb3388ed80bf0c5f29ed2f576e89271a0f3df"
     },
     {
       "path": "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/requirements-dev.txt",
@@ -1274,7 +1274,7 @@
     {
       "path": "public-source-manifest.json",
       "bytes": 47084,
-      "sha256": "b9f9b09cbd134c0cd460815d333707448f3090aab03276627f3e4b424663650d"
+      "sha256": "2555c546cf73649410179a830ee4b828b9ff67a74f3a0eb531536515b62558de"
     },
     {
       "path": "README.md",
@@ -1323,8 +1323,8 @@
     },
     {
       "path": "tests/test_awesome_plugin_identity.py",
-      "bytes": 5583,
-      "sha256": "f837f548ba0e400a4251f1c44525051ea827f430fd8911eb8c480280de07f996"
+      "bytes": 5717,
+      "sha256": "c5b8a4636b1b23e93f218d02a53a6df0c05b1cc3304b1444b87e2e931e35e84a"
     },
     {
       "path": "tests/test_awesome_runtime_independence.py",
@@ -1338,13 +1338,13 @@
     },
     {
       "path": "tests/test_public_distribution.py",
-      "bytes": 11007,
-      "sha256": "befc9b266c0962b70dc49f4b2a05b07b9888d64cffdfde9a15a7bf38e5bc0761"
+      "bytes": 10938,
+      "sha256": "be2c7ddeff6eb41a0ad13a537bd48d09b05b38432eb26fa251ba1df3654332bf"
     },
     {
       "path": "tests/test_release_hardening_v2.py",
-      "bytes": 22577,
-      "sha256": "a5c5581ea89996329f678c81aa929e4935d2a2ddb86a8ab114f6c503e87ce623"
+      "bytes": 22554,
+      "sha256": "6d71ae54f1779ef2954194d4141a1461f4d01ccddc2bb172ae9532a4e3e2ca2e"
     },
     {
       "path": "tests/test_release_status.py",
@@ -1358,13 +1358,13 @@
     },
     {
       "path": "tests/test_skill_role_names.py",
-      "bytes": 3440,
-      "sha256": "d5275d5a5da608defca39f71e5973d25c6e813f8fcde29cf7a9831c1ed6e583b"
+      "bytes": 3861,
+      "sha256": "179fcc7960e619ede8a020bbfb10903dbf4613d8b2d8e39e81111e07f2848ad1"
     },
     {
       "path": "tests/test_task1_metadata_v4.py",
-      "bytes": 2588,
-      "sha256": "fc8ed57534264c258598ee6da267bf6cda40ab80f8013b23f032a381789d8008"
+      "bytes": 2736,
+      "sha256": "5b9796bf90f9cad59b8237ea49d5c34db8343099bb4235b089726efa10cf6c08"
     },
     {
       "path": "uninstall.cmd",
@@ -1388,8 +1388,8 @@
     },
     {
       "path": "verify.ps1",
-      "bytes": 9336,
-      "sha256": "aee2e0b4173a74dd0293da5995ee2e569904dbeaef38c735ef186f8ca893dcf3"
+      "bytes": 9295,
+      "sha256": "1ab218df77de56764ae07f4681c9f13281375254a9118d13063f94561c1c9e08"
     }
   ]
 }
