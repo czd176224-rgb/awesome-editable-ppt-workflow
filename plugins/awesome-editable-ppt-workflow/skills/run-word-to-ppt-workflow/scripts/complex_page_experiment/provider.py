@@ -28,7 +28,7 @@ from .workspace import ExperimentWorkspace
 
 Operation = Literal["generate", "edit"]
 Quality = Literal["medium", "high"]
-Strategy = Literal["initial", "edit_previous"]
+Strategy = Literal["initial", "edit_previous", "replan"]
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _MAX_INPUTS = 16
 
@@ -220,7 +220,7 @@ def build_experiment_image_request(
         raise ValueError("prompt must be nonempty exact text without outer whitespace")
     if quality not in {"medium", "high"}:
         raise ValueError("quality must be medium or high")
-    if strategy not in {"initial", "edit_previous"}:
+    if strategy not in {"initial", "edit_previous", "replan"}:
         raise ValueError("strategy is invalid")
     if strategy == "initial" and attempt != 1:
         raise ValueError("initial strategy is valid only for attempt 1")
@@ -228,7 +228,7 @@ def build_experiment_image_request(
         raise ValueError("initial strategy cannot carry a previous candidate")
     if strategy != "initial" and attempt == 1:
         raise ValueError("correction strategy requires attempt 2 or 3")
-    if strategy == "edit_previous" and previous_candidate is None:
+    if strategy in {"edit_previous", "replan"} and previous_candidate is None:
         raise ValueError("edit_previous requires the immediately preceding candidate")
     if len(selected_reference_ids) + (1 if strategy == "edit_previous" else 0) > _MAX_INPUTS:
         raise ValueError("Image2 accepts at most 16 total image inputs")
@@ -609,7 +609,7 @@ def _load_request_seal(
     predecessor = value.get("immediate_predecessor_authority")
     if (
         (attempt == 1 and strategy != "initial")
-        or (attempt > 1 and strategy != "edit_previous")
+        or (attempt > 1 and strategy not in {"edit_previous", "replan"})
         or (strategy == "edit_previous") != (candidate is not None)
         or (attempt == 1) != (predecessor is None)
     ):

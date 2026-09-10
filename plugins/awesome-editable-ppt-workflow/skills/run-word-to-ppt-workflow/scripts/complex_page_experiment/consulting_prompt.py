@@ -393,6 +393,23 @@ def _page_plan_architecture(
     if purpose_ids:
         lines.append(f"Page purpose sources: {_ids([], purpose_ids)}")
 
+    if "content_inventory" in plan:
+        lines.append("Complete visible content allocation (instruction fields are not visible copy):")
+        for item in sorted(plan["content_inventory"], key=lambda item: item["reading_order"]):
+            lines.append(
+                f"- Source {item['source_block_id']}; role {item['information_role']}; "
+                f"priority {item['priority']}; reading order {item['reading_order']}; "
+                f"placement: {item['placement']}; visible copy: {item['display_copy']}"
+            )
+        lines.append("All source-supported relationships: " + json.dumps(plan["relationship_analysis"], ensure_ascii=False))
+        lines.append("Priority rationale: " + str(plan["priority_rationale"]))
+        lines.append("Chapter continuity: " + str(plan["sequence_context"]))
+        for bridge in plan.get("context_bridges", []):
+            lines.append(f"Source-backed brief thematic bridge from original page {bridge['source_page_id']} "
+                         f"({bridge['source_block_id']}), quoted authority: {bridge['source_quote']}; "
+                         f"visible preview/recap: {bridge['display_copy']}. Keep this brief; its detailed content stays on that original page.")
+        lines.append("Lower-priority content remains completely visible and legible. Reading order and visual priority are independent. Use concrete geometry, grouping and adjacency to express relationships; a decorative arrow alone is insufficient.")
+
     relationship = plan.get("primary_relationship")
     if not isinstance(relationship, Mapping):
         raise ValueError("consulting primary relationship is missing")

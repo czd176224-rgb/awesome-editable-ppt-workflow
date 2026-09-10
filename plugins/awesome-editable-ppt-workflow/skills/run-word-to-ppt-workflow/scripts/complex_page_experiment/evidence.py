@@ -65,7 +65,7 @@ CALL_KINDS: tuple[CallKind, ...] = (
     "reconstruct_edit",
 )
 CALL_BUDGETS: Mapping[CallKind, int] = {
-    "page_director": 1,
+    "page_director": 3,
     "correction_decision": 2,
     "image2": 3,
     "visual_review": 3,
@@ -1078,8 +1078,8 @@ class EvidenceRecorder:
         if len(attempts) >= CALL_BUDGETS[kind] or attempt in attempts:
             raise ValueError(f"{kind} call budget exceeded or attempt repeated")
         if kind == "page_director":
-            if attempt not in {None, 1}:
-                raise ValueError("page_director attempt must be 1 when present")
+            if type(attempt) is not int or not 1 <= attempt <= 3 or (attempts and attempt <= attempts[-1]):
+                raise ValueError("page_director revisions must increase within the three-candidate budget")
             return
         if type(attempt) is not int:
             raise ValueError(f"{kind} candidate attempt must be an integer")

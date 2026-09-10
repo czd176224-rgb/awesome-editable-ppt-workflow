@@ -32,7 +32,12 @@ def _source_record(project: Path, relative: str) -> dict[str, object]:
 def awesome_four_page_project(tmp_path: Path) -> Path:
     project = tmp_path / "awesome-source"
     (project / "00_source").mkdir(parents=True)
-    (project / "00_source" / "source.docx").write_bytes(b"four-page-awesome-word-source")
+    from docx import Document
+    document = Document()
+    for number in range(1, 5):
+        document.add_paragraph(f"第 {number} 页 PPT")
+        document.add_paragraph(f"Authoritative body {number}")
+    document.save(project / "00_source" / "source.docx")
     (project / "00_source" / "logo.svg").write_text(
         '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="4"/></svg>',
         encoding="utf-8",
@@ -77,6 +82,18 @@ def awesome_four_page_project(tmp_path: Path) -> Path:
         "taskbook": taskbook,
         "taskbook_digest": taskbook_digest(taskbook),
     }
+    from deck_planning import digest, source_digest
+    plan = {"pages": [{"output_page_number": number, "chapter_title": "Confirmed chapter",
+                       "title": f"Awesome page {number}", "emphasis": f"Authoritative body {number}",
+                       "previous_connection": "", "next_connection": ""} for number in range(1, 5)]}
+    state["director_confirmation"]["deck_plan"] = {
+        "plan": plan, "plan_digest": digest(plan), "source_digest": source_digest(project),
+        "taskbook_digest": taskbook_digest(taskbook),
+    }
+    (project / "02_v6/page_composition.json").write_text(json.dumps({"pages": [
+        {"output_page_number": number, "fixed_page_title": f"Awesome page {number}",
+         "chapter_title": "Confirmed chapter", "page_role": "content"} for number in range(1, 5)
+    ]}), encoding="utf-8")
     state["confirmed_ui_revision"] = 3
     state["confirmed_ui_digest"] = canonical_sha256(visual)
     state["page_materials_status"] = "confirmed"

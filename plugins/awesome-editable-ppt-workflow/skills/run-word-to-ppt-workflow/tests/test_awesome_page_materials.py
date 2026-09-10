@@ -188,17 +188,17 @@ def test_collect_preserves_each_real_comment_verbatim_and_in_source_order(
     assert _walk_keys(materials).isdisjoint(forbidden)
 
 
-def test_collect_excludes_only_fixed_title_and_preserves_complete_body_blocks(tmp_path: Path):
+def test_collect_preserves_original_title_and_all_source_blocks(tmp_path: Path):
     from awesome_page_materials import collect_page_materials
 
     materials = collect_page_materials(_project(tmp_path), 1)
 
     assert materials["fixed_page_title"] == "第1页标题"
-    assert [block["type"] for block in materials["complete_word_content"]] == ["paragraph", "list", "table"]
-    assert materials["complete_word_content"][0]["source_block_id"] == "p1-body"
-    assert materials["complete_word_content"][1]["list_kind"] == "bullet"
-    assert materials["complete_word_content"][2]["rows"] == [["企业", "项目"], ["公司1", "项目1"]]
-    assert all(block.get("text") != "第1页标题" for block in materials["complete_word_content"])
+    assert [block["type"] for block in materials["complete_word_content"]] == ["paragraph", "paragraph", "list", "table"]
+    assert materials["complete_word_content"][0]["source_block_id"] == "p1-title"
+    assert materials["complete_word_content"][1]["source_block_id"] == "p1-body"
+    assert materials["complete_word_content"][2]["list_kind"] == "bullet"
+    assert materials["complete_word_content"][3]["rows"] == [["企业", "项目"], ["公司1", "项目1"]]
     assert materials["word_images"] == [
         {
             "asset_id": "word_asset_001",
@@ -273,7 +273,7 @@ def test_attachment_rendering_preserves_unsupported_original_without_sending_it_
     assert "render_receipt" not in result[1]
 
 
-def test_collect_uses_fixed_title_identification_from_paginated_source(tmp_path: Path):
+def test_original_title_identification_does_not_override_design_title(tmp_path: Path):
     from awesome_page_materials import collect_page_materials
 
     project = _project(tmp_path)
@@ -285,7 +285,7 @@ def test_collect_uses_fixed_title_identification_from_paginated_source(tmp_path:
 
     materials = collect_page_materials(project, 1)
 
-    assert materials["fixed_page_title"] == "第1页完整正文"
+    assert materials["fixed_page_title"] == "第1页标题"
     assert materials["complete_word_content"][0]["text"] == "第1页标题"
 
 
@@ -401,7 +401,7 @@ def test_real_docx_marker_extraction_preserves_lists_table_spaces_and_comment_wh
     assert value["pages"][0]["page_comments"][0]["text"] == "  保留评论两端空格  "
 
 
-def test_title_exclusion_uses_source_identity_not_equal_text(tmp_path: Path):
+def test_duplicate_title_text_preserves_both_source_identities(tmp_path: Path):
     from awesome_page_materials import collect_page_materials
 
     project = _project(tmp_path)
@@ -414,7 +414,7 @@ def test_title_exclusion_uses_source_identity_not_equal_text(tmp_path: Path):
     page["fixed_page_title_source_block_id"] = "block-title"
     _json(manifest_path, manifest)
     materials = collect_page_materials(project, 1)
-    assert [block["source_block_id"] for block in materials["complete_word_content"]][:1] == ["block-body"]
+    assert [block["source_block_id"] for block in materials["complete_word_content"]][:2] == ["block-title", "block-body"]
 
 
 def test_confirmed_state_rejects_mutated_material_receipt(tmp_path: Path):
@@ -651,9 +651,10 @@ def test_initialize_and_collect_real_docx_keeps_exact_blocks_and_comment(tmp_pat
     state["page_materials_status"] = "pending"
     save(project, state)
     materials = collect_page_materials(project, 1)
-    assert [block["type"] for block in materials["complete_word_content"]] == ["list", "table"]
-    assert materials["complete_word_content"][0]["text"] == "列表 原文"
-    assert materials["complete_word_content"][1]["rows"] == [[" 单元格 ", "值"]]
+    assert [block["type"] for block in materials["complete_word_content"]] == ["paragraph", "list", "table"]
+    assert materials["complete_word_content"][0]["text"] == "标题"
+    assert materials["complete_word_content"][1]["text"] == "列表 原文"
+    assert materials["complete_word_content"][2]["rows"] == [[" 单元格 ", "值"]]
     assert materials["original_comments"][0]["text"] == " 评论保留空格 "
 
 
@@ -718,11 +719,11 @@ def test_table_before_first_paragraph_stays_body_and_paragraph_becomes_title(tmp
     state["page_materials_status"] = "pending"
     save(project, state)
     materials = collect_page_materials(project, 1)
-    assert [block["type"] for block in materials["complete_word_content"]] == ["table"]
+    assert [block["type"] for block in materials["complete_word_content"]] == ["table", "paragraph"]
     assert materials["complete_word_content"][0]["rows"] == [["Strategy Plan"]]
 
 
-def test_explicit_paragraph_title_identity_removes_only_that_block_with_duplicates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_explicit_paragraph_title_and_duplicates_all_remain_material(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     import workflow_v6_source
     from awesome_page_materials import collect_page_materials
     from docx import Document
@@ -755,10 +756,11 @@ def test_explicit_paragraph_title_identity_removes_only_that_block_with_duplicat
     state["page_materials_status"] = "pending"
     save(project, state)
     blocks = collect_page_materials(project, 1)["complete_word_content"]
-    assert [block["type"] for block in blocks] == ["paragraph", "table", "paragraph"]
-    assert blocks[0]["text"] == "BODY MUST SURVIVE"
-    assert blocks[1]["rows"] == [["Strategy Plan"]]
-    assert blocks[2]["text"] == "Strategy Plan"
+    assert [block["type"] for block in blocks] == ["paragraph", "paragraph", "table", "paragraph"]
+    assert blocks[0]["text"] == "Strategy Plan"
+    assert blocks[1]["text"] == "BODY MUST SURVIVE"
+    assert blocks[2]["rows"] == [["Strategy Plan"]]
+    assert blocks[3]["text"] == "Strategy Plan"
 
 
 def test_physical_spanning_block_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

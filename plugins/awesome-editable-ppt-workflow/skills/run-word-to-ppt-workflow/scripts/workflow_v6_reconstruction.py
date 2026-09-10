@@ -1257,6 +1257,7 @@ def _require_final_authority(
         "accepted_receipt": dict(accepted),
         "accepted_source_body": dict(source_body),
         "worker_source_body": dict(worker_source),
+        "page_plan": request["page_plan"],
     }
 
 
@@ -1374,6 +1375,7 @@ def verify_completed_page_authority(project: Path, page_number: int) -> dict[str
             "status": "verified",
             "authority_mode": "sealed_reconstruction",
             "reconstruction_receipt": reconstruction,
+            "page_plan": sealed_authority["page_plan"],
             "visual_qa": dict(visual_qa),
         }
     source_value = visual_qa.get("source")
@@ -1394,6 +1396,7 @@ def verify_completed_page_authority(project: Path, page_number: int) -> dict[str
         "status": "verified",
         "authority_mode": "sealed_reconstruction",
         "reconstruction_receipt": reconstruction,
+        "page_plan": sealed_authority["page_plan"],
         "visual_qa": dict(visual_qa),
     }
 
@@ -1466,7 +1469,11 @@ def finalize_reconstructed_page(
             or existing_fixed.get("passed") is not True
         ):
             raise ValueError("V6 existing finalized page authority is invalid")
-    if page_number not in project_emphasis_pages(root):
+    preserve_body_colors = (
+        sealed_authority is not None
+        and "primary_relationship" not in sealed_authority["page_plan"]
+    )
+    if not preserve_body_colors and page_number not in project_emphasis_pages(root):
         _replace_non_emphasis_text_colors(opened, style)
         buffer = BytesIO()
         opened.save(buffer)
@@ -1689,8 +1696,11 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
         raise ValueError("a V6 finalized page package is missing")
     chart_manifests = []
     page_authority = []
+    accepted_image_color_pages = set()
     for page_number, page in enumerate(state["pages"], start=1):
         verified = verify_completed_page_authority(root, page_number)
+        if "page_plan" in verified and "primary_relationship" not in verified["page_plan"]:
+            accepted_image_color_pages.add(page_number)
         page_authority.append({
             "page_number": page_number,
             "status": verified["status"],
@@ -1744,14 +1754,16 @@ def assemble_v6_deck(project: Path) -> dict[str, Any]:
         style = state["style_confirmation"]["contract"]
         if not isinstance(style, Mapping):
             raise ValueError("V6 confirmed style contract is missing")
-        emphasis_pages = project_emphasis_pages(root)
+        emphasis_pages = (
+            project_emphasis_pages(root) if len(accepted_image_color_pages) < len(pages) else set()
+        )
         background = _rgb(str(style.get("background_color", "#FFFFFF")))
         for page_number, (slide, contract) in enumerate(
             zip(reopened.slides, page_contracts), start=1
         ):
             slide.background.fill.solid()
             slide.background.fill.fore_color.rgb = RGBColor(*background)
-            if page_number not in emphasis_pages:
+            if page_number not in accepted_image_color_pages and page_number not in emphasis_pages:
                 _replace_non_emphasis_slide_text_colors(slide, style)
             role = contract["page_role"]
             if role in {"content", "appendix"}:

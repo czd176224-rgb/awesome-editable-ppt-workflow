@@ -31,8 +31,8 @@ DIRECTOR_TEMPLATE_IDS = frozenset({
 
 TASKBOOK_AUTHORITY_BOUNDARY = (
     "This taskbook is a user-confirmed presentation constraint, not factual source material. "
-    "It may guide only how Word information maps to the compact page plan. Lossless within-page "
-    "rewording and regrouping are "
+    "It may guide only how the complete Word context informs the whole-deck page purpose, "
+    "information hierarchy, and continuity. Lossless within-page rewording and layering are "
     "allowed; the taskbook cannot authorize new facts, omitted information, altered meaning, "
     "or moving content between pages."
 )
@@ -266,10 +266,14 @@ def confirmed_taskbook_prompt(project: Path) -> str:
     return (
         f"{TASKBOOK_AUTHORITY_BOUNDARY}\n"
         f"{fields}\n"
-        "Map the use scenario and desired outcome to page_purpose. Select primary_relationship "
-        "only from source-supported relationships. Use the presenter, primary audience, and prior "
-        "knowledge to calibrate reading_path. Use emphasis and deemphasis only to allocate source "
-        "blocks among core_exhibit and support_groups and to suggest local_visuals. A conclusion is "
-        "optional and may appear only when the Word source supplies it. Keep deemphasized Word "
-        "content present but visually subordinate; never omit it."
+        "Use the seven confirmed fields to understand the deck purpose, audience, and information "
+        "priorities. The confirmed title, emphasis, previous_connection, and next_connection from "
+        "the whole-deck plan are fixed downstream inputs; do not select replacements page by page. "
+        "Keep emphasis separate from reading order. Explain the page purpose, primary and supporting "
+        "information, and continuity under those confirmed inputs. The taskbook and whole-deck plan "
+        "set these goals without prescribing a layout. Under them, the page director decides the "
+        "concrete layout, graphic expression, and placement after reading the complete page content "
+        "and relationships; do not preassign whole source blocks to predetermined core/support roles. A "
+        "conclusion is optional and may appear only when the Word source supplies it. Keep deemphasized "
+        "Word content present but visually subordinate; never omit it."
     )

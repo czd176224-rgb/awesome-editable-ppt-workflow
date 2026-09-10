@@ -1167,7 +1167,7 @@ def reference_image_from_source(
         original = Path(project).resolve() / original_path
         kind = "screenshot" if source.get("media_type") == "image/png" else "photo"
         normalized = normalize_reference(
-            project, original, reference_id=reference_id, kind=kind,
+            project, original, reference_id=f"page-{page_number:03d}-{reference_id}", kind=kind,
         )
         return reference_image_from_normalized(
             normalized,

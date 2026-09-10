@@ -117,9 +117,11 @@ def build_prompt(run_dir: Path, page: dict, page_dir: Path) -> str:
             + json.dumps(authorities, ensure_ascii=False, sort_keys=True)
         )
     page_plan = request.get("page_plan")
-    if page_plan is None:
+    if page_plan is None or (
+        isinstance(page_plan, dict) and "primary_relationship" not in page_plan
+    ):
         relationship_contract = (
-            "No sealed page plan is present. Preserve relationship nodes, directions, and "
+            "No sealed primary relationship authority is present. Preserve relationship nodes, directions, and "
             "connector endpoints from source.png."
         )
     elif not isinstance(page_plan, dict):

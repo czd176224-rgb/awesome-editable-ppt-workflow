@@ -262,3 +262,22 @@ def test_page_worker_prompt_contains_sealed_relationship_nodes_edges_and_directi
         "manifest.json as object_id and exactly once in page.pptx cNvPr descr as "
         "object_id:<ID>."
     ) in prompt
+
+
+def test_page_worker_prompt_uses_accepted_image_when_direct_page_plan_has_no_relationship_authority(tmp_path):
+    page_plan = {
+        "content_inventory": [{
+            "source_block_id": "word-block-1",
+            "source_quote": "能力",
+            "display_copy": "能力",
+            "target": "body",
+        }],
+        "context_bridges": [],
+        "image_prompt": "DIRECTOR PROMPT MUST NOT REACH RECONSTRUCTION",
+    }
+
+    prompt = _worker_prompt(tmp_path, None, page_plan)
+
+    assert "No sealed primary relationship authority is present" in prompt
+    assert "Preserve relationship nodes, directions, and connector endpoints from source.png" in prompt
+    assert page_plan["image_prompt"] not in prompt

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -592,6 +593,31 @@ def test_reference_image_preserves_distinct_source_and_model_integrity():
         "thumbnail_sha256": None,
     }
     assert reference["thumbnail_path"] is None
+
+
+def test_same_word_image_is_normalized_independently_for_each_page(tmp_path: Path):
+    original = tmp_path / "01_source_assets/word_assets/shared.png"
+    original.parent.mkdir(parents=True)
+    Image.new("RGB", (8, 6), "#336699").save(original)
+    source = {
+        "asset_id": "word_asset_001",
+        "status": "available",
+        "purpose": "shared source image",
+        "media_type": "image/png",
+        "original_path": original.relative_to(tmp_path).as_posix(),
+        "model_input_path": original.relative_to(tmp_path).as_posix(),
+    }
+
+    page_20 = reference_image_from_source(source, page_number=20, position=1, project=tmp_path)
+    page_21 = reference_image_from_source(source, page_number=21, position=1, project=tmp_path)
+
+    assert page_20["reference_id"] == page_21["reference_id"] == "word_asset_001"
+    assert page_20["model_input_path"] != page_21["model_input_path"]
+    assert Path(page_20["model_input_path"]).parent.name == "page-020-word_asset_001"
+    assert Path(page_21["model_input_path"]).parent.name == "page-021-word_asset_001"
+    for reference in (page_20, page_21):
+        for field in ("original_path", "model_input_path", "thumbnail_path"):
+            assert (tmp_path / reference[field]).is_file()
 
 
 def test_attachment_extraction_persists_only_comment_selected_rows_and_fields(tmp_path: Path):

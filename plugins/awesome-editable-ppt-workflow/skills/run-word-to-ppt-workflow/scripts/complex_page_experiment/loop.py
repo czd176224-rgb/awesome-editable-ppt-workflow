@@ -433,7 +433,7 @@ def _prior_review(
     ):
         raise ValueError("prior failed review does not bind the terminal candidate")
     records = tuple(
-        ReviewProblem(str(item["category"]), str(item["detail"]))
+        ReviewProblem(str(item["category"]), str(item["detail"]), cast(Any, item["repair_route"]))
         for item in problems
     )
     return VisualReview(
@@ -747,18 +747,19 @@ def seal_accepted_image(workspace: ExperimentWorkspace, *, material_view: Comple
 
 
 def _record_director(recorder: EvidenceRecorder, director: DirectorArtifact) -> None:
-    recorder.record_call(kind="page_director", attempt=1, model=director.model, effort=director.effort, operation="page_creative_direction", duration_seconds=director.duration_seconds, status="ok", metadata={"selected_reference_count": len(director.selected_reference_ids), "quality": director.quality})
+    recorder.record_call(kind="page_director", attempt=director.revision, model=director.model, effort=director.effort, operation="page_creative_direction", duration_seconds=director.duration_seconds, status="ok", metadata={"selected_reference_count": len(director.selected_reference_ids), "quality": director.quality})
 
 
-def _record_local_correction(
+def _record_correction_decision(
     recorder: EvidenceRecorder, attempt: int,
+    *, operation: Literal["edit_previous", "replan"] = "edit_previous",
 ) -> None:
     recorder.record_call(
         kind="correction_decision",
         attempt=attempt,
         model="deterministic-local",
         effort=None,
-        operation="edit_previous",
+        operation=operation,
         duration_seconds=0.0,
         status="ok",
         metadata={"problem_count": 1, "quota_bearing": False},
@@ -776,6 +777,8 @@ def _local_correction(
     ):
         raise ValueError("local correction requires exactly one signed review problem")
     problem = review.problem_records[0]
+    if problem.repair_route != "edit":
+        raise ValueError("planning defects require replanning, not a local edit")
     if not problem.detail.strip():
         raise ValueError("local correction requires a concrete visible defect")
     if not director.page_plan:
@@ -914,7 +917,7 @@ def _run_failed_recovery_owned(
     prompt, selected, strategy = _local_correction(
         prior_review, director, next_attempt=2,
     )
-    _record_local_correction(recorder, 1)
+    _record_correction_decision(recorder, 1)
     corrections = 1
     while True:
         attempt = len(attempts) + 1
@@ -961,7 +964,7 @@ def _run_failed_recovery_owned(
         prompt, selected, strategy = _local_correction(
             review, director, next_attempt=attempt + 1,
         )
-        _record_local_correction(recorder, attempt)
+        _record_correction_decision(recorder, attempt)
         corrections += 1
 
 
@@ -975,6 +978,9 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
         recorder.record_recovery(skipped_calls=RECOVERY_CALLS)
         return LoopOutcome("accepted", (accepted.candidate,), accepted, (), 0)
     if workspace.recovery_round is not None:
+        prior = _prior_recovery_workspace(workspace)
+        if any((prior.project_copy / "02_v6" / "experiments" / prior.experiment_id).glob("director_attempt_*.json")):
+            raise ValueError("failed-page recovery of revised director plans is not supported; preserve this trial evidence")
         return _run_failed_recovery_owned(
             workspace, timeout=timeout, recorder=recorder,
             material_view_factory=material_view_factory,
@@ -987,7 +993,7 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
     if legacy_director.exists() and not v2_director.exists():
         raise ValueError(
             "unfinished v1 page cannot reuse its legacy director or candidates; "
-            "restart this page from the compact consulting director v3 in a fresh page run"
+            "restart this page with the new full-context page director in a fresh page run"
         )
     failed = _load_failed_outcome(workspace, recorder)
     if failed is not None:
@@ -1005,7 +1011,7 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
         _record_director(recorder, director)
         prompt = director.actual_prompt
         selected = director.selected_reference_ids
-        strategy: Literal["initial", "edit_previous"] = "initial"
+        strategy: Literal["initial", "edit_previous", "replan"] = "initial"
         while True:
             attempt = len(attempts) + 1
             previous = attempts[-1] if attempts else None
@@ -1034,10 +1040,19 @@ def _run_candidate_loop_owned(workspace: ExperimentWorkspace, *, timeout: int, r
                         correction_count=corrections, recorder=recorder,
                     )
                 verify_source_unchanged(workspace)
-                prompt, selected, strategy = _local_correction(
-                    review, director, next_attempt=attempt + 1,
-                )
-                _record_local_correction(recorder, attempt)
+                validate_published_review_authority(workspace, material_view, director, candidate, review, recorder=recorder)
+                if review.problem_records[0].repair_route == "replan":
+                    _record_correction_decision(recorder, attempt, operation="replan")
+                    director = direct_page(workspace, material_view, timeout=timeout, invoke=director_invoke,
+                        revision=attempt + 1, previous_director=director, previous_image=candidate.path,
+                        review_feedback=[{"category": p.category, "detail": p.detail, "repair_route": p.repair_route} for p in review.problem_records])
+                    _record_director(recorder, director)
+                    prompt, selected, strategy = director.actual_prompt, director.selected_reference_ids, "replan"
+                else:
+                    prompt, selected, strategy = _local_correction(
+                        review, director, next_attempt=attempt + 1,
+                    )
+                    _record_correction_decision(recorder, attempt)
             else:
                 last_problems = preflight.problems
                 if corrections >= max_corrections:

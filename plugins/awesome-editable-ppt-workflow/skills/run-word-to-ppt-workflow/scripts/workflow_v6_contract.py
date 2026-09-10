@@ -295,7 +295,7 @@ def validate_project(project: Mapping[str, Any]) -> None:
         raise ValueError("confirmed V6 style requires a contract")
     director = project["director_confirmation"]
     if director is not None:
-        if not isinstance(director, Mapping) or set(director) != {
+        if not isinstance(director, Mapping) or set(director) - {"deck_plan"} != {
             "template_id", "template_version", "taskbook", "taskbook_digest",
         }:
             raise ValueError("V6 director confirmation is invalid")
@@ -309,6 +309,17 @@ def validate_project(project: Mapping[str, Any]) -> None:
             raise ValueError("V6 director taskbook is invalid") from exc
         if director["taskbook_digest"] != taskbook_digest(taskbook):
             raise ValueError("V6 director taskbook digest is invalid")
+        if "deck_plan" in director:
+            from deck_planning import digest as planning_digest, validate_pages
+            record = director["deck_plan"]
+            if (not isinstance(record, Mapping) or record.get("taskbook_digest") != director["taskbook_digest"]
+                    or not isinstance(record.get("plan"), dict)
+                    or record.get("plan_digest") != planning_digest(record["plan"])):
+                raise ValueError("V6 deck plan digest is invalid")
+            pages = record["plan"].get("pages")
+            if not isinstance(pages, list) or not pages:
+                raise ValueError("V6 deck plan pages are invalid")
+            validate_pages(record["plan"], [{"output_page_number": n} for n in range(1, len(pages) + 1)])
     revision = project["confirmed_ui_revision"]
     digest = project["confirmed_ui_digest"]
     materials_status = project["page_materials_status"]

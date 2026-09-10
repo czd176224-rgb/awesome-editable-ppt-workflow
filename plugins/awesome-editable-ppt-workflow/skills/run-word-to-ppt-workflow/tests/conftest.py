@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+
+# Test this checkout, even when an older editable editppt installation is present.
+_skill = Path(__file__).resolve().parents[1]
+for _path in (_skill / "scripts", _skill.parent / "reconstruct-editable-slide/cli"):
+    sys.path.insert(0, str(_path))
 
 
 def pytest_addoption(parser) -> None:

@@ -16,12 +16,26 @@
       "type": "string",
       "const": "awesome-consulting-page-director-v3"
     },
-    "page_number": {"type": "integer", "minimum": 1},
-    "quality": {"type": "string", "enum": ["medium", "high"]},
+    "page_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "quality": {
+      "type": "string",
+      "enum": [
+        "medium",
+        "high"
+      ]
+    },
     "page_plan": {
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "content_inventory",
+        "relationship_analysis",
+        "priority_rationale",
+        "sequence_context",
+        "context_bridges",
         "page_purpose",
         "primary_relationship",
         "core_exhibit",
@@ -32,22 +46,166 @@
         "numeric_authorities"
       ],
       "properties": {
-        "page_purpose": {"type": "string", "minLength": 1},
-        "primary_relationship": {"$ref": "#/$defs/relationship"},
-        "core_exhibit": {"$ref": "#/$defs/exhibit"},
+        "content_inventory": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_block_id",
+              "source_quote",
+              "display_copy",
+              "information_role",
+              "priority",
+              "reading_order",
+              "placement"
+            ],
+            "properties": {
+              "source_block_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_quote": {
+                "type": "string",
+                "minLength": 1
+              },
+              "display_copy": {
+                "type": "string",
+                "minLength": 1
+              },
+              "information_role": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "explanation",
+                  "condition",
+                  "judgment",
+                  "recommendation",
+                  "context"
+                ]
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "primary",
+                  "supporting",
+                  "qualifier",
+                  "context"
+                ]
+              },
+              "reading_order": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "placement": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "relationship_analysis": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "description",
+              "fact_ids",
+              "source_caveat"
+            ],
+            "properties": {
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fact_ids": {
+                "$ref": "#/$defs/factIds"
+              },
+              "source_caveat": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "priority_rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence_context": {
+          "type": "string",
+          "minLength": 1
+        },
+        "context_bridges": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_page_id",
+              "source_block_id",
+              "source_quote",
+              "display_copy"
+            ],
+            "properties": {
+              "source_page_id": {
+                "type": "integer"
+              },
+              "source_block_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_quote": {
+                "type": "string",
+                "minLength": 1
+              },
+              "display_copy": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "page_purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "primary_relationship": {
+          "$ref": "#/$defs/relationship"
+        },
+        "core_exhibit": {
+          "$ref": "#/$defs/exhibit"
+        },
         "support_groups": {
           "type": "array",
-          "items": {"$ref": "#/$defs/supportGroup"}
+          "items": {
+            "$ref": "#/$defs/supportGroup"
+          }
         },
-        "reading_path": {"type": "string", "minLength": 1},
+        "reading_path": {
+          "type": "string",
+          "minLength": 1
+        },
         "local_visuals": {
           "type": "array",
-          "items": {"$ref": "#/$defs/localVisual"}
+          "items": {
+            "$ref": "#/$defs/localVisual"
+          }
         },
         "quantitative_exhibits": {
-          "type": ["array", "null"],
+          "type": [
+            "array",
+            "null"
+          ],
           "minItems": 1,
-          "items": {"$ref": "#/$defs/quantitativeExhibit"}
+          "items": {
+            "$ref": "#/$defs/quantitativeExhibit"
+          }
         },
         "numeric_authorities": {
           "type": "null"
@@ -59,11 +217,24 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["material_id", "use", "preserve"],
+        "required": [
+          "material_id",
+          "use",
+          "preserve"
+        ],
         "properties": {
-          "material_id": {"type": "string", "minLength": 1},
-          "use": {"type": "string", "minLength": 1},
-          "preserve": {"type": "string", "minLength": 1}
+          "material_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "use": {
+            "type": "string",
+            "minLength": 1
+          },
+          "preserve": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     }
@@ -84,27 +255,61 @@
     "factIds": {
       "type": "array",
       "minItems": 1,
-      "items": {"type": "string", "minLength": 1}
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "node": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["node_id", "label", "fact_ids"],
+      "required": [
+        "node_id",
+        "label",
+        "fact_ids"
+      ],
       "properties": {
-        "node_id": {"type": "string", "minLength": 1},
-        "label": {"type": "string", "minLength": 1},
-        "fact_ids": {"$ref": "#/$defs/factIds"}
+        "node_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fact_ids": {
+          "$ref": "#/$defs/factIds"
+        }
       }
     },
     "edge": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["from_node", "to_node", "label", "fact_ids"],
+      "required": [
+        "from_node",
+        "to_node",
+        "label",
+        "fact_ids"
+      ],
       "properties": {
-        "from_node": {"type": "string", "minLength": 1},
-        "to_node": {"type": "string", "minLength": 1},
-        "label": {"type": ["string", "null"], "minLength": 1},
-        "fact_ids": {"$ref": "#/$defs/factIds"}
+        "from_node": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to_node": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "fact_ids": {
+          "$ref": "#/$defs/factIds"
+        }
       }
     },
     "relationship": {
@@ -119,85 +324,188 @@
         "edges"
       ],
       "properties": {
-        "grammar": {"$ref": "#/$defs/visualGrammar"},
-        "description": {"type": "string", "minLength": 1},
-        "fact_ids": {"$ref": "#/$defs/factIds"},
-        "visual_instruction": {"type": "string", "minLength": 1},
-        "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
-        "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+        "grammar": {
+          "$ref": "#/$defs/visualGrammar"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fact_ids": {
+          "$ref": "#/$defs/factIds"
+        },
+        "visual_instruction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          }
+        }
       }
     },
     "exhibit": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["grammar", "description", "fact_ids"],
+      "required": [
+        "grammar",
+        "description",
+        "fact_ids"
+      ],
       "properties": {
-        "grammar": {"$ref": "#/$defs/visualGrammar"},
-        "description": {"type": "string", "minLength": 1},
-        "fact_ids": {"$ref": "#/$defs/factIds"}
+        "grammar": {
+          "$ref": "#/$defs/visualGrammar"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fact_ids": {
+          "$ref": "#/$defs/factIds"
+        }
       }
     },
     "supportGroup": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "label", "fact_ids"],
+      "required": [
+        "role",
+        "label",
+        "fact_ids"
+      ],
       "properties": {
-        "role": {"type": "string", "minLength": 1},
-        "label": {"type": "string", "minLength": 1},
-        "fact_ids": {"$ref": "#/$defs/factIds"}
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fact_ids": {
+          "$ref": "#/$defs/factIds"
+        }
       }
     },
     "localVisual": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["grammar", "instruction", "fact_ids"],
+      "required": [
+        "grammar",
+        "instruction",
+        "fact_ids"
+      ],
       "properties": {
-        "grammar": {"$ref": "#/$defs/visualGrammar"},
-        "instruction": {"type": "string", "minLength": 1},
-        "fact_ids": {"$ref": "#/$defs/factIds"}
+        "grammar": {
+          "$ref": "#/$defs/visualGrammar"
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fact_ids": {
+          "$ref": "#/$defs/factIds"
+        }
       }
     },
     "seriesGroup": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "name_ref_id", "category_ref_ids", "value_ref_ids",
-        "unit_ref_id", "basis_ref_id"
+        "name_ref_id",
+        "category_ref_ids",
+        "value_ref_ids",
+        "unit_ref_id",
+        "basis_ref_id"
       ],
       "properties": {
-        "name_ref_id": {"type": "string", "minLength": 1},
+        "name_ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "category_ref_ids": {
-          "type": "array", "minItems": 1,
-          "items": {"type": "string", "minLength": 1}
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "value_ref_ids": {
-          "type": "array", "minItems": 1,
-          "items": {"type": "string", "minLength": 1}
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "unit_ref_id": {"type": "string", "minLength": 1},
-        "basis_ref_id": {"type": "string", "minLength": 1}
+        "unit_ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "basis_ref_id": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "quantitativeExhibit": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "chart_id", "rendering_primitive", "chart_variant",
-        "title_ref_id", "period_ref_id", "series_groups"
+        "chart_id",
+        "rendering_primitive",
+        "chart_variant",
+        "title_ref_id",
+        "period_ref_id",
+        "series_groups"
       ],
       "properties": {
-        "chart_id": {"type": "string", "minLength": 1},
+        "chart_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "rendering_primitive": {
-          "type": "string", "enum": ["column_bar", "line_point"]
+          "type": "string",
+          "enum": [
+            "column_bar",
+            "line_point"
+          ]
         },
         "chart_variant": {
-          "type": "string", "enum": ["column", "bar", "line", "dot"]
+          "type": "string",
+          "enum": [
+            "column",
+            "bar",
+            "line",
+            "dot"
+          ]
         },
-        "title_ref_id": {"type": "string", "minLength": 1},
-        "period_ref_id": {"type": ["string", "null"], "minLength": 1},
+        "title_ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "period_ref_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
         "series_groups": {
-          "type": "array", "minItems": 1,
-          "items": {"$ref": "#/$defs/seriesGroup"}
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/seriesGroup"
+          }
         }
       }
     }
