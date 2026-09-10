@@ -30,6 +30,8 @@ def test_full_context_and_ui_page_role_reach_the_director_boundary():
     with TemporaryDirectory() as tmp:
         project = Path(tmp)
         (project / "02_v6").mkdir()
+        (project / "00_source").mkdir()
+        (project / "00_source/source.docx").write_bytes(b"fixed source for mocked extraction")
         page = {"output_page_number": 1, "source_page_id": 20, "fixed_page_title": "推导标题",
                 "page_role": "chapter", "chapter_title": "章节", "visible_page_number": False}
         (project / "02_v6/page_composition.json").write_text(json.dumps({"pages": [page]}), encoding="utf-8")
@@ -44,7 +46,7 @@ def test_full_context_and_ui_page_role_reach_the_director_boundary():
             assert deck_planning.confirmed_page_inputs(project, 1, include_composition=True) == {
                 "plan": plan, "context": full["pages"], "composition": page}
             validate.assert_called_once_with(project, 1)
-            assert extract.call_count == 1
+            assert extract.call_count == 0  # The prior full-context read already parsed these exact bytes.
         with patch.object(deck_planning, "confirmed_page_plan", return_value={"title": "冲突标题"}), \
              patch("extract_docx_pages.extract_auto", return_value=full):
             try:

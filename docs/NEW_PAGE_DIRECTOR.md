@@ -10,4 +10,6 @@ Independent review, source integrity, object-level reconstruction checks and the
 
 Each director or reviewer request reads and validates its confirmed plan once. The roles still receive complete source context and validate independently; no validation result is reused across requests. One public skill coordinates the workflow; detailed operations are loaded only when needed.
 
+Full Word parsing is reused within one process for up to four source identities. Every lookup reads the source content hash, and each caller receives an independent copy. The key includes the resolved source path and pagination rule; changed bytes, another project or a full-manuscript source cannot silently reuse the wrong parse. Parse failures and sources changed during parsing are not cached. Confirmation validation remains independent of this cache.
+
 Milestones: (1) new director foundation; (2) deduplicated confirmed reads and one public skill; (3) shared full-source parsing; (4) unified run/resume; (5) real representative pages; (6) whole-deck delivery and bounded recovery; (7) verified installation, rollback and release. Each dependent PR must report its own actual checks. Offline checks cannot establish visual quality or final release readiness.
