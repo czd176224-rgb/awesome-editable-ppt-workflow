@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "page_design_v1.schema.json",
+  "title": "DirectPageDesign",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "page_number",
+    "quality",
+    "page_plan",
+    "selected_references"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "awesome-page-design-v1"
+    },
+    "page_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "quality": {
+      "type": "string",
+      "enum": [
+        "medium",
+        "high"
+      ]
+    },
+    "page_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content_inventory",
+        "context_bridges",
+        "image_prompt",
+        "quantitative_exhibits",
+        "numeric_authorities"
+      ],
+      "properties": {
+        "content_inventory": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_block_id",
+              "source_quote",
+              "display_copy",
+              "target"
+            ],
+            "properties": {
+              "source_block_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_quote": {
+                "type": "string",
+                "minLength": 1
+              },
+              "display_copy": {
+                "type": "string",
+                "minLength": 1
+              },
+              "target": {
+                "type": "string",
+                "enum": [
+                  "body",
+                  "fixed_title"
+                ]
+              }
+            }
+          }
+        },
+        "context_bridges": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_page_id",
+              "source_block_id",
+              "source_quote",
+              "display_copy"
+            ],
+            "properties": {
+              "source_page_id": {
+                "type": "integer"
+              },
+              "source_block_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_quote": {
+                "type": "string",
+                "minLength": 1
+              },
+              "display_copy": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "image_prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quantitative_exhibits": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/quantitativeExhibit"
+          }
+        },
+        "numeric_authorities": {
+          "type": "null"
+        }
+      }
+    },
+    "selected_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "material_id",
+          "use",
+          "preserve"
+        ],
+        "properties": {
+          "material_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "use": {
+            "type": "string",
+            "minLength": 1
+          },
+          "preserve": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "seriesGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name_ref_id",
+        "category_ref_ids",
+        "value_ref_ids",
+        "unit_ref_id",
+        "basis_ref_id"
+      ],
+      "properties": {
+        "name_ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category_ref_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "value_ref_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "unit_ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "basis_ref_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "quantitativeExhibit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chart_id",
+        "rendering_primitive",
+        "chart_variant",
+        "title_ref_id",
+        "period_ref_id",
+        "series_groups"
+      ],
+      "properties": {
+        "chart_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rendering_primitive": {
+          "type": "string",
+          "enum": [
+            "column_bar",
+            "line_point"
+          ]
+        },
+        "chart_variant": {
+          "type": "string",
+          "enum": [
+            "column",
+            "bar",
+            "line",
+            "dot"
+          ]
+        },
+        "title_ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "period_ref_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "series_groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/seriesGroup"
+          }
+        }
+      }
+    }
+  }
+}

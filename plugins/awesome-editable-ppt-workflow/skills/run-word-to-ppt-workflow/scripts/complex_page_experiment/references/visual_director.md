@@ -1,7 +1,17 @@
-- Decide page purpose from source. Preserve each fact, explanation, condition and relationship; never invent conclusions for descriptive or structural pages.
-- Choose one source-supported primary relationship and one core exhibit. Allocate every Word fact once between it and labeled support groups.
-- Use `analytical_table` for the clearest comparison; complete data does not require a chart and may use `quantitative_chart`.
-- When `flow`, `hierarchy`, or `causality` is primary, use source-bound nodes, directed edges when the source defines direction, and a concrete visual instruction. Geography may use source-bound nodes without edges; add an edge only for a source-stated directional relationship.
-- Keep secondary relationships and illustrative metaphors local to the evidence they explain, never as an invented whole-page scene.
-- Title roles: fixed PowerPoint page title = context outside the body; source-authored chapter/section heading = unique local context, never a second page title; local exhibit heading = allowed. Never drop a block solely because its style is Heading 1.
-- Select only mapped source references that change the page, and state their pixel-relevant use and identity features to preserve.
+# 页面导演：全文理解下的一次整体设计
+
+完整阅读任务书、UI确认信息、全文、本页原材料及素材。标题来自对全文、章节划分与本页表达职责的理解，并已通过现有一次确认；原 Word 标题和本页其他内容都是原始材料，不是另一套固定设计要求。理解标题为何在此章节成立，不能脱离全文按字面套图，也不能自行另换已封存标题。
+
+以标题构成为起点识别本页主要部分及总体关系，逐层理解各部分内部关系，以及关系之间如何联系。结合本页完整材料和全文语境充实、校准这种理解：谁作用于谁、属于什么范围、如何支持结论、受到什么条件限制。并非每页都有动作或因果，不虚构顺序、一一对应、比例、已有成效或其他原文没有的关系。主视觉首先让标题主张可辨；支撑信息解释、支持或限定主张，不能因字数多、数字大或容易画而取代它。
+
+在同一次设计中共同考虑讲解目标、受众已有认知与各项内容职责，决定哪些关系需要图形帮助理解、哪些以准确文字表达更清楚。空间、图形、文字、阅读路径、留白和颜色相互影响、反复校准，不能拆成先选图、再填字、再排版、最后上色的独立任务。这里的说明是整体判断依据，不要求多次模型调用、多个中间设计稿或用户逐项确认。
+
+简单图形及其组合可以同时表达总体关系、内部关系及两者之间的联系。需要多少图、何种图文组合由这一页的讲解需要决定；不建立内容类别到图形类型的固定映射，不为所有材料强制配图，不把图形限制为一种关系。表格可以表达真实对照；长段说明和完整明细可以与主表达共存。阅读先后与第一眼视觉注意力有关但不等同。
+
+仅对需要提炼的同级短文字进行整组处理：必须简短、对称对仗，语法结构与字数统一，且同组比较维度一致。不能改成“尽量”或“语法相近”。保留已有专业名称，不无故改写；不把所有段落压成标签。若专业名称或必要事实不适合压缩，用统一短标签配完整说明承载，不能为了凑字数损失原意、事实、条件、范围、来源、时态或不确定性。标题原材料中的独有含义也必须得到承载，不能因它曾是标题而忽略。
+
+把颜色与图文、位置、字号及字重共同用于表达。黑灰基础色可以自由使用，用于正文、层级或轮廓，不受每页使用次数限制。对比色帮助区分有意义的部分与关系，强调色突出讲解落点；蓝绿对比、金色强调是当前示例的职责，具体颜色使用当次UI的primary_color、secondary_color、highlight_color等已确认设置，不能固化示例色值、数量或位置。没有单独强调色时在已有配色内决定表达，不自行添加颜色。色彩不能暗示原文没有的风险、数量或成效。
+
+需要跨页语境时从完整原文取准确短语说明承接，其他页明细留在原页，不搬移内容或暗示尚未发生的事实。实际机构、人物、产品等使用身份正确的现有素材；没有真实素材不制造身份。参考图形若被提供，只帮助表达已经理解的关系，不能倒推本页内容或套入另一页布局。
+
+最终image_prompt只写已经确定的画面：整页主要表达、空间和图文关系、阅读路径、完整可见文字、字体配色及素材用途。不得包含分析过程、推理理由、取材经过、备选方案或要求Image2继续决定设计。来源清单只是交接证据，不是第二份设计。Image2绘制这一份确定画面；外层完整标题、Logo、页脚、页码由原生层提供，正文核心语义标签可与主张呼应。接受的画面随后忠实重建为可编辑对象，不重新选择布局或正文颜色。

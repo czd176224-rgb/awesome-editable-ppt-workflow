@@ -82,8 +82,8 @@ def test_scanner_rejects_retired_regional_skill_name(tmp_path: Path):
 def test_skill_documents_v6_adaptive_reconstruction_without_manual_state_bypass():
     skill = (REPO_ROOT / "plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/SKILL.md").read_text(encoding="utf-8")
     assert "word_to_editable_ppt.py v6" in skill
-    assert "Zero compiler-selected page references selects `generate`" in skill
-    assert "one to sixteen compiler-selected page references selects `edit`" in skill
+    assert "Zero director-selected page references selects `generate`" in skill
+    assert "one to sixteen director-selected page references selects `edit`" in skill
     assert "workflow_v6.json" in skill
     assert "editppt run record" not in skill
 

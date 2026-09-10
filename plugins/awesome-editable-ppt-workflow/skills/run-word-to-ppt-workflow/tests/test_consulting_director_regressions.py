@@ -5,10 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from complex_page_experiment.consulting_prompt import (
-    SECTION_SPECS,
-    compile_consulting_six_part_prompt,
-)
 from complex_page_experiment.director import _validate_director_value
 from complex_page_experiment.materials import CompletePageMaterialView
 
@@ -21,16 +17,6 @@ EXPECTED_CASES = (
     "four-capability-transformation-chain",
     "four-row-investment-matrix",
 )
-LEGACY_TERMS = (
-    "scene_and_composition",
-    "subjects_and_relationships",
-    "style_and_palette",
-    "layout_and_text",
-    "reference_usage",
-    "constraints_and_avoidances",
-    "compile_six_part_prompt",
-    "awesome-complex-page-director-v1",
-)
 
 
 def _cases() -> list[dict[str, object]]:
@@ -40,17 +26,48 @@ def _cases() -> list[dict[str, object]]:
 
 
 def _director_value(case: dict[str, object]) -> dict[str, object]:
+    # Adapt the public synthetic source, not the retired compiler's output.
+    facts = _source_facts(case)
     return {
-        "schema_version": "awesome-consulting-page-director-v3",
+        "schema_version": "awesome-page-design-v1",
         "page_number": 1,
         "quality": "high",
-        "page_plan": case["page_plan"],
+        "page_plan": {
+            "image_prompt": "\n".join([
+                *facts,
+                case["page_plan"]["primary_relationship"]["visual_instruction"],
+                case["page_plan"]["reading_path"],
+                "Use colors: " + ", ".join(case["colors"].values()),
+            ]),
+            "content_inventory": [
+                {"source_block_id": f"body-{index}", "source_quote": text,
+                 "display_copy": text, "target": "body"}
+                for index, text in enumerate(facts, start=1)
+            ],
+            "context_bridges": [],
+            "quantitative_exhibits": None,
+            "numeric_authorities": None,
+        },
         "selected_references": [],
     }
 
+def _source_facts(case):
+    relationship = case["page_plan"]["primary_relationship"]
+    labels = {node["node_id"]: node["label"] for node in relationship["nodes"]}
+    return [
+        case["proposition"], case["explanatory_lead"], case["takeaway"],
+        relationship["description"],
+        *labels.values(),
+        *[
+            f"{labels[edge['from_node']]} -> {labels[edge['to_node']]}"
+            + (f": {edge['label']}" if edge.get("label") else "")
+            for edge in relationship["edges"]
+        ],
+    ]
+
 
 def _material_view(case: dict[str, object]) -> CompletePageMaterialView:
-    facts = [case["proposition"], case["explanatory_lead"], case["takeaway"]]
+    facts = _source_facts(case)
     return CompletePageMaterialView(
         value={
             "page_number": 1,
@@ -107,27 +124,24 @@ def test_public_regression_fixture_covers_the_four_consulting_body_patterns() ->
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda case: str(case["id"]))
-def test_each_public_case_is_a_v3_director_fixture(case) -> None:
+def test_each_public_case_satisfies_the_current_director_contract(case) -> None:
     assert _validate_director_value(_director_value(case), _material_view(case)) == ()
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda case: str(case["id"]))
-def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None:
+def test_each_public_case_retains_one_exact_prompt_and_complete_relationship(case) -> None:
     value = _director_value(case)
     material_view = _material_view(case)
 
-    prompt = compile_consulting_six_part_prompt(value, material_view)
-    architecture = prompt.split("## Consulting Information Architecture\n", 1)[1].split(
-        "\n\n## Visual Style and Color", 1
-    )[0]
-    visual = prompt.split("## Visual Style and Color\n", 1)[1].split(
-        "\n\n## Text and Typography", 1
-    )[0]
-
-    headings = tuple(f"## {heading}" for heading, _key in SECTION_SPECS)
-    assert tuple(prompt.index(heading) for heading in headings) == tuple(
-        sorted(prompt.index(heading) for heading in headings)
-    )
+    prompt = value["page_plan"]["image_prompt"]
+    before = json.dumps(value, ensure_ascii=False)
+    _validate_director_value(value, material_view)
+    assert json.dumps(value, ensure_ascii=False) == before
+    assert set(value["page_plan"]) == {
+        "image_prompt", "content_inventory", "context_bridges",
+        "quantitative_exhibits", "numeric_authorities",
+    }
+    assert all(fact in prompt for fact in _source_facts(case))
     assert case["proposition"] in prompt
     assert case["page_plan"]["primary_relationship"]["description"] in prompt
     assert case["page_plan"]["primary_relationship"]["visual_instruction"] in prompt
@@ -141,16 +155,27 @@ def test_each_public_case_compiles_to_the_sealed_consulting_prompt(case) -> None
         len(block["text"])
         for block in material_view.value["complete_word_content"]
     )
-    assert "Communicate one source-supported main message" in prompt
-    assert "one source-supported main message in a coherent reading path" in prompt
-    assert "no invented takeaway" in prompt
-    assert "Do not generate title, logo, footer, or page number" in prompt
-    assert "sole executable color contract is the compiler-owned contract" in architecture
-    assert "This is not a user-confirmed emphasis page" in visual
-    assert "text objects may not use secondary-family or highlight-family colors" in visual
-    assert "Those colors remain allowed for non-text structural marks" in visual
-    assert "text objects may not use secondary-family or highlight-family colors" not in architecture
-    assert not any(term in prompt for term in LEGACY_TERMS)
+
+
+@pytest.mark.parametrize("case", _cases(), ids=lambda case: str(case["id"]))
+def test_current_contract_rejects_each_omitted_fact_or_relationship(case) -> None:
+    for index in range(len(_source_facts(case))):
+        value = _director_value(case)
+        del value["page_plan"]["content_inventory"][index]
+        with pytest.raises(ValueError, match="content inventory omits source text"):
+            _validate_director_value(value, _material_view(case))
+
+
+@pytest.mark.parametrize("case", _cases(), ids=lambda case: str(case["id"]))
+def test_current_contract_rejects_inventory_copy_missing_from_the_prompt(case) -> None:
+    for fact in _source_facts(case):
+        value = _director_value(case)
+        value["page_plan"]["image_prompt"] = "\n".join(
+            line for line in value["page_plan"]["image_prompt"].splitlines()
+            if fact not in line
+        )
+        with pytest.raises(ValueError, match="visible copy is absent from image_prompt"):
+            _validate_director_value(value, _material_view(case))
 
 
 def test_public_fixture_contains_no_private_project_or_page_identifiers() -> None:
@@ -176,6 +201,6 @@ def test_director_template_context_uses_one_taskbook_helper_without_reviewing_di
 
     assert director.count("confirmed_taskbook_prompt(") == 1
     assert review.count("confirmed_taskbook_prompt(") == 1
-    assert "CONFIRMED PRESENTATION TASKBOOK" in director
+    assert "已确认任务书" in director
     assert "CONFIRMED PRESENTATION TASKBOOK" in review
     assert "_canonical_text(director.value)" not in review

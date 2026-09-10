@@ -46,10 +46,9 @@ def _complete_body(page: Mapping[str, Any]) -> list[dict[str, Any]]:
     blocks = page.get("blocks")
     if not isinstance(blocks, list):
         raise ValueError("paginated Word page blocks must be a list")
-    title_id = page.get("fixed_page_title_source_block_id")
     return [
         copy.deepcopy(dict(block)) for block in blocks
-        if isinstance(block, Mapping) and block.get("source_block_id") != title_id
+        if isinstance(block, Mapping)
     ]
 
 
@@ -115,7 +114,7 @@ def collect_page_materials(project_root: Path, page_number: int) -> dict[str, An
     source = _load_object(project / SOURCE_MANIFEST, "paginated Word source manifest")
     assets = _load_object(project / ASSET_MANIFEST, "source asset manifest")
     page = _page(source, page_number)
-    identified_title = page.get("fixed_page_title", state["pages"][page_number - 1]["title"])
+    identified_title = state["pages"][page_number - 1]["title"]
     if not isinstance(identified_title, str) or not identified_title:
         raise ValueError("paginated Word page has no fixed title identification")
     fixed_title = identified_title

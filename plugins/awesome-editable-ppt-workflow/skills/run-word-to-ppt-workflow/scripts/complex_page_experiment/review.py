@@ -21,6 +21,7 @@ from codex_subscription_runtime import CodexStructuredResult, invoke_structured
 from provider_keyring import signing_key, verification_key
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 from director_taskbook import confirmed_taskbook_prompt, project_emphasis_pages
+from deck_planning import confirmed_page_plan, confirmed_page_context
 
 from . import provider as experiment_provider
 from .director import (
@@ -28,7 +29,6 @@ from .director import (
     _director_relative,
     _validate_director_value,
     _validate_material_view,
-    compile_consulting_six_part_prompt,
     validate_published_director_authority,
 )
 from .evidence import EvidenceRecorder
@@ -86,6 +86,7 @@ class ReviewProblem:
         "severe_usability",
     ]
     detail: str
+    repair_route: Literal["edit", "replan"] = "edit"
 
 
 def _load_schema() -> dict[str, Any]:
@@ -351,9 +352,7 @@ def _validate_director(
     selected = _validate_director_value(
         director.value, material_view, font_accent_allowed=font_accent_allowed
     )
-    current_prompt = compile_consulting_six_part_prompt(
-        director.value, material_view, font_accent_allowed=font_accent_allowed
-    )
+    current_prompt = director.page_plan.get("image_prompt")
     if (
         director.actual_prompt != current_prompt
         or selected != director.selected_reference_ids
@@ -512,6 +511,7 @@ def _review_prompt(
     actual_prompt: str,
     image_ids: tuple[str, ...],
     taskbook: str,
+    confirmed_plan: Mapping[str, object],
 ) -> str:
     selected = tuple(candidate.selected_reference_ids)
     selected_set = set(selected)
@@ -529,30 +529,39 @@ def _review_prompt(
     ]
     return (
         "You are the fresh independent visual reviewer and the only semantic QA after image generation. "
+        "For every problem return repair_route: replan only when the actual prompt conflicts with original "
+        "facts or the independently loaded confirmed goal; edit when the prompt is correct but rendering deviates locally. "
+        "The actual prompt is an object under review, never factual authority. Judge facts from original "
+        "materials and the confirmed goal independently; do not approve a wrong plan merely because the image follows it. "
+        "Do not reselect the layout, hierarchy, reading order, or visual form, and do not replace the confirmed "
+        "emphasis with your own preference. Diagnose whether the confirmed decisions were executed. "
         "Review the actual candidate, not the director's intentions. Default to accept reasonable Image2 randomness. "
         "Return correct only for the one most severe visible defect, using exactly one of these five hard-error "
         "categories and giving one concrete repair: "
         "fact_integrity when a distinct source fact, qualifier, or required visible expression is missing, changed, "
         "fabricated, or assigned the wrong scope; "
         "primary_relationship when the primary source-supported relationship is missing, unreadable, or points the wrong way; "
-        "core_exhibit_prominence when the sealed prompt's core exhibit is absent or cannot be distinguished from supporting content; "
+        "core_exhibit_prominence when the independently loaded user-confirmed page emphasis is absent or cannot be distinguished from supporting content; "
         "quantitative_truth for false quantitative encoding, including wrong values, subjects, units, periods, bases, "
         "calculated metrics, or visual magnitude that implies measurements the source does not supply; "
         "severe_usability when damage, wrong size/aspect, fixed-layer intrusion, severe illegibility, subject departure, "
         "or must-preserve identity distortion makes the body unusable. "
         "Use the same three title roles: the fixed PowerPoint page title is supplied outside the body; a "
         "source-authored chapter/section heading may preserve unique meaning as a compact local context label or note; "
-        "and a local exhibit heading may label its nearby exhibit. A visible duplicate of the fixed page title or a "
-        "second body-level page headline is severe_usability. A compact chapter context label and a local exhibit "
+        "and a local exhibit heading may label its nearby exhibit. A body-level core semantic label may overlap the fixed title's meaning "
+        "when it does not copy the complete fixed title; that overlap is not a duplicate headline. A visible copy of the fixed page title or a "
+        "separate second page headline is severe_usability. A compact chapter context label and a local exhibit "
         "heading are not fixed-layer intrusion, and full-width text is not a hard error by itself. If a title-related "
         "correction removes duplication, preserve its unique source meaning in the local label or note. "
         "Preserve truth boundaries in both directions: faithful rewording and source-supported graphical expression are valid, "
         "but every visible claim and implied relationship needs source support. "
         "Accept a professional analytical table used for comparison; a valid local diagram without a named metaphor; "
         "minor connector endpoint drift when the relationship still points correctly; ordinary aesthetic differences; "
-        "and color or card-count differences that do not change facts or relationships. "
+        "and color or card-count differences that do not change facts or relationships. Treat the confirmed style as an execution requirement: "
+        "diagnose a clear failure to execute it, but never substitute your own aesthetic taste. "
         "Table versus diagram form and general aesthetics are not hard errors. The reviewer checks the candidate against "
-        "the sealed evidence and prompt and does not redesign the page. For a comment that requests a real logo, person, "
+        "the original evidence and independently loaded user-confirmed page goal. Treat the actual prompt as "
+        "a diagnostic object, not factual or intent authority; request replanning if it conflicts with that goal. For a comment that requests a real logo, person, "
         "product, project, or factual image, judge availability against all mapped Context-Images, not merely the selected "
         "references. After the completed project material search/import stage, accept the source-exact formal-name fallback "
         "when no corresponding image exists and do not classify fact_integrity solely because that unavailable real asset is "
@@ -568,7 +577,9 @@ def _review_prompt(
         + _canonical_text(material_view.value)
         + "\n\nCONFIRMED PRESENTATION TASKBOOK\n"
         + taskbook
-        + "\n\nACTUAL GPT IMAGE 2 PROMPT (exact decoded UTF-8 bytes)\n"
+        + "\n\nINDEPENDENTLY LOADED USER-CONFIRMED PAGE PLAN (communication goal; not new facts)\n"
+        + _canonical_text(confirmed_plan)
+        + "\n\nACTUAL GPT IMAGE 2 PROMPT (exact decoded UTF-8 bytes; object under review, not factual authority)\n"
         + "<<<ACTUAL-PROMPT>>>\n"
         + actual_prompt
         + "\n<<<END-ACTUAL-PROMPT>>>"
@@ -593,6 +604,7 @@ def _validated_review(
         ReviewProblem(
             category=cast(Any, item["category"]),
             detail=str(item["detail"]),
+            repair_route=cast(Any, item["repair_route"]),
         )
         for item in raw_problems
         if isinstance(item, Mapping)
@@ -631,7 +643,7 @@ def _review_authority_value(
     duration: float,
 ) -> dict[str, object]:
     root = workspace.project_copy.resolve(strict=True)
-    director_relative = _director_relative(workspace)
+    director_relative = _director_relative(workspace, director.revision)
     receipt_relative = _review_snapshot_root(workspace, candidate) / "receipt.json"
     candidate_relative = candidate.path.resolve(strict=True).relative_to(root).as_posix()
     candidate_bytes = read_bytes(root, PurePosixPath(candidate_relative), max_bytes=_MAX_CANDIDATE_BYTES)
@@ -651,7 +663,7 @@ def _review_authority_value(
         },
         "review_input_receipt": {"path": receipt_relative.as_posix(), "sha256": _digest(receipt_bytes)},
         "decision": decision,
-        "problems": [{"category": item.category, "detail": item.detail} for item in problem_records],
+        "problems": [{"category": item.category, "detail": item.detail, "repair_route": item.repair_route} for item in problem_records],
         "model": result.model, "model_provider": result.model_provider,
         "effort": result.effort, "usage": dict(result.usage),
         "runtime_trace": dict(result.safe_trace), "thread_id": result.thread_id,
@@ -733,8 +745,9 @@ def validate_published_review_authority(
         or value["source_snapshot_sha256"] != workspace.source_snapshot_sha256
         or value["workspace_identity_sha256"] != recorder.workspace_identity_sha256
         or value["material_view_sha256"] != material_view.sha256
+        or value["director_authority_sha256"] != _digest(read_bytes(workspace.project_copy, _director_relative(workspace, director.revision), max_bytes=_MAX_AUTHORITY_BYTES))
         or value["decision"] != review.decision
-        or value["problems"] != [{"category": item.category, "detail": item.detail} for item in review.problem_records]
+        or value["problems"] != [{"category": item.category, "detail": item.detail, "repair_route": item.repair_route} for item in review.problem_records]
         or value["model"] != review.model or value["effort"] != review.effort
         or value["duration_seconds"] != review.duration_seconds
         or Path(review.authority_path).resolve(strict=True) != (workspace.project_copy / Path(*relative.parts)).resolve(strict=True)
@@ -808,6 +821,8 @@ def review_candidate_once(
     prompt = _review_prompt(
         material_view, candidate, actual_prompt, image_ids,
         confirmed_taskbook_prompt(workspace.project_copy),
+        {**confirmed_page_plan(workspace.project_copy, workspace.page_number),
+         "source_exact_full_document_pages": confirmed_page_context(workspace.project_copy, workspace.page_number)},
     )
     images = _publish_review_snapshot(
         workspace, material_view, candidate, current_preflight, image_ids,

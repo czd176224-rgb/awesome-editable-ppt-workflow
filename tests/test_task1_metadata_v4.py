@@ -24,7 +24,7 @@ def test_public_metadata_exposes_only_the_awesome_v1_product():
     assert package["pluginVersion"] == manifest["version"] == "1.2.3"
     assert package["releaseTag"] == "v1.2.3"
     assert package["workflowContractVersion"] == "awesome-word-ppt-workflow-v1"
-    assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
+    assert package["promptContractVersion"] == "awesome-page-design-v1"
     assert package["qaPolicyVersion"] == "sole-independent-five-hard-error-review-v3"
     assert marketplace["plugins"] == [{
         **marketplace["plugins"][0],
@@ -49,13 +49,16 @@ def test_packaged_runtime_has_no_legacy_director_schema_or_compiler() -> None:
     assert "scene_and_composition" not in text
 
 
-def test_active_workflow_readme_documents_compact_v3_and_exact_hard_errors() -> None:
+def test_active_workflow_readme_documents_new_director_and_exact_hard_errors() -> None:
     readme = (
         PLUGIN / "skills" / "run-word-to-ppt-workflow" / "README.md"
     ).read_text(encoding="utf-8")
 
     assert "consulting director v2" not in readme
-    assert "compact v3 page plan" in readme
+    assert "consulting-page-director-v3-compact-page-plan" not in readme
+    assert "compact v3 page plan" not in readme
+    assert "awesome-page-design-v1" in readme
+    assert "page_plan.image_prompt" in readme
     for category in (
         "fact_integrity",
         "primary_relationship",

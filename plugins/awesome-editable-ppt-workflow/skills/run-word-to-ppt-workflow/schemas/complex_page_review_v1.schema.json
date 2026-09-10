@@ -27,7 +27,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["category", "detail"],
+        "required": [
+          "category",
+          "detail",
+          "repair_route"
+        ],
         "properties": {
           "category": {
             "type": "string",
@@ -43,6 +47,13 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 1000
+          },
+          "repair_route": {
+            "type": "string",
+            "enum": [
+              "edit",
+              "replan"
+            ]
           }
         }
       }

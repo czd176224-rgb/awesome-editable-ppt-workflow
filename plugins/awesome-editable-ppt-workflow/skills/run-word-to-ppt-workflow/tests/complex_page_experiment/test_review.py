@@ -11,7 +11,6 @@ from PIL import Image
 from codex_subscription_runtime import CodexStructuredResult
 from complex_page_experiment.director import (
     DirectorArtifact,
-    compile_consulting_six_part_prompt,
     direct_page,
 )
 from complex_page_experiment.materials import CompletePageMaterialView
@@ -318,6 +317,7 @@ def test_review_allows_only_five_hard_error_categories_and_one_problem(
     problem = {
         "category": "quantitative_truth",
         "detail": "Bar lengths imply values absent from the source; use equal-length marks.",
+        "repair_route": "edit",
     }
     workspace, view, director, candidate, recorder = review_fixture
     captured: list[str] = []
@@ -351,7 +351,9 @@ def test_review_allows_only_five_hard_error_categories_and_one_problem(
         assert category in prompt
     assert "one most severe visible defect" in prompt
     assert "one concrete repair" in prompt
-    assert "does not redesign the page" in prompt
+    assert "replan only when the actual prompt conflicts with original" in prompt
+    assert "edit when the prompt is correct but rendering deviates locally" in prompt
+    assert result.problem_records[0].repair_route == "edit"
     assert "false quantitative encoding" in prompt
 
 
@@ -446,14 +448,14 @@ def test_review_does_not_spend_correction_for_authoritatively_unavailable_real_a
 @pytest.mark.parametrize(
     "value",
     [
-        {"schema_version": "awesome-independent-visual-review-v1", "decision": "accept", "problems": [{"category": "fact_integrity", "detail": "fix it"}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "accept", "problems": [{"repair_route": "edit", "category": "fact_integrity", "detail": "fix it"}]},
         {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": []},
-        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "fact_integrity", "detail": "  "}]},
-        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "fact_integrity", "detail": "First."}, {"category": "severe_usability", "detail": "Second."}]},
-        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "technical_output", "detail": "Legacy category."}]},
-        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "polish", "detail": "Make the colors nicer."}]},
-        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "color", "detail": "Change the palette."}]},
-        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"category": "score", "detail": "The score is too low."}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"repair_route": "edit", "category": "fact_integrity", "detail": "  "}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"repair_route": "edit", "category": "fact_integrity", "detail": "First."}, {"repair_route": "edit", "category": "severe_usability", "detail": "Second."}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"repair_route": "edit", "category": "technical_output", "detail": "Legacy category."}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"repair_route": "edit", "category": "polish", "detail": "Make the colors nicer."}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"repair_route": "edit", "category": "color", "detail": "Change the palette."}]},
+        {"schema_version": "awesome-independent-visual-review-v1", "decision": "correct", "problems": [{"repair_route": "edit", "category": "score", "detail": "The score is too low."}]},
         {"schema_version": "awesome-independent-visual-review-v1", "decision": "accept", "problems": [], "score": 4},
         {"schema_version": "awesome-independent-visual-review-v1", "decision": "accept", "problems": [], "coverage": 1.0},
     ],
@@ -510,18 +512,10 @@ def test_review_rejects_forged_material_or_director_before_codex(review_fixture)
     assert called is False
 
     forged_value = json.loads(json.dumps(director.value))
-    forged_value["page_plan"]["primary_relationship"]["description"] = (
-        "A different but schema-valid visual concept."
-    )
-    from complex_page_experiment.director import compile_consulting_six_part_prompt
-
-    forged_value["page_plan"]["page_purpose"] = (
-        "A different but valid source-bound purpose."
-    )
+    forged_value["page_plan"]["image_prompt"] += " A different schema-valid composition."
     forged_director = replace(
-        director,
-        value=forged_value,
-        actual_prompt=compile_consulting_six_part_prompt(forged_value, view),
+        director, value=forged_value,
+        actual_prompt=forged_value["page_plan"]["image_prompt"],
     )
     with pytest.raises(ValueError, match="published director"):
         review_candidate_once(
@@ -553,9 +547,7 @@ def test_review_rejects_forged_material_or_director_before_codex(review_fixture)
 
 def test_review_rejects_legacy_prompt_instead_of_current_project_prompt(review_fixture):
     workspace, view, director, _candidate, _recorder = review_fixture
-    legacy_prompt = compile_consulting_six_part_prompt(
-        director.value, view, font_accent_allowed=None
-    )
+    legacy_prompt = "## Task and Canvas\n" + director.actual_prompt
     assert legacy_prompt != director.actual_prompt
 
     with pytest.raises(ValueError, match="director artifact identity"):
@@ -710,3 +702,29 @@ def test_review_result_authority_binds_candidate_snapshot_and_detects_tamper(
         validate_published_review_authority(
             workspace, view, director, candidate, review, recorder=recorder,
         )
+
+
+@pytest.mark.parametrize("repair_route", ["edit", "replan"])
+def test_review_preserves_explicit_repair_route_in_signed_authority(review_fixture, repair_route):
+    workspace, view, director, candidate, recorder = review_fixture
+    problem = {"category": "primary_relationship", "detail": "Reverse the unsupported arrow.", "repair_route": repair_route}
+    review = review_candidate_once(
+        workspace, view, director, candidate, preflight_candidate(candidate),
+        timeout=30, recorder=recorder,
+        invoke=lambda *a, **kw: _review_result(decision="correct", problems=[problem]),
+    )
+    assert review.problem_records[0].repair_route == repair_route
+    authority = json.loads(review.authority_path.read_text(encoding="utf-8"))
+    assert authority["problems"] == [problem]
+    validate_published_review_authority(workspace, view, director, candidate, review, recorder=recorder)
+
+
+def test_review_cannot_reuse_director_thread(review_fixture):
+    workspace, view, director, candidate, recorder = review_fixture
+    reused = replace(_review_result(), thread_id=director.thread_id)
+    with pytest.raises(ValueError, match="reused the director context"):
+        review_candidate_once(
+            workspace, view, director, candidate, preflight_candidate(candidate),
+            timeout=30, recorder=recorder, invoke=lambda *a, **kw: reused,
+        )
+    assert recorder.has_call(kind="visual_review", attempt=1)

@@ -19,7 +19,6 @@ from .materials import (
 )
 from .director import (
     DirectorArtifact,
-    compile_consulting_six_part_prompt,
     direct_page,
 )
 from .evidence import EvidenceRecorder, sample_resources
@@ -59,7 +58,6 @@ __all__ = [
     "validate_complete_page_material_view",
     "validate_published_complete_page_material_view",
     "DirectorArtifact",
-    "compile_consulting_six_part_prompt",
     "direct_page",
     "EvidenceRecorder",
     "sample_resources",

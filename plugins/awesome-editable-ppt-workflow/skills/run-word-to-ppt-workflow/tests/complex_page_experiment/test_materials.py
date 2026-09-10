@@ -155,7 +155,7 @@ def _prepare_complete_page_one(project: Path) -> dict[str, object]:
 
     material_path = project / "02_v6" / "awesome_page_materials" / "page_001.json"
     material = json.loads(material_path.read_text(encoding="utf-8"))
-    material["complete_word_content"] = [copy.deepcopy(pages[0]["blocks"][1])]
+    material["complete_word_content"] = copy.deepcopy(pages[0]["blocks"])
     material["original_comments"] = [
         {
             "comment_id": "comment-1",
@@ -277,6 +277,10 @@ def test_build_preserves_complete_authorities_and_reuses_existing_render_cache(
 
     materials = result.value["materials"]
     assert [item["material_id"] for item in materials] == list(result.material_ids)
+    assert materials[0]["kind"] == "word_block"
+    assert materials[0]["original"] == published["complete_word_content"][0]
+    assert materials[0]["original"]["source_block_id"] == "title-1"
+    materials = materials[1:]
     assert [item["kind"] for item in materials] == [
         "word_block",
         "word_comment",
@@ -290,7 +294,7 @@ def test_build_preserves_complete_authorities_and_reuses_existing_render_cache(
         "attachment_render_page",
         "attachment_contact_sheet",
     ]
-    assert materials[0]["original"] == published["complete_word_content"][0]
+    assert materials[0]["original"] == published["complete_word_content"][1]
     assert materials[1]["original"] == published["original_comments"][0]
     assert materials[2]["original_filename"] == "photo.png"
     assert materials[3]["original_filename"] == "photo-copy.png"
@@ -355,7 +359,7 @@ def test_complete_material_view_indexes_exact_table_cells_and_rejects_candidate_
 ) -> None:
     published = _prepare_complete_page_one(awesome_four_page_project)
     table = {
-        **published["complete_word_content"][0],
+        **published["complete_word_content"][1],
         "type": "table",
         "source_block_id": "metrics-table",
         "rows": [["指标", "2025"], ["收入", "120"]],
@@ -366,7 +370,7 @@ def test_complete_material_view_indexes_exact_table_cells_and_rejects_candidate_
     paginated["pages"][0]["blocks"][1] = copy.deepcopy(table)
     paginated_path.write_bytes(_canonical(paginated))
     material_path = awesome_four_page_project / "02_v6/awesome_page_materials/page_001.json"
-    published["complete_word_content"] = [copy.deepcopy(table)]
+    published["complete_word_content"] = copy.deepcopy(paginated["pages"][0]["blocks"])
     payload = _canonical(published)
     material_path.write_bytes(payload)
     state_path = awesome_four_page_project / "workflow_v6.json"
@@ -381,12 +385,15 @@ def test_complete_material_view_indexes_exact_table_cells_and_rejects_candidate_
 
     result = build_complete_page_material_view(workspace)
 
-    cells = result.value["numeric_source_candidates"]
+    candidates = result.value["numeric_source_candidates"]
+    assert any(item["source_block_id"] == "title-1" for item in candidates)
+    cells = [item for item in candidates if item["source_block_id"] == "metrics-table"]
     assert [(item["row"], item["column"], item["text"]) for item in cells] == [
         (0, 0, "指标"), (0, 1, "2025"), (1, 0, "收入"), (1, 1, "120"),
     ]
     tampered = copy.deepcopy(result.value)
-    tampered["numeric_source_candidates"][3]["text"] = "999"
+    next(item for item in tampered["numeric_source_candidates"]
+         if item["source_block_id"] == "metrics-table" and item.get("row") == 1 and item.get("column") == 1)["text"] = "999"
     with pytest.raises(ValueError, match="numeric source candidate"):
         validate_complete_page_material_view(tampered)
 

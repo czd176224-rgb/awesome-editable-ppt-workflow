@@ -46,7 +46,7 @@ def _review_result(
     detail: str = "candidate is clearly off topic",
 ):
     problems = [] if decision == "accept" else [
-        {"category": category, "detail": detail}
+        {"category": category, "detail": detail, "repair_route": "edit"}
     ]
     return CodexStructuredResult(
         value={
@@ -99,7 +99,7 @@ def test_huangshi_problem_pages_build_one_local_edit(
     page_number, problems
 ):
     director = DirectorArtifact(
-        value={"page_plan": {"page_purpose": f"frozen page {page_number}"}},
+        value={"page_plan": {"image_prompt": f"page {page_number} source prompt"}},
         actual_prompt=f"page {page_number} source prompt",
         selected_reference_ids=(), quality="high", model="director",
         effort="high", duration_seconds=1.0, model_provider="test", usage={},
@@ -197,7 +197,7 @@ def test_huangshi_page_25_typo_becomes_an_exact_reconstruction_repair():
 
 def test_local_correction_rejects_more_than_one_review_problem():
     director = DirectorArtifact(
-        value={"page_plan": {"page_purpose": "frozen"}}, actual_prompt="full prompt",
+        value={"page_plan": {"image_prompt": "full prompt"}}, actual_prompt="full prompt",
         selected_reference_ids=(), quality="high", model="director", effort="high",
         duration_seconds=1.0, model_provider="test", usage={}, runtime_trace={},
         thread_id="thread", turn_id="turn",
@@ -334,14 +334,14 @@ def test_legacy_operation_migration_rejects_raced_state_without_overwriting_it(
 @pytest.mark.parametrize(
     "path,replacement",
     [
-        (("primary_relationship", "nodes", 0, "node_id"), "tampered-node"),
-        (("primary_relationship", "edges", 0, "to_node"), "tampered-endpoint"),
-        (("primary_relationship", "grammar"), "flow"),
-        (("core_exhibit", "fact_ids", 0), "tampered-fact"),
-        (("reading_path",), "tampered reading path"),
+        (("content_inventory", 0, "source_block_id"), "tampered-source"),
+        (("content_inventory", 0, "source_quote"), "tampered-quote"),
+        (("content_inventory", 0, "target"), "fixed_title"),
+        (("content_inventory", 0, "display_copy"), "tampered-fact"),
+        (("image_prompt",), "tampered design prompt"),
     ],
 )
-def test_accepted_receipt_seals_exact_v3_page_plan(
+def test_accepted_receipt_seals_exact_direct_design(
     provider_fixture, monkeypatch, path, replacement,
 ):
     workspace, view, _recorder, outcome = _run(
@@ -506,7 +506,7 @@ def test_recovery_happens_before_material_access_and_skips_every_call(
     ]
 
 
-def test_unfinished_v1_director_state_requires_clean_v3_page_restart_before_any_call(
+def test_unfinished_legacy_director_state_is_rejected_before_any_call(
     provider_fixture,
 ):
     workspace, view, recorder, _refs = provider_fixture
@@ -518,7 +518,7 @@ def test_unfinished_v1_director_state_requires_clean_v3_page_restart_before_any_
 
     with pytest.raises(
         ValueError,
-        match="unfinished v1 page.*restart this page from the compact consulting director v3",
+        match="unfinished v1 page",
     ):
         run_candidate_loop(
             workspace,
@@ -1129,14 +1129,14 @@ def test_recovery_uses_signed_correct_review_after_interruption_before_next_cand
         source_identity=workspace.source_snapshot_sha256,
     )
     original_provider = _real_worker_runner(monkeypatch, [])
-    real_record_local_correction = loop_module._record_local_correction
+    real_record_correction_decision = loop_module._record_correction_decision
 
     def interrupted_after_correct_review(*args, **kwargs):
-        real_record_local_correction(*args, **kwargs)
+        real_record_correction_decision(*args, **kwargs)
         raise RuntimeError("interrupted after signed correct review")
 
     monkeypatch.setattr(
-        loop_module, "_record_local_correction", interrupted_after_correct_review,
+        loop_module, "_record_correction_decision", interrupted_after_correct_review,
     )
 
     with pytest.raises(RuntimeError, match="interrupted after signed correct review"):
@@ -1148,7 +1148,7 @@ def test_recovery_uses_signed_correct_review_after_interruption_before_next_cand
             provider_runner=original_provider,
         )
     monkeypatch.setattr(
-        loop_module, "_record_local_correction", real_record_local_correction,
+        loop_module, "_record_correction_decision", real_record_correction_decision,
     )
     review_path = workspace.experiment_root / "review_inputs/attempt_1/review_result.json"
     original_review = review_path.read_bytes()

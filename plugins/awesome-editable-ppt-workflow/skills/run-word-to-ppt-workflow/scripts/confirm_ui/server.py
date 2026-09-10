@@ -538,11 +538,13 @@ def _director_confirmation(project: Path, payload: dict[str, Any]) -> dict[str, 
 
 def _save_visual_contract(project: Path, payload: dict[str, Any]) -> dict[str, Any]:
     if (project / "workflow_v6.json").is_file():
+        if (project / CONFIRM_DIR / RESULT).is_file() and not (project / _TRANSACTION_DIR).exists():
+            raise RuntimeError("V6 final confirmation is sealed and may be submitted exactly once")
         legacy = {*CONFIRMATION_FIELDS, "confirmed_pages"}
         current = {*CONFIRMATION_FIELDS, *DIRECTOR_SUBMISSION_FIELDS}
         structured = {*current, "confirmed_pages", "structure_confirmed"}
         payload_fields = set(payload)
-        base_fields = payload_fields - set(OPTIONAL_VISUAL_FIELDS)
+        base_fields = payload_fields - set(OPTIONAL_VISUAL_FIELDS) - {"deck_plan"}
         if base_fields not in (legacy, current, structured):
             raise ValueError("confirmation must contain visual fields and approved director fields only")
         if base_fields == structured:
@@ -1055,6 +1057,13 @@ def _v6_final_submission(
             frozen = _freeze_confirmed_composition(proposed, pages)
         frozen_pages = frozen["pages"]
         director_confirmation = _director_confirmation(project, payload)
+        from deck_planning import seal_plan
+        director_confirmation["deck_plan"] = seal_plan(
+            project, director_confirmation["taskbook"], pages, payload.get("deck_plan")
+        )
+        for page, plan in zip(frozen_pages, director_confirmation["deck_plan"]["plan"]["pages"]):
+            page["fixed_page_title"] = plan["title"]
+            page["chapter_title"] = plan["chapter_title"]
         result = {
             "status": "confirmed",
             "revision": 1,
@@ -1592,6 +1601,22 @@ def create_app(
             response.headers["Cache-Control"] = "no-store"
             return response
         except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/deck-plan")
+    def deck_plan():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "策划请求必须是对象"}), 400
+        try:
+            from deck_planning import generate_plan
+            with _v6_confirmation_lock(project):
+                selected = payload.get("confirmed_pages")
+                proposed = _read_json(project / "02_v6/page_composition.json")
+                validate_structure_selection(proposed, selected)
+                result = generate_plan(project, payload.get("director_taskbook"), selected)
+            return jsonify(result)
+        except (RuntimeError, OSError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 400
 
     @app.post("/api/confirm")

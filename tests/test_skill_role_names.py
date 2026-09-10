@@ -48,12 +48,17 @@ def test_skill_frontmatter_and_ui_metadata_use_folder_name() -> None:
 def test_slide_body_generator_cannot_bypass_v6_authority() -> None:
     skill = (SKILLS / "generate-slide-body-image" / "SKILL.md").read_text(encoding="utf-8")
     assert "prepared by `run-word-to-ppt-workflow`" in skill
-    assert "zero compiler-selected page-owned references" in skill
-    assert "one to sixteen compiler-selected page-owned references" in skill
+    assert "sealed project/page ImageRequest capability" in skill
+    assert "zero director-selected page-owned references" in skill
+    assert "one to sixteen director-selected page-owned references" in skill
     assert "workflow calls `generate`" in skill
     assert "workflow calls `edit`" in skill
     assert "aligned image bytes, roles, digests, and capability identity" in skill
-    assert "never candidate 1" in skill
+    assert "edit the immediately previous candidate" in skill
+    assert "new signed director prompt and its source references" in skill
+    assert "one initial candidate and two correction opportunities" in skill
+    assert "Only an explicit independent-review acceptance may select a candidate" in skill
+    assert "review failure or exhausted correction opportunities stop the page" in skill
     assert "high-fidelity best effort" in skill
     assert "Do not draw the fixed page title, SVG Logo, footer or page number" in skill
     assert "1904x896, 17:8" in skill

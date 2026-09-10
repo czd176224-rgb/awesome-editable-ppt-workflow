@@ -105,6 +105,7 @@
       });
       payload.structure_confirmed = true;
     }
+    if (state.deckPlan) payload.deck_plan = copy(state.deckPlan);
     return payload;
   }
   function requestJson(url, options) {
@@ -270,7 +271,45 @@
           }
           state = goNext(state);
         }
+        if (action.dataset.action === "plan") {
+          if (!taskbookForm.reportValidity()) return;
+          readTaskbook();
+          action.disabled = true;
+          document.getElementById("plan-status").textContent = "正在阅读完整原文并生成策划，请稍候……";
+          requestJson("/api/deck-plan", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(buildSubmission(state, submissionId()))
+          }).then(function (plan) {
+            state.deckPlan = plan;
+            var host = document.getElementById("deck-plan");
+            host.replaceChildren();
+            plan.pages.forEach(function (page) {
+              var box = document.createElement("fieldset");
+              var legend = document.createElement("legend");
+              legend.textContent = "第 " + page.output_page_number + " 页策划";
+              box.append(legend);
+              [["chapter_title", "所属章节"], ["title", "标题"], ["emphasis", "重点"], ["previous_connection", "承接前文"], ["next_connection", "引出后文"]].forEach(function (pair) {
+                var label = document.createElement("label");
+                label.textContent = pair[1];
+                var input = document.createElement("textarea");
+                input.value = page[pair[0]];
+                input.maxLength = 2000;
+                input.addEventListener("input", function () {
+                  state.deckPlan.pages.find(function (item) { return item.output_page_number === page.output_page_number; })[pair[0]] = input.value;
+                });
+                label.append(input); box.append(label);
+              });
+              host.append(box);
+            });
+            document.getElementById("plan-status").textContent = "策划已生成。请检查所属章节、标题、重点及前后联系，再执行一次最终确认。修改任务书或选页后须重新生成。";
+          }).catch(function (reason) {
+            showError(reason.message);
+            document.getElementById("plan-status").textContent = "生成失败，请查看错误后重试。";
+          }).finally(function () { action.disabled = false; });
+          return;
+        }
         if (action.dataset.action === "submit") {
+          if (!state.deckPlan) throw new Error("请先生成并检查全篇策划");
           if (!taskbookForm.reportValidity()) return;
           readTaskbook();
           action.disabled = true;

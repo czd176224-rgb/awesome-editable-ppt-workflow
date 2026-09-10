@@ -1,6 +1,6 @@
-# Consulting Director Visual QA
+# New Page Director Visual QA
 
-This document separates public structural regression from private visual acceptance. Public tests prove the consulting-director contract without publishing customer material. Private tests evaluate actual rendered page bodies locally and must never add source documents, prompts, candidate images, screenshots, or absolute paths to Git.
+This document separates public structural regression from private visual acceptance. Public tests exercise the new `awesome-page-design-v1` contract without publishing customer material. Private tests evaluate actual rendered page bodies locally and must never add source documents, prompts, candidate images, screenshots, or absolute paths to Git.
 
 ## Public synthetic regression
 
@@ -11,7 +11,7 @@ $env:PYTHONPATH='plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-wo
 python -m pytest plugins/awesome-editable-ppt-workflow/skills/run-word-to-ppt-workflow/tests/test_consulting_director_regressions.py -q
 ```
 
-The four synthetic cases cover a three-lane portfolio, five-stage capital loop, four-capability transformation chain, and four-row investment matrix. Every case must preserve the sealed six-section order, confirmed background/primary/secondary colors, explanatory lead, analytical backbone, explicit takeaway, fixed-layer exclusions, and absence of legacy director fields.
+The four synthetic cases cover a three-lane portfolio, five-stage capital loop, four-capability transformation chain, and four-row investment matrix. Every case checks complete source coverage, verbatim transport of the director's single image prompt, confirmed visual inputs and fixed-layer exclusions. There is no required prompt-section order or fixed composition grammar.
 
 ## Private four-page visual regression
 
@@ -20,8 +20,8 @@ Use a clean copy of the private project and the locally built plugin. The source
 For each page, confirm all of the following:
 
 - The entire 17:8 body reads as one continuous reporting composition, excluding the fixed title, upper-right logo, footer, and page number.
-- The page states one business proposition, uses a visible analytical backbone, includes enough explanatory copy to understand the page, connects evidence to interpretation and conclusion, and ends with an explicit takeaway.
-- Confirmed semantic colors retain their assigned meaning. Only taskbook-matched emphasis pages may use secondary-family text; non-emphasis pages reserve that family for shapes, lines and fills. Color remains structural rather than decorative.
+- The confirmed title determines the main visual relation. Supporting content remains subordinate, with complete facts and readable explanations. Structural pages do not require an invented conclusion.
+- Confirmed visual settings guide the design. Editable reconstruction preserves the accepted body's colors; it does not impose an older text-color rule after acceptance.
 - Supporting imagery functions as evidence or context. It does not become a decorative hero scene.
 - The page contains no disconnected module grid, glossy 3D machinery, miniature factory or park, toy-model scene, neon/cyberpunk treatment, glowing track, or other AI-heavy spectacle unsuitable for a formal report.
 - Text is readable at presentation scale, source-faithful, and free of generated fixed-layer content.

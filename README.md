@@ -1,36 +1,23 @@
-# Awesome Editable PPT Workflow 1.2.3
+# Awesome Editable PPT Workflow — new director development
 
 Public Codex plugin for converting a paginated Word document plus an SVG Logo into an object-level editable 16:9 PowerPoint.
 
-## V6 adaptive production contract
+## Current development contract
 
-The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `consulting-page-director-v3-compact-page-plan`.
+This branch is `development-not-release-ready`. The immutable 1.2.3 release remains separately available. New-director sample pages, whole-deck recovery and installation/release acceptance remain required; see [the milestone scope](docs/NEW_PAGE_DIRECTOR.md).
 
-Version 1.2.3 is `release-ready`: real-document acceptance, the automated regression suite, public-package checks, clean installation and same-version repair passed on Windows on 2026-09-07.
+The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `awesome-page-design-v1`.
 
-- Every source Word page is retained in its original order. Confirmed structure pages can increase the total slide count. The body is 1904x896 (17:8).
-- Non-contiguous Word page labels such as `第4页`、`第33页`、`第26页` remain in the user's order.
-- The first visible Word paragraph is the slide-title authority; later headings stay in the body.
-- Cover, TOC, section and closing pages use native editable layouts and preserve every frozen source block.
-- One three-step UI confirms a whole-deck director preset, the visual contract, a seven-field presentation taskbook and the ordered page structure. Word remains the factual and page-content authority.
-- The confirmed background color becomes the native whole-slide background on every final PPT page, while positioned fills may still structure the page body.
-- The confirmed emphasis content is conservatively matched to Word pages in the background. Only those pages may use the secondary-color family for text; non-emphasis pages retain hierarchy through weight, size, position, shapes and fills without secondary-family text.
-- One consulting page director outputs only `page_purpose`, `primary_relationship`, `core_exhibit`, `support_groups`, `reading_path`, and `local_visuals`. Conclusions are used only when supplied by the source.
-- The director makes explicit source relationships visible through color, position, shape, connectors and hierarchy, including process, level, parallelism, ownership, comparison and causality.
-- Complete source-backed numeric dimensions can become editable native charts or editable special-chart shapes; incomplete relationships use named non-scaled substitutes and never invent quantitative geometry.
-- The sealed Image2 prompt has exactly six consulting-report sections. The compiler owns the canvas, fixed-layer exclusions, semantic color roles, accent limits, and formal-report prohibitions.
-- The single final UI submission is the sole material/reference authority. Every staged reference requires explicit keep/remove; the backend cannot reinterpret it afterward.
-- Zero confirmed references uses Image2 `generate`; 1-16 confirmed refs uses `edit`, preserving their ordered role descriptions.
-- Reference fusion is high-fidelity best effort, never a pixel-perfect guarantee.
-- The final adapted candidate receives one independent review with exactly five hard-error categories: `fact_integrity`, `primary_relationship`, `core_exhibit_prominence`, `quantitative_truth`, and `severe_usability`.
-- A rejected page may receive at most two deterministic local edits of the immediately previous image. Each edit repairs one concrete defect, preserves the frozen page plan, and has no correction-model fallback.
-- The provider trace records the requested size, service-original dimensions and quality. The service image uses a dynamic centered 17:8 crop and uniform resize to 1904x896 without stretching.
-- Fixed title, original SVG logo, footer and page number are PPT layers and never Image2 body content.
-- V6 has no V4/V5 runtime fallback, exact overlay, or post-reconstruction visual repair.
-- After acceptance, a Codex page worker reconstructs editable text, native simple geometry and independent image objects before the fixed frame and deck assembly. Worker or authentication failure stops the page rather than producing a simplified fallback.
-- Reconstruction has one engine and one worker attempt: unreadable text stops the page. There is no cloud OCR retry, substitute generation model, or rejected-first-candidate acceptance path.
+- Read the complete manuscript and derive chapters and page titles before the single final confirmation. Keep original titles, facts, explanations and conditions as source material.
+- One public workflow entry coordinates the three-step confirmation UI, page materials, the new director, Image2, independent review and editable reconstruction.
+- The new director produces one `page_plan.image_prompt`, handed to Image2 verbatim. Source inventories prove coverage; there is no six-section compiler or alternate old director.
+- Initial generation and replanning use the same new director. Old director authorities cannot be adopted as its output. Local edits and replanning share the initial-plus-two-corrections limit.
+- Confirmed materials retain their identity and order. Zero selected references uses `generate`; 1–16 uses `edit`. Reference fusion is best effort, not a pixel-perfect guarantee.
+- The independent reviewer checks facts, relationships, confirmed emphasis, quantitative truth and severe usability. A candidate must be accepted before reconstruction; aesthetics alone do not justify rejection.
+- The accepted 1904×896 (17:8) body is reconstructed into editable text, shapes and image objects. Its body colors remain intact. Confirmed title, SVG Logo, footer, page number and background are applied as fixed layers.
+- Incomplete numeric sources cannot produce invented quantitative geometry. Unreadable text, worker or authentication failure stops the page; no OCR/model/local reconstruction fallback can turn failure into success.
 
-## Install
+## Install the existing stable version
 
 Download the immutable `v1.2.3` Windows release ZIP:
 
