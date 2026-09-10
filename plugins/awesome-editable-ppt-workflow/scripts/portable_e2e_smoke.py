@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 from docx import Document
 
@@ -34,6 +35,8 @@ def smoke(editppt: Path, output: Path) -> dict:
     )
 
     from confirm_ui.server import _wait, create_app
+    from codex_subscription_runtime import CodexStructuredResult
+    from deck_planning import generate_plan
     from editppt.runtime.fixed_region_runtime import CONTENT_BOX, SLIDE
     from workflow_v6_source import initialize_v6_project
     from workflow_v6_special_pages import render_special_page, SPECIAL_ROLES
@@ -61,6 +64,24 @@ def smoke(editppt: Path, output: Path) -> dict:
                             for page in recommendations["composition"]["pages"]],
         **template["defaults"],
     }
+    # Offline installer check: exercise real planning persistence and sealing with synthetic model output.
+    plan = {"pages": [{
+        "output_page_number": page["output_page_number"],
+        "chapter_title": page["chapter_title"] or page_title,
+        "title": page["fixed_page_title"],
+        "emphasis": body_text,
+        "previous_connection": "",
+        "next_connection": "",
+    } for page in confirmation["confirmed_pages"]]}
+    planned = CodexStructuredResult(
+        value=plan, thread_id="portable-smoke", turn_id="deck-plan",
+        model="offline-fixture", model_provider="offline-fixture", auth_mode="none",
+        plan_type=None, usage={}, safe_trace={},
+    )
+    with patch("codex_subscription_runtime.invoke_structured", return_value=planned):
+        confirmation["deck_plan"] = generate_plan(
+            project, confirmation["director_taskbook"], confirmation["confirmed_pages"],
+        )
     response = client.post("/api/confirm", json=confirmation)
     if response.status_code != 200 or _wait(project, "final", 5) != 0:
         raise RuntimeError(f"portable V6 confirmation failed: {response.get_json()}")

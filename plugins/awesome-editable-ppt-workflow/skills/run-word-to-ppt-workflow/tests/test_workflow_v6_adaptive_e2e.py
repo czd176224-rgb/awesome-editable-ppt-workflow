@@ -30,6 +30,7 @@ if str(SCRIPTS) not in sys.path:
 import workflow_v6_source  # noqa: E402
 from workflow_v6_contract import canonical_sha256  # noqa: E402
 from workflow_v6_reconstruction import (  # noqa: E402
+    _structure_validation,
     assemble_v6_deck,
     build_reconstruction_request,
     finalize_reconstructed_page as _finalize_reconstructed_page,
@@ -241,11 +242,23 @@ def test_one_confirmation_renders_and_assembles_special_page_insertions_in_order
     assert persisted_assembly == assembly
     assert len(deck.slides) == composition["page_count"] == assembly["page_count"]
     assert assembly["page_order"] == list(range(1, composition["page_count"] + 1))
-    assert assembly["structure_validation"]["passed"] is True
+    confirmed_structure = _structure_validation(project, load(project), composition)
+    assert confirmed_structure == {
+        "passed": True,
+        "reason": "confirmed_page_count_roles_and_order_match",
+        "page_count": len(expected_roles),
+        "roles": {role: expected_roles.count(role) for role in set(expected_roles)},
+    }
     if assembly["status"] == "validation_incomplete":
+        assert assembly["reason"] == "actual_office_render_validation_unavailable"
+        assert assembly["assembled_visual_qa"]["reason"] == "actual_assembled_deck_render_unavailable"
         assert assembly["release_status"] == "not_release_ready"
+        assert assembly["release_ready"] is False
         assert assembly["final_output"] is None
         assert "output" not in assembly
+    else:
+        assert assembly["status"] == "complete"
+        assert assembly["structure_validation"] == confirmed_structure
     expected_number_visibility = {
         "cover": False, "toc": True, "section": True,
         "content": True, "appendix": True, "closing": False,
