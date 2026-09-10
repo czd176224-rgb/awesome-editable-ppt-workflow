@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,17 @@ def _status(project: Path) -> dict[str, Any]:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    run = sub.add_parser("run", help="create or resume the complete workflow with one confirmation session")
+    run.add_argument("--project", type=Path, required=True)
+    run.add_argument("--word", type=Path)
+    run.add_argument("--logo", type=Path)
+    run.add_argument("--preserve-source-layout", action="store_true")
+    run.add_argument("--pages", type=int, nargs="+")
+    run.add_argument("--recovery-round", type=int, choices=range(1, 1000), metavar="1..999")
+    run.add_argument("--page-workers", type=int, default=12)
+    run.add_argument("--page-concurrency", type=int, default=2)
+    run.add_argument("--timeout", type=int, default=900)
+    run.add_argument("--confirmation-timeout", type=int, default=590)
     init = sub.add_parser("init", help="lock Word and SVG Logo and create a fresh Awesome project")
     init.add_argument("--word", type=Path, required=True)
     init.add_argument("--logo", type=Path, required=True)
@@ -107,9 +119,77 @@ def _require_valid_project(project: Path) -> None:
     load(project)
 
 
+def _run_project(args: argparse.Namespace) -> int:
+    configuration = PipelineConfiguration(
+        page_workers=args.page_workers,
+        initial_page_concurrency=args.page_concurrency,
+        maximum_page_concurrency=args.page_concurrency,
+        timeout=args.timeout,
+    )
+    if args.confirmation_timeout < 1:
+        raise ValueError("confirmation-timeout must be positive")
+    if args.pages and any(number < 1 for number in args.pages):
+        raise ValueError("page numbers must be positive")
+    if args.recovery_round is not None and not args.pages:
+        raise ValueError("an explicit recovery round requires --pages")
+    project = args.project.resolve()
+    if (project / "workflow_v6.json").exists():
+        state = load(project)
+        for supplied, key in ((args.word, "word_source"), (args.logo, "logo_source")):
+            if supplied is not None and hashlib.sha256(supplied.read_bytes()).hexdigest() != state[key]["sha256"]:
+                raise ValueError(f"{key} differs from the locked project source; use a new project")
+    else:
+        if args.word is None or args.logo is None:
+            raise ValueError("a new project requires --word and --logo")
+        if args.recovery_round is not None:
+            raise ValueError("recovery requires an existing project")
+        state = initialize_v6_project(
+            args.word, args.logo, project, complete_structure=not args.preserve_source_layout,
+        )
+    if state["style_confirmation"]["status"] != "confirmed":
+        from confirm_ui import server
+
+        if server._confirmed_stage(project / server.CONFIRM_DIR / server.RESULT) < 4:
+            code = server._start(project, server.DEFAULT_PORT, False, 900)
+            if code:
+                return code
+        code = server._wait(project, "final", args.confirmation_timeout)
+        if code:
+            return code
+        state = load(project)
+    numbers = args.pages or [page["page_number"] for page in state["pages"]]
+    if not set(numbers).issubset({page["page_number"] for page in state["pages"]}):
+        raise ValueError("selected page does not exist in the confirmed plan")
+    missing = [page["page_number"] for page in state["pages"] if page["material_receipt"] is None]
+    if missing:
+        complete_project_real_assets(project, timeout=args.timeout)
+        for number in missing:
+            publish_page_materials(project, number, project / "02_v6" / "awesome_page_materials" / f"page_{number:03d}.json")
+        state = load(project)
+    if args.recovery_round is not None:
+        result = recover_failed_pages(
+            project, numbers, recovery_round=args.recovery_round, configuration=configuration,
+        ).to_dict()
+    else:
+        pending = [page["page_number"] for page in state["pages"]
+                   if page["page_number"] in numbers and page["state"] != "page_complete"]
+        if pending:
+            result = run_pages(project, pending, configuration=configuration).to_dict()
+        else:
+            from workflow_v6_reconstruction_worker import assemble_reconstructed_project
+
+            result = {"assembly": assemble_reconstructed_project(project, {})}
+    failed = _emit_pipeline_result(result)
+    assembly = result.get("assembly") or {}
+    return int(bool(failed) or assembly.get("status") != "complete"
+               or assembly.get("release_ready") is not True or not assembly.get("final_output"))
+
+
 def main() -> int:
     args = _parser().parse_args()
-    if args.command == "init":
+    if args.command == "run":
+        return _run_project(args)
+    elif args.command == "init":
         initialize_v6_project(args.word, args.logo, args.project, complete_structure=not args.preserve_source_layout)
         _emit(_status(args.project))
     elif args.command == "status":

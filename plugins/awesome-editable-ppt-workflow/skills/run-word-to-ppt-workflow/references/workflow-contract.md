@@ -6,9 +6,39 @@ This is an unpublished development copy derived from installed 1.2.3. Its upgrad
 
 This is the only public Word-to-PowerPoint workflow entry and executes the sealed `awesome-word-ppt-workflow-v1` contract with director output `awesome-page-design-v1`. Create a new V6 project from the original paginated Word and SVG Logo. The resumable project authority is `workflow_v6.json`.
 
+## Unified run
+
+Use the same internal entry for creation, continuation and explicit bounded recovery:
+
+```powershell
+python scripts\word_to_editable_ppt.py v6 run --project "D:\Projects\Deck" --word "D:\Input\source.docx" --logo "D:\Input\logo.svg"
+python scripts\word_to_editable_ppt.py v6 run --project "D:\Projects\Deck"
+```
+
+A new project requires both Word and Logo. An existing project needs only `--project`; if sources are supplied again, their bytes must match the locked source hashes. Different source content requires a new project.
+
+`run` uses the existing UI and waits for its single final confirmation, then prepares missing material receipts for the entire project, skips `page_complete` pages, invokes the existing page pipeline and assembles the deck. A confirmation timeout leaves the project resumable; run the same command after the UI is complete without submitting another final confirmation. If all selected pages are already complete, the entry performs assembly without regenerating them.
+
+Optional controls:
+
+- `--pages 1 2 3` limits page execution, not whole-project material preparation or the final completion criterion. Incomplete whole-deck assembly returns nonzero even when every selected page succeeded.
+- `--recovery-round 1` requires explicit `--pages`, an existing project and the existing signed recovery prerequisites. Valid round arguments are 1 through 999; this range does not waive the contiguous-round or per-round budget rules. Ordinary continuation never automatically opens recovery rounds.
+- `--confirmation-timeout` is a positive integer number of seconds, default 590. Page/runtime `--timeout` remains 900 seconds; `--page-workers` defaults to 12 and `--page-concurrency` to 2.
+- `--preserve-source-layout` applies when creating the project and keeps the existing structure-confirmation behavior.
+
+Explicit recovery example, only for eligible failed pages and the next permitted round:
+
+```powershell
+python scripts\word_to_editable_ppt.py v6 run --project "D:\Projects\Deck" --pages 16 27 --recovery-round 1
+```
+
+A zero exit requires complete, release-ready assembly with a final output; partial progress is not completed delivery. Check the actual output and result before reporting success.
+
 ## Authoritative flow
 
-1. `v6 init` locks the original Word and SVG Logo in a new project. Preserve complete Word blocks, original comments, Word images, tables, charts and attachments.
+The unified entry coordinates these existing stages; the commands below remain available for targeted diagnosis.
+
+1. The initialization stage (`v6 init`) locks the original Word and SVG Logo in a new project. Preserve complete Word blocks, original comments, Word images, tables, charts and attachments.
 2. Open the three-step Confirm UI once:
    - Step 1 confirms one whole-deck director template: Company & Business Introduction, Investment Committee, Project Initiation, Corporate Planning Report or Investment Project BP. The system recommends and the user confirms.
    - Step 2 confirms only primary, secondary and background colors; CJK and Latin fonts; and title, body and caption sizes.
@@ -19,7 +49,7 @@ This is the only public Word-to-PowerPoint workflow entry and executes the seale
 5. The candidate loop sends one initial Image2 request, performs the local file/format/1904x896 check, then invokes one independent visual review for that candidate. The reviewer independently loads the same taskbook, loads the actual design to diagnose deviations after independently deriving the source and confirmed goals, and uses a fresh thread. Zero director-selected page references selects `generate`; one to sixteen director-selected page references selects `edit`. The first usable candidate is accepted. A rejected candidate may use at most two existing correction opportunities; same-page correction may use the immediately previous candidate, while a new initial attempt never uses a baseline, prior round or other page candidate.
    - The review may reject only one concrete defect using exactly one of five hard-error categories: `fact_integrity`, `primary_relationship`, `core_exhibit_prominence`, `quantitative_truth`, or `severe_usability`. General aesthetic preference is not a hard error.
    - Each signed review problem declares `repair_route`: `edit` preserves the current plan and corrects the immediately previous image; `replan` invokes the same page director with the rejected plan/image and review, publishes a new immutable signed director revision and sends its replacement image_prompt verbatim. Replanning retains predecessor evidence without using the rejected image as an Image2 composition reference. Both routes share the initial-plus-two-corrections budget. Multi-revision failed pages currently reject explicit failure recovery; they do not reset the budget. Signed accepted pages remain recoverable after receipt verification.
-   - Ordinary `run-pages` keeps a sealed failure terminal. Only an explicit `recover-failed-pages --recovery-round N` invocation may open the next contiguous round for selected failed pages. The round verifies and preserves the prior signed failure, candidate/request bytes, source, complete material semantics and frozen director before any external call. A prior candidate is recorded truthfully as recovery-round attempt 1, never as a new Image2 call or an acceptance; a timed-out review is rerun with zero Image2 calls, while a prior signed single-defect correction may use at most two new edits as attempts 2 and 3. Accepted or completed pages, missing/skipped rounds, changed authority and cross-project adoption fail closed.
+   - Ordinary `run-pages` keeps a sealed failure terminal. Only an explicit `run --pages ... --recovery-round N` invocation (delegating to `recover-failed-pages`) may open the next contiguous round for selected failed pages. The round verifies and preserves the prior signed failure, candidate/request bytes, source, complete material semantics and frozen director before any external call. A prior candidate is recorded truthfully as recovery-round attempt 1, never as a new Image2 call or an acceptance; a timed-out review is rerun with zero Image2 calls, while a prior signed single-defect correction may use at most two new edits as attempts 2 and 3. Accepted or completed pages, missing/skipped rounds, changed authority and cross-project adoption fail closed.
 6. Image2 output is dynamically center-cropped to the largest 17:8 region from its actual returned dimensions, then uniformly resized to 1904x896. The independent reviewer sees this final adapted candidate and is the only image-semantic QA.
 7. After acceptance, `run-pages` automatically invokes `reconstruct-editable-slide` through a Codex page worker. The accepted 1904x896 image is its only visual authority. Text and simple shapes become editable objects; fixed title/SVG Logo/footer/page number are added as native layers; the completed pages are then assembled. If the page worker cannot start or complete, the page stops rather than falling back to local reconstruction.
 
@@ -38,7 +68,7 @@ Installed baseline 1.2.3 has its original release record; this development line 
 - The single final confirmation seals the selected director taskbook, global visual contract and the approved ordered page structure. Existing projects without confirmed structure cannot report `release_ready`. `confirm-ui wait --stage final` only persists that already-approved contract for execution; it does not ask the user to confirm again.
 - Confirmed V6 materials are immutable. To rerun a previously initialized manuscript with different pagination or composition, create a fresh project from the original Word and SVG Logo.
 
-## Production commands
+## Internal diagnostic stage commands
 
 ```powershell
 python scripts\word_to_editable_ppt.py v6 init --word D:\Input\source.docx --logo D:\Input\logo.svg --project D:\Projects\Deck
