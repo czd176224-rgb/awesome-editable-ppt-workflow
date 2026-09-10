@@ -6,12 +6,10 @@
   "workflowContractVersion": "awesome-word-ppt-workflow-v1",
   "promptContractVersion": "awesome-page-design-v1",
   "pageImagePolicy": "generate-without-refs-edit-with-confirmed-refs",
-  "sourceManifestSha256": "d2f36e3155c5d064d18ac40943412c8a3f03506d3b32a64869480f18d87544fa",
+  "sourceManifestSha256": "c617047dc8d765d467d63f015729d09d97eb05a70c5c259ffa8a95abdce82a70",
   "root": ".",
-  "passed": false,
-  "errors": [
-    "source manifest file set mismatch: extra=['docs/NEW_PAGE_DIRECTOR.md'] missing=[]"
-  ],
+  "passed": true,
+  "errors": [],
   "files": [
     {
       "path": ".agents/plugins/marketplace.json",
@@ -1270,13 +1268,13 @@
     },
     {
       "path": "public-release-files.json",
-      "bytes": 974,
-      "sha256": "56e047b1eefcaccba49bdc17050634d12653888f755fa0c6602453c3c848e7ba"
+      "bytes": 1007,
+      "sha256": "c7442305f5ff9da14d1a945b678faba213a51099f5161f3303c4a96284f5b3dd"
     },
     {
       "path": "public-source-manifest.json",
-      "bytes": 46983,
-      "sha256": "d2f36e3155c5d064d18ac40943412c8a3f03506d3b32a64869480f18d87544fa"
+      "bytes": 47084,
+      "sha256": "c617047dc8d765d467d63f015729d09d97eb05a70c5c259ffa8a95abdce82a70"
     },
     {
       "path": "README.md",
