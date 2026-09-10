@@ -1,19 +1,21 @@
 # Editable PPT Workflow
 
-`run-word-to-ppt-workflow` is the plugin's single public Word-to-PowerPoint entry. It creates a resumable V6 project from one paginated Word document, one SVG Logo and optional attachments, then sends formal multi-page generation through `run-pages`.
+用户只需调用本插件，提供分页 Word、SVG Logo 和补充材料，说“把这份 Word 做成可编辑 PPT”。在一个确认界面完成一次最终确认后，插件负责材料准备、页面导演、生图、独立审查、可编辑重建与整册组装。用户说“继续”时，同一入口按项目状态续跑。
 
-The sealed workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is `awesome-page-design-v1`.
+公开入口为 `run-word-to-ppt-workflow`。其他三个 Skill 是内部能力，不要求用户分别调用、选择 Agent 或执行命令。内部 Skill 禁用隐式调用，降低误触发；这不代表隐藏选择器或禁止显式调用。
 
-This is an unpublished isolated development copy based on 1.2.3. Its changes do not inherit the baseline release-ready claim; real-page verification is pending. The installed plugin is unchanged.
+这是基于 1.2.3 的未发布开发副本，真实样页、整册交付、恢复与正式安装仍需验收，正式安装版未改动。开发范围、当前阶段与结项条件见 [里程碑说明](../../docs/NEW_PAGE_DIRECTOR.md)。
 
-Each page director reads the complete source and confirmed goals, resolves relationships, hierarchy, reading order and visual expression, then delivers one executable `page_plan.image_prompt`. That exact string is sent to Image2 without six-section compilation. The source inventory only verifies coverage. Independent review checks source integrity, relationships, confirmed emphasis, quantitative truth and severe usability. Image edits and same-director replanning share the initial-plus-two-corrections budget, with signed requests and causal records preserved.
+## 内容与设计
 
-The Word body remains the page fact and narrative authority; comments guide presentation without rewriting facts. Before generation, one three-step UI confirms: (1) one whole-deck director template, (2) the primary, secondary and background colors plus CJK/Latin fonts and title/body/caption sizes, and (3) a seven-field presentation taskbook and the ordered page structure. The five director templates are Company & Business Introduction, Investment Committee, Project Initiation, Corporate Planning Report and Investment Project BP.
+先理解全文、细分章节，再结合本页内容表达推导标题，在现有一次最终确认中封存。原 Word 本页全部内容（包括原标题）都是原始材料，事实、解释、条件和不确定性完整保留。源页面不得删除或重排，补充结构页由确认界面决定。
 
-The confirmed whole-slide background, colors and typography are inputs to the director. The seven-field taskbook guides the page purpose, source-grounded priority and continuity; priority is distinct from reading order. The whole-deck planning result is editable in the existing final confirmation and then sealed. Source pages cannot be deleted or reordered, and every fact, explanation and condition remains visible. The director does not reopen confirmed title or emphasis decisions.
+页面导演以完整材料和确认目标整体决定关系、图文、文字、布局与颜色，其定稿原样送入 Image2。独立审查只按既定硬错误规则判断；局部修图和重新策划共享有界预算，保留签名与失败证据，不追加用户逐页候选选择。需要真实身份素材时仅采用可核验来源，不伪造。
 
-When a comment explicitly requires a missing real identity image, the existing conditional project-level search pass accepts only verifiable official sources and otherwise records `not_found` without generating a fake asset.
+通过审查的 1904×896（17:8）主体图是重建的唯一视觉依据，保留其配色；文本和可重建图形成为可编辑对象，标题、原 SVG Logo、页脚和页码作为独立原生图层加入。只有最终 PPTX 与全部必要检查通过才报告交付完成。
 
-After acceptance, the accepted 1904x896 (17:8) body image is the only visual authority for editable reconstruction. The fixed title, original SVG Logo, footer and page number are added as native PowerPoint layers. Page-image generation, editable reconstruction and final validation remain internal capabilities of this workflow, not alternative Word-to-PowerPoint entry points.
+## 开发与诊断
 
-`v6 init` proposes missing cover, TOC, section and closing pages by default, reusing clearly identified special pages already in Word. Every source page and its original order remain intact, so the final slide count may increase; a dense opening body page cannot replace a cover. Substantive titles come from Word. Section suggestions prefer PART, 第N章 and 一、 headings, falling back to the first body-page title as a single section for user confirmation. `--preserve-source-layout` opts out of new structure suggestions while retaining structure confirmation. Existing projects without confirmed structure cannot report `release_ready`.
+主 Skill 作为同一用户入口协调现有分阶段命令与续跑；统一 CLI 尚未实现。具体材料、预算及分页约束位于其按需参考文档；导演方法由代码直接加载。可选 OfficeCLI 后置检查不影响核心链路，不要求安装额外检查工具。
+
+运行合同为 `awesome-word-ppt-workflow-v1`，导演输出合同为 `awesome-page-design-v1`。

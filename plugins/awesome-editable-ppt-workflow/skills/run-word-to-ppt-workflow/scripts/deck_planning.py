@@ -114,6 +114,19 @@ def confirmed_page_context(project, page_number):
 def confirmed_page_composition(project, page_number):
     """Preserve all applicable UI page fields alongside the derived, sealed plan."""
     plan = confirmed_page_plan(project, page_number)
+    return _page_composition(project, page_number, plan)
+
+
+def confirmed_page_inputs(project, page_number, *, include_composition=False):
+    """Validate once per role request; never reuse validation across requests."""
+    plan = confirmed_page_plan(project, page_number)
+    result = {"plan": plan, "context": complete_source(project)["pages"]}
+    if include_composition:
+        result["composition"] = _page_composition(project, page_number, plan)
+    return result
+
+
+def _page_composition(project, page_number, plan):
     composition = json.loads((Path(project)/"02_v6/page_composition.json").read_text(encoding="utf-8"))
     matches = [p for p in composition["pages"] if p["output_page_number"] == page_number]
     if (len(matches) != 1 or matches[0]["fixed_page_title"] != plan["title"]

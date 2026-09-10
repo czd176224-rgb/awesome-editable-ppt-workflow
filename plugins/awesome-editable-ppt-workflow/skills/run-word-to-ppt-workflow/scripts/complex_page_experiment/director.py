@@ -527,10 +527,9 @@ def direct_page(
         raise ValueError("initial direction must not receive a previous candidate")
     visual_reference = _visual_director_reference()
     taskbook = confirmed_taskbook_prompt(workspace.project_copy)
-    from deck_planning import confirmed_page_plan, confirmed_page_context, confirmed_page_composition
-    chapter_plan = confirmed_page_plan(workspace.project_copy, workspace.page_number)
-    chapter_context = confirmed_page_context(workspace.project_copy, workspace.page_number)
-    page_composition = confirmed_page_composition(workspace.project_copy, workspace.page_number)
+    from deck_planning import confirmed_page_inputs
+    inputs = confirmed_page_inputs(workspace.project_copy, workspace.page_number, include_composition=True)
+    chapter_plan, chapter_context, page_composition = inputs["plan"], inputs["context"], inputs["composition"]
     if material_view.value["fixed_page_title"] != chapter_plan["title"]:
         raise ValueError("page materials differ from the derived, sealed design title")
     prompt = (

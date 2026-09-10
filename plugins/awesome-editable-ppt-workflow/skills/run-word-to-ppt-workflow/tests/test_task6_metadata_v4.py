@@ -42,6 +42,9 @@ def test_active_v6_docs_do_not_advertise_removed_production_semantics() -> None:
     )
     for path in paths:
         text = path.read_text(encoding="utf-8")
+        if path.name == "SKILL.md":
+            assert "[workflow-contract.md](references/workflow-contract.md)" in text
+            text += (path.parent / "references/workflow-contract.md").read_text(encoding="utf-8")
         assert "awesome-word-ppt-workflow-v1" in text, path
         assert "17:8" in text, path
         assert all(token not in text for token in banned), path

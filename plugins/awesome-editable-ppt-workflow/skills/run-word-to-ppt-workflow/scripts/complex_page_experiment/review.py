@@ -21,7 +21,7 @@ from codex_subscription_runtime import CodexStructuredResult, invoke_structured
 from provider_keyring import signing_key, verification_key
 from workflow_v6_secure_io import atomic_write_bytes, read_bytes
 from director_taskbook import confirmed_taskbook_prompt, project_emphasis_pages
-from deck_planning import confirmed_page_plan, confirmed_page_context
+from deck_planning import confirmed_page_inputs
 
 from . import provider as experiment_provider
 from .director import (
@@ -818,11 +818,11 @@ def review_candidate_once(
     final_preflight = preflight_candidate(technical_candidate)
     if final_preflight != current_preflight or not final_preflight.passed:
         raise ValueError("candidate changed after technical preflight")
+    inputs = confirmed_page_inputs(workspace.project_copy, workspace.page_number)
     prompt = _review_prompt(
         material_view, candidate, actual_prompt, image_ids,
         confirmed_taskbook_prompt(workspace.project_copy),
-        {**confirmed_page_plan(workspace.project_copy, workspace.page_number),
-         "source_exact_full_document_pages": confirmed_page_context(workspace.project_copy, workspace.page_number)},
+        {**inputs["plan"], "source_exact_full_document_pages": inputs["context"]},
     )
     images = _publish_review_snapshot(
         workspace, material_view, candidate, current_preflight, image_ids,

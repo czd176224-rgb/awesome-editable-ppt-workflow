@@ -46,6 +46,8 @@ def test_private_experiment_cli_is_not_shipped_as_an_independent_entry() -> None
 def test_main_skill_documents_run_pages_and_explicit_failed_page_recovery() -> None:
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert "run-pages" in skill
+    assert "[workflow-contract.md](references/workflow-contract.md)" in skill
+    skill += (ROOT / "references/workflow-contract.md").read_text(encoding="utf-8")
     assert "recover-failed-pages --project" in skill
     assert "--recovery-round" in skill
     assert "generate-page" not in skill
