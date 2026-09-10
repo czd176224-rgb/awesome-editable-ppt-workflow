@@ -88,7 +88,7 @@ def test_current_release_metadata_and_user_contract_are_consistent():
     assert package["pluginVersion"] == plugin["version"] == "1.2.3"
     assert package["releaseTag"] == "v1.2.3"
     assert marketplace["interface"]["displayName"] == "Awesome Editable PPT Workflow 1.2.3"
-    assert package["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
+    assert package["promptContractVersion"] == "awesome-page-design-v1"
     assert package["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert package["designAcceptancePolicy"] == "single-independent-review-with-at-most-two-corrections"
     assert package["qaPolicyVersion"] == "sole-independent-five-hard-error-review-v3"
@@ -140,11 +140,11 @@ def test_export_creates_public_metadata_and_removes_private_material(tmp_path):
     audit = json.loads((output / "public-release-audit.json").read_text(encoding="utf-8-sig"))
     source_manifest = json.loads((output / "public-source-manifest.json").read_text(encoding="utf-8-sig"))
     assert audit["schemaVersion"] == "public-release-audit-v1"
-    assert audit["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
+    assert audit["promptContractVersion"] == "awesome-page-design-v1"
     assert audit["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert audit["sourceManifestSha256"]
     assert source_manifest["schemaVersion"] == "public-source-manifest-v1"
-    assert source_manifest["promptContractVersion"] == "consulting-page-director-v3-compact-page-plan"
+    assert source_manifest["promptContractVersion"] == "awesome-page-design-v1"
     assert source_manifest["pageImagePolicy"] == "generate-without-refs-edit-with-confirmed-refs"
     assert audit["root"] == "."
     assert not (output / "docs/superpowers").exists()

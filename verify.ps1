@@ -85,10 +85,10 @@ if ($PackageInfo.localRepairEndpoint -ne "deterministic-previous-image-local-edi
     $PackageInfo.designAcceptancePolicy -ne "single-independent-review-with-at-most-two-corrections") {
     throw "V6 page repair must edit the previous image deterministically, use at most two corrections, and have no correction-model fallback"
 }
-if ($PackageInfo.promptContractVersion -ne "consulting-page-director-v3-compact-page-plan" -or
+if ($PackageInfo.promptContractVersion -ne "awesome-page-design-v1" -or
     $PackageInfo.qaPolicyVersion -ne "sole-independent-five-hard-error-review-v3" -or
     $PackageInfo.pageImagePolicy -ne "generate-without-refs-edit-with-confirmed-refs") {
-    throw "package-info must declare the consulting director v3 compact page plan and confirmed-materials image policy"
+    throw "package-info must declare the new direct page design and confirmed-materials image policy"
 }
 if ($PackageInfo.releaseStatus -notin @("development-not-release-ready", "release-ready")) {
     throw "package-info releaseStatus must be development-not-release-ready or release-ready"

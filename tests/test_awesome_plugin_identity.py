@@ -40,7 +40,10 @@ def test_installation_and_documentation_use_the_awesome_identity():
     assert "plugins\\awesome-editable-ppt-workflow" in uninstall
     runtime_installer = (PLUGIN_ROOT / "scripts" / "install_runtime.ps1").read_text(encoding="utf-8")
     assert "awesome-editable-ppt-workflow-fixed-canvas-cm-v2" in runtime_installer
-    assert "Awesome Editable PPT Workflow 1.2.3" in readme
+    assert readme.startswith("# Awesome Editable PPT Workflow")
+    assert "development-not-release-ready" in readme
+    assert "awesome-page-design-v1" in readme
+    assert "v1.2.3" in readme
 
 
 def test_runtime_diagnostic_accepts_the_new_product_without_old_installed_plugin():
