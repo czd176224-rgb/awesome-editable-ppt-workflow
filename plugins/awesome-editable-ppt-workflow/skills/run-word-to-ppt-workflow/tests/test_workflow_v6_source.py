@@ -406,8 +406,8 @@ def test_initialize_v6_project_preserves_embedded_image_integrity_and_paths(tmp_
     reference = material["reference_images"][0]
     generation_input = asset["generation_input"]
 
-    assert reference["original_path"].startswith("02_v6/reference_media/word_asset_001/original.")
-    assert reference["model_input_path"].startswith("02_v6/reference_media/word_asset_001/model-input.")
+    assert reference["original_path"].startswith("02_v6/reference_media/page-001-word_asset_001/original.")
+    assert reference["model_input_path"].startswith("02_v6/reference_media/page-001-word_asset_001/model-input.")
     assert reference["original_path"] != reference["model_input_path"]
     assert reference["integrity"]["original_sha256"] == asset["sha256"]
     assert reference["integrity"]["model_input_sha256"] != generation_input["sha256"]

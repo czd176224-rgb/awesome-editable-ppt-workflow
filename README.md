@@ -14,7 +14,7 @@ The workflow contract is `awesome-word-ppt-workflow-v1`; the prompt contract is 
 - Initial generation and replanning use the same new director. Old director authorities cannot be adopted as its output. Local edits and replanning share the initial-plus-two-corrections limit.
 - Confirmed materials retain their identity and order. Zero selected references uses `generate`; 1–16 uses `edit`. Reference fusion is best effort, not a pixel-perfect guarantee.
 - The independent reviewer checks facts, relationships, confirmed emphasis, quantitative truth and severe usability. A candidate must be accepted before reconstruction; aesthetics alone do not justify rejection.
-- The accepted 1904×896 body is reconstructed into editable text, shapes and image objects. Its body colors remain intact. Confirmed title, SVG Logo, footer, page number and background are applied as fixed layers.
+- The accepted 1904×896 (17:8) body is reconstructed into editable text, shapes and image objects. Its body colors remain intact. Confirmed title, SVG Logo, footer, page number and background are applied as fixed layers.
 - Incomplete numeric sources cannot produce invented quantitative geometry. Unreadable text, worker or authentication failure stops the page; no OCR/model/local reconstruction fallback can turn failure into success.
 
 ## Install the existing stable version

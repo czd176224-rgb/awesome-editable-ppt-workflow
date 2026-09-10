@@ -642,6 +642,7 @@ def test_sealed_page_visual_failure_blocks_publication(tmp_path: Path, monkeypat
         "_require_final_authority",
         lambda *_args, **_kwargs: {
             "accepted_receipt": {},
+            "page_plan": {"image_prompt": "Render sealed body with its accepted colors."},
             "accepted_source_body": {"path": source.relative_to(project).as_posix(), "sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
             "worker_source_body": {},
         },
@@ -669,6 +670,7 @@ def test_sealed_page_without_actual_renderer_remains_assembly_ready(tmp_path: Pa
         "_require_final_authority",
         lambda *_args, **_kwargs: {
             "accepted_receipt": {},
+            "page_plan": {"image_prompt": "Render sealed body with its accepted colors."},
             "accepted_source_body": {"path": source.relative_to(project).as_posix(), "sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
             "worker_source_body": {},
         },

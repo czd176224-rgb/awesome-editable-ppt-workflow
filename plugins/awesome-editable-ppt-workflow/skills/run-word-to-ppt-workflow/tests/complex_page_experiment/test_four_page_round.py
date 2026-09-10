@@ -20,7 +20,7 @@ from test_provider import _real_worker_runner, _replace_fixture_images
 
 def _page_director_invoke(view, page_number: int):
     value = _director_value(view)
-    value["page_number"] = page_number
+    assert value["page_number"] == page_number
 
     def invoke(_project: Path, **kwargs: object) -> CodexStructuredResult:
         assert kwargs["role"] == "awesome-page-director"
@@ -100,7 +100,9 @@ def test_page_two_runs_the_existing_vertical_loop_and_recovers_without_provider(
     view = build_complete_page_material_view(workspace)
     assert view.value["page_number"] == 2
     assert view.value["fixed_page_title"] == "Awesome page 2"
-    assert view.value["complete_word_content"][0]["text"] == "Authoritative body 2"
+    assert [block["text"] for block in view.value["complete_word_content"]] == [
+        "Awesome page 2", "Authoritative body 2",
+    ]
 
     evidence_root = (
         workspace.project_copy / "04_v6" / "experiments" / workspace.experiment_id

@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from docx import Document
 
+from test_confirm_ui_contract import attach_deck_plan
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -155,12 +157,14 @@ def test_comment_page_role_override_is_applied_and_removed_from_source_material(
         item for item in recommendations["templates"]
         if item["id"] == recommendations["recommended_template_id"]
     )
-    response = client.post("/api/confirm", json={
+    payload = {
         "submission_id": "comment-role-audit-0001", "revision": 0,
         **template["defaults"],
         "selected_director_template_id": template["id"],
         "director_taskbook": recommendations["director_taskbook"],
-    })
+    }
+    attach_deck_plan(project, payload, structured=True)
+    response = client.post("/api/confirm", json=payload)
     assert response.status_code == 200, response.get_json()
     frozen = json.loads((project / "02_v6/page_composition.json").read_text(encoding="utf-8"))
     assert frozen["pages"][0]["role_source"] == "explicit"

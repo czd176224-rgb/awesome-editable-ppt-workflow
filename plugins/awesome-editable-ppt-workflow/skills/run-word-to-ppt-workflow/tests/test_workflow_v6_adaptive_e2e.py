@@ -14,6 +14,8 @@ from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.util import Cm
 
+from test_confirm_ui_contract import attach_deck_plan
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -158,10 +160,11 @@ def test_one_confirmation_renders_and_assembles_special_page_insertions_in_order
         "selected_director_template_id": template["id"],
         "director_taskbook": recommendations["director_taskbook"],
     }
+    attach_deck_plan(project, payload, structured=True)
     first = client.post("/api/confirm", json=payload)
+    assert first.status_code == 200, first.get_json()
     assert server._wait(project, "final", 1) == 0
     second = client.post("/api/confirm", json=payload)
-    assert first.status_code == 200
     assert second.status_code == 409
     result = json.loads((project / "confirm_ui/result.json").read_text(encoding="utf-8"))
     assert result["revision"] == 1
@@ -238,13 +241,11 @@ def test_one_confirmation_renders_and_assembles_special_page_insertions_in_order
     assert persisted_assembly == assembly
     assert len(deck.slides) == composition["page_count"] == assembly["page_count"]
     assert assembly["page_order"] == list(range(1, composition["page_count"] + 1))
+    assert assembly["structure_validation"]["passed"] is True
     if assembly["status"] == "validation_incomplete":
         assert assembly["release_status"] == "not_release_ready"
         assert assembly["final_output"] is None
         assert "output" not in assembly
-    else:
-        assert assembly["release_ready"] is False
-        assert assembly["structure_validation"]["reason"] == "presentation_structure_not_confirmed"
     expected_number_visibility = {
         "cover": False, "toc": True, "section": True,
         "content": True, "appendix": True, "closing": False,
@@ -292,11 +293,14 @@ def test_confirmation_rejects_reorder_delete_and_preserves_word_authority(tmp_pa
         confirmed_pages.append(page)
     payload = {
         "submission_id": "reorder-delete-e2e-0001", "revision": 0,
-        **template["defaults"], "confirmed_pages": confirmed_pages,
+        **template["defaults"], "confirmed_pages": proposed,
     }
+    attach_deck_plan(project, payload, structured=True)
+    payload["confirmed_pages"] = confirmed_pages
 
     response = client.post("/api/confirm", json=payload)
     assert response.status_code == 400, response.get_json()
+    assert "preserve every Word page in order" in response.get_json()["error"]
     source = json.loads((project / "02_v6/paginated_word_source.json").read_text(encoding="utf-8"))
 
     assert [page["page_number"] for page in source["pages"]] == [1, 2, 3]
@@ -355,6 +359,7 @@ def test_director_template_confirmation_preserves_word_and_automatic_pages(
         "selected_director_template_id": expected_template_id,
         "director_taskbook": template["director_taskbook"],
     }
+    attach_deck_plan(project, payload, structured=True)
 
     response = client.post("/api/confirm", json=payload)
     assert response.status_code == 200, response.get_json()
@@ -367,7 +372,11 @@ def test_director_template_confirmation_preserves_word_and_automatic_pages(
     assert state["director_confirmation"] == result["director_confirmation"]
     assert result["director_confirmation"]["taskbook"] == template["director_taskbook"]
     assert source_after["word_original"] == source_before["word_original"]
-    assert composition_after["pages"] == composition_before["pages"]
+    assert result["director_confirmation"]["deck_plan"]["plan"] == payload["deck_plan"]
+    assert composition_after["pages"] == [
+        {**page, "chapter_title": planned["chapter_title"], "fixed_page_title": planned["title"]}
+        for page, planned in zip(composition_before["pages"], payload["deck_plan"]["pages"])
+    ]
     assert all(value in taskbook_prompt for value in template["director_taskbook"].values())
     for forbidden in (expected_template_id, "template_version", "taskbook_digest", '"defaults"'):
         assert forbidden not in taskbook_prompt
